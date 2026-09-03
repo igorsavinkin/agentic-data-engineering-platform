@@ -1,0 +1,2 @@
+# Runtime dependencies (empty at TASK-002 - no application code yet).
+# Service dependencies land here as milestones progress.

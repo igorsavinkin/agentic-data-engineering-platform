@@ -1,0 +1,5 @@
+# Development tooling required by ai/PROJECT.md section 2: pytest, Ruff, mypy.
+-r requirements.txt
+pytest>=8.3
+ruff>=0.6
+mypy>=1.11
