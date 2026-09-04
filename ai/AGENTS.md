@@ -174,7 +174,20 @@ Default role assignment:
 
 Do not divide ownership permanently by technology or directory. Divide work by task and role.
 
-## 12. Escalation
+## 12. Agent execution rule:
+
+One TASK-xxx specification corresponds to one focused Agent execution.
+
+An Agent must not automatically continue to subsequent TASK-xxx
+specifications.
+
+When the current task satisfies its acceptance criteria and required
+tests pass, the Agent must stop.
+
+Future tasks may depend on the current task but must be started
+in a separate Agent execution.
+
+## 13. Escalation
 
 Stop and escalate when:
 
@@ -188,7 +201,7 @@ Stop and escalate when:
 
 For fundamental architecture changes, propose an ADR before implementation.
 
-## 13. Definition of Done
+## 14. Definition of Done
 
 A task is not Done because code was generated.
 
@@ -205,7 +218,7 @@ Done means:
 - architecture preserved
 - no secrets introduced
 
-## 14. Human Learning Rule
+## 15. Human Learning Rule
 
 AI assistance must not hide core engineering concepts.
 
