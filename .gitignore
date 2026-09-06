@@ -9,6 +9,8 @@ venv/
 *.egg-info/
 build/
 dist/
+docs/review prompt.txt
+docs/task prompt.md
 
 # Environment / secrets — never commit real credentials
 .env
