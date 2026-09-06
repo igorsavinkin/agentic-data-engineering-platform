@@ -225,3 +225,17 @@ AI assistance must not hide core engineering concepts.
 When implementing Kafka, SQL, Airflow, Kubernetes, AWS, observability, or distributed-system behavior, make the implementation understandable and explain consequential trade-offs in code comments or documentation where useful.
 
 The human owner must be able to explain and troubleshoot the resulting system.
+
+## 16. Git implementation
+
+If the working tree is dirty at task start, STOP.
+
+Never automatically use:
+- git stash
+- git stash -u
+- git reset
+- git clean
+- git restore
+- destructive checkout operations
+
+Report the dirty files and wait for human instructions.
