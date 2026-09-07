@@ -2,137 +2,113 @@
 
 - **Task:** [TASK-004 — Docker Compose Foundation](../../ai/tasks/TASK-004-docker-compose-foundation.md)
 - **Branch:** `feature/TASK-004-docker-compose`
-- **Commit reviewed:** `b061009` — `feat(TASK-004): add local Docker Compose infrastructure`
-- **Diff scope:** `main` (`ff24de6`) .. `HEAD` (`b061009`)
+- **Reviewed commits:**
+  - `b061009` — `feat(TASK-004): add local Docker Compose infrastructure`
+  - `feb0652` — `fix(TASK-004): address review follow-up items` (re-review)
+- **Diff scope:** `main` (`ff24de6`) .. `HEAD` (`feb0652`)
 - **Reviewer:** Qwen Code (independent review, no code modified)
-- **Date:** 2026-09-08
+- **Date:** 2026-09-08 (re-review)
 
 > **Note on process:** `ai/REVIEWER.md` does not exist in this repository. This review
 > follows the reviewer role and findings classification defined in
 > `ai/AGENT_WORKFLOW.md` §3.3 and §7, plus the Definition-of-Done requirements in
 > `ai/AGENTS.md` §7, §12 and §13.
 
+## Re-review summary
+
+The follow-up commit `feb0652` addresses M1, S2, and S3. All three are **resolved**.
+S1 was a non-blocking suggestion and was not changed (still open). One new minor nit
+surfaced (the README quick-start command omits `--wait`). Verdict is unchanged.
+
 ## Verdict
 
-**Approve.** No blockers or majors. The stack is correct, correctly scoped, documented,
-and verified end-to-end by running it. The findings below are non-blocking documentation
-and test-hygiene polish.
+**Approve.** No blockers or majors. The original findings that were actionable are
+resolved; the only remaining items are non-blocking polish (S1) and a one-word README
+consistency nit (R1).
 
-## Verification performed
+## Verification performed (re-review)
 
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Unit tests | `pytest` | **21 passed** |
-| Integration tests | `pytest -m integration` | **7 passed in 84.76s** (real stack: start, reachability, restart persistence) |
+| Integration tests | `pytest -m integration` | **7 passed in 83.67s** (incl. renamed test) |
 | Lint | `ruff check .` | All checks passed |
 | Type check | `mypy libs tests` | Success (6 source files) |
-| Compose validation | `docker compose config --quiet` | Exit 0; full config renders correctly |
-| Format | `ruff format --check .` | 1 pre-existing `.md` flagged (out of scope — see note) |
+| Format | `ruff format --check .` | 1 pre-existing `.md` flagged (out of scope — unchanged) |
 
-The integration suite was run against the real Docker daemon (Engine 29.2.1) with the
-images already cached. It exercised, in one run:
+The integration suite was re-run against the real Docker daemon after the test rename and
+passed, including the renamed `test_postgres_accepts_connections`. The follow-up did not
+touch `docker-compose.yml`, so the Compose config validated earlier is unaffected.
 
-- `test_all_services_report_healthy` — Kafka, MinIO, PostgreSQL all report `healthy`
-  (confirms the Kafka/MinIO healthchecks work, including under the alternate host ports)
-- `test_kafka_is_reachable_from_host` / `test_kafka_answers_api_calls`
-- `test_minio_is_reachable_from_host` / `test_postgres_is_reachable_from_host`
-- `test_postgres_accepts_queries`
-- `test_data_survives_a_full_stack_restart` — topic, bucket, and table survive a full
-  `compose restart`
+**Format note (out of scope, unchanged):** `ruff format --check .` still flags
+`docs/reviews/TASK-003-review.md` (a Python code block in the prior TASK-003 review doc).
+This is pre-existing on `main`, not introduced by TASK-004 or its follow-up.
 
-Teardown was verified clean: no `ai-data-platform-it-*` containers, network, or volumes
-remain, and the developer's separate `ai-data-platform` stack was left untouched (the
-tests use a distinct Compose project, network name, and alternate host ports).
+## Findings — resolution status
 
-**Format note (out of scope):** `ruff format --check .` flags
-`docs/reviews/TASK-003-review.md` (a Python code block in the prior review doc). This is
-pre-existing on `main`, not introduced by TASK-004 — `git diff --stat main..HEAD` touches
-only `.env.example`, `README.md`, `docker-compose.yml`, `docs/local-development.md`, and
-`tests/test_docker_compose.py`, all of which are format-clean. It should be fixed
-separately since CI runs `ruff format --check .`.
+| ID | Severity | Finding | Status |
+| -- | -------- | ------- | ------ |
+| M1 | MINOR | `README.md` did not surface the local infrastructure | ✅ Resolved |
+| S1 | SUGGESTION | Local-only default credentials committed | ⏳ Unchanged (open) |
+| S2 | SUGGESTION | `test_postgres_accepts_queries` misnamed | ✅ Resolved |
+| S3 | SUGGESTION | `_parse_ps` comment inaccurate | ✅ Resolved |
 
-## Requirements coverage
+### M1 — Resolved
 
-| Criterion | Status | Evidence |
-| --------- | ------ | -------- |
-| Scope: Kafka, MinIO, PostgreSQL, shared network/config | ✅ | Three services + one named network + named volumes |
-| Out of scope: Airflow, observability, app services, Kubernetes | ✅ | None present |
-| Acceptance: start via documented procedure | ✅ | `docs/local-development.md` (`docker compose up -d --wait`) |
-| Tests: start, reachability, restart behavior | ✅ | 7 integration tests, all passing |
-| No credentials in Git (SPECIFICATION §21) | ⚠️ | Local-only defaults committed — see S1 |
-| Separate dev/prod config (§21) | ✅ | Compose is `LOCAL DEVELOPMENT ONLY`; production is K8s (§19) |
-| Kafka topics created explicitly (§8) | ✅ | `KAFKA_AUTO_CREATE_TOPICS_ENABLE=false` |
+`README.md` now has a `### Local infrastructure` section with a `docker compose up -d`
+quick start and a link to `docs/local-development.md`, and the `## Status` line now reads
+`(TASK-001, TASK-002, TASK-003, TASK-004)`.
 
-Architecture consistency: the three services match the platform topology
-(`ai/SPECIFICATION.md` §6) — Kafka (event backbone), MinIO (raw/lake object storage,
-§12), PostgreSQL (warehouse/metadata, §13) — and the shared network is the hook later
-application services will join. No service boundary is collapsed.
+### S2 — Resolved
 
-## Findings
+`test_postgres_accepts_queries` was renamed to `test_postgres_accepts_connections`, which
+accurately reflects that it runs `pg_isready` rather than executing a query.
 
-### BLOCKER
+### S3 — Resolved
 
-None.
+The `_parse_ps` comment now states that `docker compose ps --format json` emits one JSON
+object per line (JSON lines) and handles the array shape, matching the code's behavior.
 
-### MAJOR
+### S1 — Unchanged (open)
 
-None.
+The local-only default credentials (`minioadmin-local`, `platform-local`) are still
+committed as Compose defaults and in `.env.example`. This remains a non-blocking
+suggestion; it was not part of the requested follow-up scope.
+
+## New / residual findings
 
 ### MINOR
 
-**M1 — `README.md` does not surface the local infrastructure added by TASK-004.**
+**R1 — README quick-start omits `--wait`.**
 
-The primary entry point was updated to add a `### Configuration` section, but its
-`## Development` section still shows only Python/venv setup and quality checks. There is
-no `docker compose up` mention and no link to `docs/local-development.md`, so a developer
-reading the README has no way to discover the Kafka/MinIO/PostgreSQL stack that this task
-provides. The `## Status` line also reads
-`Milestone 0 — Repository Foundation (TASK-001, TASK-002, TASK-003)` and omits TASK-004.
+The new `### Local infrastructure` section instructs `docker compose up -d`, while the
+canonical documented procedure in `docs/local-development.md` is
+`docker compose up -d --wait`. The doc explicitly explains that `--wait` "blocks until
+every service reports healthy, so the command returning successfully means the stack is
+ready to use." The README's shorter form returns immediately while services are still
+starting, which can mislead a developer who then tries to connect right away. Align the
+two commands (one word: `-d --wait`).
 
-The acceptance criterion ("documented procedure") is met by `docs/local-development.md`,
-so this is a discoverability gap, not a missed requirement. Recommend adding a
-"Local infrastructure" subsection (or at minimum a link to `docs/local-development.md`)
-to the README, and updating the status line.
+### BLOCKER / MAJOR
 
-### SUGGESTION
+None.
 
-- **S1 — Local-only default credentials are committed.** `docker-compose.yml` and
-  `.env.example` bake in `minioadmin-local` and `platform-local` as default passwords.
-  This is acceptable — they are explicitly documented as local-only, production supplies
-  real secrets (§21 "separate development and production configuration"), and `.env` is
-  gitignored — but the weak, committed defaults will be flagged by generic secret
-  scanners. Consider documenting the rationale more prominently or generating/forcing a
-  `.env` value on first start.
+## "No unrelated behavior changed" check
 
-- **S2 — `test_postgres_accepts_queries` is misnamed.** It only runs `pg_isready`
-  (a reachability/connection check); the actual query execution is exercised inside
-  `test_data_survives_a_full_stack_restart` via `psql`. The name overstates what it
-  verifies; consider `test_postgres_accepts_connections` or fold it into the reachability
-  test.
+The follow-up diff (`b061009..feb0652`) touches only `README.md` and
+`tests/test_docker_compose.py`:
 
-- **S3 — `_parse_ps` comment is inaccurate.** The comment claims "Recent Compose
-  versions emit a JSON array; older ones emit JSON lines," but `docker compose ps
-  --format json` emits one JSON object per line (JSON lines), not a JSON array. The code
-  itself correctly handles both shapes, so this is a comment-only nit.
+- `README.md` — additive (new section + status line), no removal or rewording of existing
+  content.
+- `tests/test_docker_compose.py` — a comment correction in `_parse_ps` and a test rename;
+  the `_parse_ps` body and the renamed test's body are byte-for-byte unchanged.
 
-## Test quality assessment
-
-The integration suite is well-designed:
-
-- **Hermetic:** distinct Compose project (`ai-data-platform-it`), network name, and
-  alternate host ports (`19092`/`19000`/`19001`/`15432`) so it never disturbs a running
-  developer stack; fixed MinIO credentials keep it independent of any local `.env`.
-- **Clean skip:** `_docker_available()` skips cleanly when the daemon is absent.
-- **Cleanup:** session-scoped fixture runs `down --volumes --remove-orphans` before and
-  after, scoped to the test project.
-- **Meaningful assertions:** the restart test seeds a topic, a MinIO bucket, and a
-  PostgreSQL table, restarts the whole stack, then asserts all three artifacts persist —
-  a genuine restart-persistence check rather than a superficial one.
+No production/implementation code (`docker-compose.yml`, `docs/local-development.md`,
+`.env.example`) was modified. No behavior change introduced.
 
 ## Conclusion
 
-TASK-004 delivers a correct, minimal, well-documented local infrastructure foundation.
-The Compose configuration is sound (validated and exercised end-to-end), the scope
-matches the task exactly, security is appropriately local-only with `.env` gitignored,
-and the integration tests are hermetic and meaningful. The only actionable item is the
-README discoverability gap (M1); the suggestions are polish and non-blocking.
+The follow-up cleanly resolves M1, S2, and S3 with a tightly scoped, additive diff, and
+all tests and checks still pass (unit 21/21, integration 7/7). The only remaining items
+are non-blocking: the pre-existing S1 credential note and the new R1 `--wait` consistency
+nit. TASK-004 is approved.
