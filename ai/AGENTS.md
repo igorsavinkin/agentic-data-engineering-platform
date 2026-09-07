@@ -166,7 +166,7 @@ Use environment/configuration and least privilege.
 
 Default role assignment:
 
-- **Qoder:** primary implementation environment
+- **Codex or Qoder:** primary implementation environment
 - **Qwen Code:** independent reviewer, preferably review-only
 - **DeepSeek/Qwen models:** high-volume straightforward implementation where appropriate
 - **Claude Code:** difficult architecture, distributed-systems reasoning, debugging, Kubernetes, Terraform/AWS, security, and performance analysis
@@ -298,3 +298,10 @@ Never commit eg. TASK-006 changes to feature/TASK-005.
 Never assume that the current branch corresponds to the requested task.
 
 Always verify the branch explicitly before editing or committing.
+
+### Workflow Maintenance Changes
+
+Explicitly requested workflow/tooling maintenance outside the numbered roadmap
+may use a dedicated `codex/<maintenance-name>` branch. Keep it separate from
+TASK branches and do not consume or start a roadmap task as part of maintenance.
+For the two-lane workflow and dependency gates, follow `ai/AGENT_WORKFLOW.md`.
