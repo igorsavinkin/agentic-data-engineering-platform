@@ -1,2 +1,8 @@
-# Runtime dependencies (empty at TASK-002 - no application code yet).
-# Service dependencies land here as milestones progress.
+# Runtime dependencies.
+# Typed configuration (TASK-003): pydantic-settings enforces the APP_ variable
+# conventions described in docs/configuration.md; python-dotenv (also a
+# pydantic-settings dependency) is used directly to inspect .env for
+# unknown APP_ keys.
+pydantic>=2.12
+pydantic-settings>=2.10
+python-dotenv>=1.0
