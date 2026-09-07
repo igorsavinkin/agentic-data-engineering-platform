@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal, TypeVar, cast, overload
+from typing import Literal, TypeVar, overload
 
 from dotenv import dotenv_values
 from pydantic import ValidationError
