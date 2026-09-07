@@ -8,11 +8,13 @@ from pathlib import Path
 
 import pytest
 from pydantic import Field, SecretStr, ValidationError
+from pydantic_settings import SettingsConfigDict
 
 from libs.common.config import (
     AppSettings,
     BaseAppSettings,
     ConfigurationError,
+    Environment,
     format_validation_error,
     load_settings,
 )
@@ -192,3 +194,87 @@ def test_app_settings_requires_environment_field() -> None:
     # AppSettings itself declares `environment` as the single required field.
     assert "environment" in AppSettings.model_fields
     assert AppSettings.model_fields["environment"].is_required()
+
+
+def test_load_settings_with_subclass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MAJOR-1: load_settings() works generically with BaseAppSettings subclasses."""
+
+    class KafkaSettings(BaseAppSettings):
+        environment: Environment
+        bootstrap_servers: str
+
+    monkeypatch.setenv("APP_ENVIRONMENT", "development")
+    monkeypatch.setenv("APP_BOOTSTRAP_SERVERS", "localhost:9092")
+
+    settings = load_settings(KafkaSettings)
+
+    assert isinstance(settings, KafkaSettings)
+    assert settings.bootstrap_servers == "localhost:9092"
+    assert settings.environment == "development"
+
+
+def test_load_settings_rejects_unknown_vars_in_subclass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MAJOR-1: Unknown APP_ variables are rejected even for subclasses."""
+
+    class ServiceSettings(BaseAppSettings):
+        service_port: int = 8080
+
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+    monkeypatch.setenv("APP_SERVICE_PORT", "8080")
+    monkeypatch.setenv("APP_TYPO_VAR", "should-fail")
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_settings(ServiceSettings)
+
+    message = str(exc_info.value)
+    assert "APP_TYPO_VAR" in message
+
+
+def test_dotenv_keys_handles_single_path(tmp_path: Path) -> None:
+    """MINOR-1: _dotenv_keys() correctly handles a single Path/PathLike."""
+    from libs.common.config import _dotenv_keys
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("APP_FOO=bar\n", encoding="utf-8")
+
+    class TestSettings(BaseAppSettings):
+        model_config = SettingsConfigDict(env_file=env_file)
+
+    keys = _dotenv_keys(TestSettings)
+    assert "APP_FOO" in keys
+
+
+def test_dotenv_keys_handles_pathlib_path(tmp_path: Path) -> None:
+    """MINOR-1: _dotenv_keys() handles pathlib.Path without TypeError."""
+    from libs.common.config import _dotenv_keys
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("APP_TEST=value\n", encoding="utf-8")
+
+    class TestSettings(BaseAppSettings):
+        model_config = SettingsConfigDict(env_file=Path(env_file))
+
+    # Should not raise TypeError
+    keys = _dotenv_keys(TestSettings)
+    assert "APP_TEST" in keys
+
+
+def test_duplicate_unknown_variables_eliminated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """MINOR-2: Same variable with different cases produces only one error line."""
+    # Set variable in environment with uppercase
+    monkeypatch.setenv("APP_ENVIRONMENT", "development")
+    monkeypatch.setenv("APP_DUP_VAR", "from-env")
+
+    # Set same variable in .env with lowercase (different case)
+    (tmp_path / ".env").write_text("app_dup_var=from-dotenv\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_settings()
+
+    message = str(exc_info.value)
+    # Should appear only once, not twice
+    assert message.count("APP_DUP_VAR") == 1
