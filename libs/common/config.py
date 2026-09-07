@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar, cast, overload
 
 from dotenv import dotenv_values
 from pydantic import ValidationError
@@ -87,11 +87,12 @@ def format_validation_error(error: ValidationError) -> str:
 def _dotenv_keys(settings_cls: type[BaseAppSettings]) -> list[str]:
     """Return the keys present in the ``.env`` file(s) configured for the class."""
     env_file = settings_cls.model_config.get("env_file")
-    if isinstance(env_file, str):
+    if isinstance(env_file, (str, os.PathLike)):
         files: list[str | Path] = [env_file]
+    elif isinstance(env_file, list):
+        files = [Path(p) if not isinstance(p, Path) else p for p in env_file]
     else:
-        raw = env_file or []
-        files = [Path(p) if not isinstance(p, Path) else p for p in raw]  # type: ignore[union-attr]
+        files = []
     keys: list[str] = []
     for path in files:
         keys.extend(dotenv_values(path))
@@ -108,34 +109,41 @@ def _unknown_app_variables(settings_cls: type[BaseAppSettings]) -> list[str]:
     in both the environment and ``.env`` — to surface typos immediately.
     """
     known = {f"app_{field}" for field in settings_cls.model_fields}
-    candidates = {*os.environ, *_dotenv_keys(settings_cls)}
+    # Normalize to uppercase before set construction to avoid duplicates
+    # when the same variable appears with different cases across sources.
+    candidates = {v.upper() for v in {*os.environ, *_dotenv_keys(settings_cls)}}
     return sorted(
-        variable.upper()
+        variable
         for variable in candidates
         if variable.lower().startswith("app_") and variable.lower() not in known
     )
 
 
-def load_settings() -> AppSettings:
-    """Load platform settings from the environment, failing fast.
+TSettings = TypeVar("TSettings", bound=BaseAppSettings)
 
-    Raises:
-        ConfigurationError: a required variable is missing, a value is
-            invalid, or an unknown ``APP_`` variable is set (in the
-            environment or in ``.env``). Services must treat this as a
-            startup failure.
-    """
-    unknown = _unknown_app_variables(AppSettings)
+
+@overload
+def load_settings() -> AppSettings: ...
+
+
+@overload
+def load_settings(settings_cls: type[TSettings]) -> TSettings: ...
+
+
+def load_settings(
+    settings_cls: type[BaseAppSettings] | None = None,
+) -> BaseAppSettings:
+    cls = settings_cls or AppSettings
+    unknown = _unknown_app_variables(cls)
+
     if unknown:
-        details = "\n".join(
-            f"  {variable}: unknown APP_ variable (typo, or not supported by this service)"
-            for variable in unknown
-        )
+        vars_list = ", ".join(unknown)
         raise ConfigurationError(
-            f"Invalid configuration:\n{details}\n"
+            f"Unknown configuration variable(s): {vars_list}\n"
             "See docs/configuration.md for the expected variables."
         )
+
     try:
-        return AppSettings()
+        return cls()
     except ValidationError as exc:
         raise ConfigurationError(format_validation_error(exc)) from exc
