@@ -32,10 +32,20 @@ pytest                # tests
 
 Dependencies: runtime in `requirements.txt`, development tooling (pytest, Ruff, mypy) in `requirements-dev.txt`. Tool configuration lives in `pyproject.toml`.
 
+### Local infrastructure
+
+Kafka, MinIO, and PostgreSQL run locally via Docker Compose for development and testing. Start the stack with:
+
+```bash
+docker compose up -d
+```
+
+See [docs/local-development.md](docs/local-development.md) for prerequisites, connection details, and troubleshooting.
+
 ### Configuration
 
 Configuration comes from `APP_`-prefixed environment variables — copy `.env.example` to `.env` for local development (`.env` is gitignored). Conventions, variables, and error behavior: [docs/configuration.md](docs/configuration.md).
 
 ## Status
 
-Milestone 0 — Repository Foundation (TASK-001, TASK-002, TASK-003).
+Milestone 0 — Repository Foundation (TASK-001, TASK-002, TASK-003, TASK-004).

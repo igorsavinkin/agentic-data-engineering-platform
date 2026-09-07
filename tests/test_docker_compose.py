@@ -77,7 +77,8 @@ def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]
 
 
 def _parse_ps(output: str) -> list[dict[str, str]]:
-    # Recent Compose versions emit a JSON array; older ones emit JSON lines.
+    # docker compose ps --format json emits one JSON object per line (JSON lines);
+    # some versions may emit a JSON array instead. Handle both shapes.
     try:
         parsed = json.loads(output)
     except json.JSONDecodeError:
@@ -141,7 +142,7 @@ def test_postgres_is_reachable_from_host(stack: None) -> None:
         pass
 
 
-def test_postgres_accepts_queries(stack: None) -> None:
+def test_postgres_accepts_connections(stack: None) -> None:
     result = _compose("exec", "-T", "postgres", "pg_isready")
     assert "accepting connections" in result.stdout
 
