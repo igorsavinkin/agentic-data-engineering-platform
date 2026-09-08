@@ -54,11 +54,35 @@ Qoder's implementation should be committed before Qwen reviews it, giving Qwen a
 
 ### Rule 5 — No push before the review gate
 
-Normal sequence:
-
+Normal sequence
 ```text
-Implement → test → commit → Qwen review → fix findings → re-test
-→ Qwen approval → push → PR → merge
+TASK created
+    ↓
+Human creates feature branch
+    ↓
+Qoder implementation
+    ↓
+Qoder tests
+    ↓
+Qoder commits implementation
+    ↓
+Qwen reviews
+    ↓
+Qwen creates docs/reviews/TASK-XXX-review.md
+    ↓
+Human/Qoder commits review artifact
+    ↓
+Fix findings if necessary
+    ↓
+Qwen re-review
+    ↓
+Review APPROVED
+    ↓
+Push branch
+    ↓
+PR
+    ↓
+Human merge
 ```
 
 # 2. Complete Task Lifecycle
