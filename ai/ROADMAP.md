@@ -1309,38 +1309,12 @@ you need an independent second opinion
 
 # 27. Parallel Development Rules
 
-Do not parallelize aggressively at the beginning.
-
-During the foundation phase:
-
-```text
-ONE TASK
- ↓
-ONE IMPLEMENTATION
- ↓
-REVIEW
- ↓
-MERGE
-```
-
-After the architecture stabilizes, parallel work may be used:
-
-```text
-              main
-                │
-        ┌───────┼────────┐
-        ▼       ▼        ▼
-      task A  task B    task C
-      Qoder   Qoder     Qoder
-        │       │        │
-        └───────┼────────┘
-                ▼
-              Review
-                │
-              Merge
-```
-
-Only parallelize tasks that have clearly separated interfaces.
+From TASK-006 onward, allow at most two active tasks in separate worktrees:
+one implementation lane and one independent review/fixes/PR/CI lane.
+Follow the dependency gates and review-base rules in `ai/AGENT_WORKFLOW.md`.
+Contract-sensitive dependencies, including TASK-006 and TASK-007, require
+independent approval before dependent implementation starts. Each task remains
+a separate agent execution selected by the human; do not chain tasks automatically.
 
 ---
 

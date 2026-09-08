@@ -275,22 +275,59 @@ Default branch model:
 
 ```text
 main
-  ├── feature/TASK-001-repository-foundation
-  ├── feature/TASK-002-python-tooling
-  └── feature/TASK-xxx-short-description
+  ├── feature/TASK-001
+  ├── feature/TASK-002
+  └── feature/TASK-xxx
 ```
 
 One focused task should normally map to one focused branch/PR.
 
-During early milestones:
+From TASK-006 onward, use at most two active engineering tasks in separate
+worktrees: one in independent review/fixes/PR/CI, one in implementation.
+Codex may take over Qoder's builder role. Each task still has a separate agent
+execution and exact `feature/TASK-xxx` branch; no automatic task chaining.
+The human selects each next task and retains the merge decision.
 
-```text
-ONE TASK → IMPLEMENT → REVIEW → MERGE
+Start a dependent task only after its prerequisite implementation is committed
+and interfaces are stable. For contract-sensitive work (especially TASK-006 and
+TASK-007), wait for independent approval before starting dependent work. If a
+review changes the interface, pause the dependent task and reconcile it first.
+Independent work can start from main; stacked work must record its parent commit
+and use that commit as the review base. After the parent merges, reconcile the
+branch with main and inspect the PR diff before merging.
+
+Example for a task whose prerequisites have merged:
+
+```bash
+git worktree add -b feature/TASK-006 ../ai-platform-task-006 main
 ```
 
-After interfaces stabilize, Qoder Worktrees may be used for parallel tasks with clearly separated files/interfaces.
+Never let multiple agents edit one worktree concurrently. When a task merges,
+move the implementation task to review and start a separately selected task only
+when its dependency gate permits. Do not create five or more active lanes.
 
-Never allow multiple agents to modify the same working tree concurrently.
+Codex/Qoder install the project-managed hooks during checkout setup as documented
+in `scripts/README.md`. Pre-commit runs Ruff lint and format checks; pre-push runs
+pytest and mypy. The Git process must inherit the active Python environment.
+Qwen selectively reruns critical or suspicious tests rather than duplicating CI.
+
+Builders run focused tests during development and `scripts/task_check.ps1` or
+`bash scripts/task_check.sh` before committing, plus relevant integration checks.
+Reviewers inspect test quality and selectively rerun critical or suspicious tests
+according to `ai/REVIEWER.md`. Complete Qwen review and resolve blocking findings
+before pushing to origin, then open the PR to start CI. Follow the commands in
+`docs/TASK_WORKFLOW.md`. Review can overlap another task's implementation when
+dependency gates permit. CI is the authoritative full merge gate for its configured
+checks; require successful checks on the final PR revision. Review any subsequent
+fixes and rerun affected checks. Human owners need not repeat successful checks.
+
+Resolve BLOCKER/Critical and MAJOR/High findings before acceptance, or document
+an explicit owner decision rejecting the finding. Fix Minor findings when cheap
+or consequential; defer suggestions with rationale and a revisit trigger in
+`docs/reviews/FOLLOWUPS.md`. Never defer a blocking defect as a suggestion.
+
+Branch protection should require a PR and the actual Quality checks status and
+prevent direct pushes to main. This policy does not itself configure GitHub.
 
 ## 6. Source-Implementation Workflow
 

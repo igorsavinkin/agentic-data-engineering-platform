@@ -166,7 +166,7 @@ Use environment/configuration and least privilege.
 
 Default role assignment:
 
-- **Qoder:** primary implementation environment
+- **Codex or Qoder:** primary implementation environment
 - **Qwen Code:** independent reviewer, preferably review-only
 - **DeepSeek/Qwen models:** high-volume straightforward implementation where appropriate
 - **Claude Code:** difficult architecture, distributed-systems reasoning, debugging, Kubernetes, Terraform/AWS, security, and performance analysis
@@ -239,3 +239,82 @@ Never automatically use:
 - destructive checkout operations
 
 Report the dirty files and wait for human instructions.
+## 16. Git Task Isolation
+
+Each TASK-xxx must be implemented in its own dedicated Git branch.
+
+### Branch naming
+
+Use:
+
+feature/TASK-xxx
+
+Examples:
+
+feature/TASK-001
+feature/TASK-006
+feature/TASK-025
+Before starting a task
+
+Before modifying any file, the implementation agent MUST:
+
+Check the current Git branch.
+Check git status.
+Confirm the working tree state.
+Create or switch to the branch corresponding exactly to the current task.
+Verify that the active branch is feature/TASK-xxx.
+
+Do not begin implementation while on another TASK-* branch.
+
+If the working tree contains uncommitted changes belonging to another task, stop and report the situation instead of committing them into the current task branch.
+
+### One Task Per Execution
+
+One Qoder execution corresponds to exactly one TASK-xxx.
+
+Do not implement multiple tasks in one Qoder execution.
+
+Do not automatically continue with the next task after completing the current task.
+
+The agent must stop after completing the assigned task.
+
+### Commit Isolation
+
+A task commit must contain only changes belonging to that task.
+
+Before committing:
+
+inspect git status;
+inspect git diff;
+verify that no unrelated task changes are included.
+
+After committing:
+
+verify the commit exists on feature/TASK-xxx;
+verify the working tree status;
+report the commit hash.
+
+### Task Completion
+
+A task is complete only when:
+
+implementation is finished;
+required tests have been run;
+the task-specific Git diff has been reviewed;
+the changes have been committed to feature/TASK-xxx;
+the commit hash has been reported;
+no subsequent TASK-xxx is started automatically.
+Branch Safety
+
+Never commit eg. TASK-006 changes to feature/TASK-005.
+
+Never assume that the current branch corresponds to the requested task.
+
+Always verify the branch explicitly before editing or committing.
+
+### Workflow Maintenance Changes
+
+Explicitly requested workflow/tooling maintenance outside the numbered roadmap
+may use a dedicated `codex/<maintenance-name>` branch. Keep it separate from
+TASK branches and do not consume or start a roadmap task as part of maintenance.
+For the two-lane workflow and dependency gates, follow `ai/AGENT_WORKFLOW.md`.

@@ -1,6 +1,8 @@
 # Configuration
 
-Application configuration is typed, validated, and loaded exclusively from the environment. No configuration values live in code, and no credentials live in Git.
+Application configuration is typed, validated, and loaded exclusively from the
+environment. No configuration values live in code, and no credentials live in
+Git.
 
 ## Conventions
 
