@@ -153,6 +153,16 @@ If CI finds a defect, fix it locally, validate it, commit it, obtain Qwen review
 of the changed implementation, commit the updated report, and push again.
 The owner merges only after review findings are resolved and final CI passes.
 
+From the task worktree, the owner can squash-merge the current branch's PR on
+GitHub from the local console:
+
+```powershell
+gh pr merge --squash
+```
+
+This combines the PR's commits into one commit on the remote `main` branch.
+The local `main` checkout is updated separately below.
+
 After merging, update the main checkout:
 
 ```powershell
