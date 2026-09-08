@@ -171,7 +171,57 @@ git switch main
 git pull --ff-only
 ```
 
-## 6. Use two lanes when dependencies permit
+## 6. Remove the completed task worktree and branches
+
+After confirming the PR is merged, run cleanup from the main checkout. Replace
+`006` consistently for another task. Stop if a command fails and inspect the
+reason before continuing.
+
+```powershell
+cd 'C:\Users\igors\RnD\Agentic data engineering platform'
+git switch main
+git pull --ff-only origin main
+git worktree list
+git -C '../ai-platform-task-006' status --short
+```
+
+Confirm the worktree path is the completed task's directory. Save any uncommitted
+work and local files you need, including ignored files such as `.env`, before
+removing it. Close terminals and editors using that directory.
+
+Remove the worktree before deleting its local branch:
+
+```powershell
+git worktree remove '../ai-platform-task-006'
+git branch -d feature/TASK-006
+```
+
+Use `git worktree remove` rather than deleting the folder manually; it also
+removes Git's worktree registration. If it refuses because the worktree is dirty,
+preserve or resolve those files instead of forcing removal.
+
+After a squash merge, `-d` may report that the branch is not fully merged because
+the original commits are not ancestors of `main`. Only after confirming the PR
+is merged and the branch has no later commits to preserve, delete it with:
+
+```powershell
+git branch -D feature/TASK-006
+```
+
+If GitHub has not already deleted the remote task branch, delete it:
+
+```powershell
+git push origin --delete feature/TASK-006
+```
+
+Refresh remote-tracking references and verify the remaining worktrees:
+
+```powershell
+git fetch --prune
+git worktree list
+```
+
+## 7. Use two lanes when dependencies permit
 
 Keep at most two active engineering tasks, each in a separate worktree and agent
 execution. One task can be in Qwen review, fixes, or CI while the other is being
