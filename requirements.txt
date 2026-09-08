@@ -6,3 +6,6 @@
 pydantic>=2.12
 pydantic-settings>=2.10
 python-dotenv>=1.0
+
+# Kafka transport client (TASK-008).
+confluent-kafka>=2.15,<3
