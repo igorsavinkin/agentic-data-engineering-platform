@@ -21,7 +21,7 @@ REQUIRED_DIRS = [
     "services/api",
     "services/agent",
     "libs",
-    "libs/event-contracts",
+    "libs/event_contracts",
     "libs/common",
     "libs/observability",
     "tests",
