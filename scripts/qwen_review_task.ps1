@@ -4,7 +4,9 @@ param(
     [ValidatePattern('^(TASK-)?[0-9]{1,3}$')]
     [string]$Task,
     [string]$Base = 'main',
-    [scriptblock]$Reviewer
+    [scriptblock]$Reviewer,
+    [switch]$Preview,
+    [string]$QwenCommand = 'qwen'
 )
 $ErrorActionPreference = 'Stop'
 function Read-Git {
@@ -43,12 +45,41 @@ $commits
 Diff:
 $diff
 "@
+    if ($Preview) {
+        $prompt
+        return
+    }
+    $reportPath = "docs/reviews/$taskId-review.md"
+    $previousReport = if (Test-Path $reportPath) {
+        (Get-Item $reportPath).LastWriteTimeUtc
+    } else { $null }
     if ($Reviewer) {
         & $Reviewer $prompt
         if (-not $?) { throw 'Reviewer launcher failed.' }
     } else {
-        $prompt
+        $launcher = Get-Command $QwenCommand -ErrorAction SilentlyContinue
+        if (-not $launcher) {
+            throw "Cannot access '$QwenCommand'. Check PATH and execution permissions, or supply -QwenCommand with the launcher path. Use -Preview to print the prompt."
+        }
+        # Keep the potentially large diff off Windows' command line. Qwen Code
+        # 0.23 supports stdin context plus a short non-interactive prompt.
+        $oldEncoding = $OutputEncoding
+        try {
+            $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+            $prompt | & $launcher.Source -p 'Perform the review supplied on stdin.'
+            if ($LASTEXITCODE -ne 0) { throw "Qwen exited with code $LASTEXITCODE." }
+        } finally {
+            $OutputEncoding = $oldEncoding
+        }
     }
+    if (-not (Test-Path $reportPath -PathType Leaf)) {
+        throw "Reviewer did not create $reportPath. Review is incomplete."
+    }
+    $report = Get-Item $reportPath
+    if ($report.Length -eq 0 -or ($previousReport -and $report.LastWriteTimeUtc -eq $previousReport)) {
+        throw "Reviewer left an empty or unchanged report at $reportPath. Review is incomplete."
+    }
+    Write-Output "Review report written: $reportPath (reviewed $headCommit). Inspect its verdict before acceptance."
 } finally {
     Pop-Location
 }

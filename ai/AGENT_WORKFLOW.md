@@ -306,11 +306,18 @@ Never let multiple agents edit one worktree concurrently. When a task merges,
 move the implementation task to review and start a separately selected task only
 when its dependency gate permits. Do not create five or more active lanes.
 
+Codex/Qoder install the project-managed hooks during checkout setup as documented
+in `scripts/README.md`. Pre-commit runs Ruff lint and format checks; pre-push runs
+pytest and mypy. The Git process must inherit the active Python environment.
+Qwen selectively reruns critical or suspicious tests rather than duplicating CI.
+
 Builders run focused tests during development and `scripts/task_check.ps1` or
 `bash scripts/task_check.sh` before committing, plus relevant integration checks.
 Reviewers inspect test quality and selectively rerun critical or suspicious tests
-according to `ai/REVIEWER.md`. Open the PR after committing so CI and independent
-review can overlap. CI is the authoritative full merge gate for its configured
+according to `ai/REVIEWER.md`. Complete Qwen review and resolve blocking findings
+before pushing to origin, then open the PR to start CI. Follow the commands in
+`docs/TASK_WORKFLOW.md`. Review can overlap another task's implementation when
+dependency gates permit. CI is the authoritative full merge gate for its configured
 checks; require successful checks on the final PR revision. Review any subsequent
 fixes and rerun affected checks. Human owners need not repeat successful checks.
 
