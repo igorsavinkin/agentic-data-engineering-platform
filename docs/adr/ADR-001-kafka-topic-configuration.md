@@ -20,7 +20,7 @@ Configure five initial Kafka topics for the AI Data Platform with explicit parti
 
 ### Partition Count Rationale
 
-- **Product topics (3 partitions):** Balances ordering requirements with throughput. Three partitions allow parallel consumption by multiple processor instances while preserving per-source-product ordering. For local development this provides realistic concurrency without excessive resource usage. Production scaling can increase this count via topic reassignment.
+- **Product topics (3 partitions):** Balances ordering requirements with throughput. Three partitions allow parallel consumption by multiple processor instances while preserving per-source-product ordering. For local development this provides realistic concurrency without excessive resource usage. Increasing the partition count changes key-to-partition mapping for new records; it requires an explicit migration plan to preserve ordering across the change. Replica reassignment alone does not increase partition count.
 
 - **Lifecycle/quality topics (1 partition):** These topics carry low-volume operational events where global ordering is more valuable than parallelism. Single-partition ensures all pipeline events are seen in order by monitoring consumers.
 
@@ -33,6 +33,11 @@ For `products.raw.v1` and `products.validated.v1`, the partition key is the conc
 3. Different products/sources distribute across partitions for parallel processing
 
 Example key: `bestbuy:12345`, `ebay:listing-abc`
+
+Ordering assumes consistent key encoding and partitioner behavior, a fixed
+partition count, and ordered producer sends. Kafka's
+[partition expansion guidance](https://kafka.apache.org/43/operations/basic-kafka-operations/)
+explains why adding partitions can move subsequent records for an existing key.
 
 ### Retention Policy
 
@@ -58,7 +63,10 @@ Each service uses a dedicated consumer group to enable independent scaling and o
 - **`raw-writer`:** Consumes `products.raw.v1` for Bronze persistence
 - **`lake-writer`:** Consumes `products.validated.v1` for Silver persistence
 
-Multiple services consuming the same topic with different groups enables at-least-once delivery semantics per service.
+Different groups give services independent offsets. At-least-once processing also
+requires committing offsets only after successful processing and handling retries
+and duplicates; group assignment alone does not establish delivery guarantees.
+Groups are created when consumers use them, not by the topic-management script.
 
 ### Ordering Assumptions
 
@@ -66,7 +74,7 @@ Multiple services consuming the same topic with different groups enables at-leas
 
 - **Across partitions:** No global ordering guarantee. Consumers must not assume that events from different source/product combinations arrive in any particular order relative to each other.
 
-- **Temporal ordering:** `collected_at` timestamps may not be monotonically increasing across partitions due to network delays, source latency differences, or clock skew. Processing logic should use `collected_at` for business logic, not arrival order.
+- **Temporal ordering:** `collected_at` timestamps may not be monotonically increasing even within a partition due to delayed observations, replay, concurrent producers, or clock skew. Kafka orders appended records, not observation timestamps. Processing logic should use `collected_at` for business logic, not arrival order.
 
 ## Consequences
 
@@ -95,11 +103,19 @@ Multiple services consuming the same topic with different groups enables at-leas
 
 Topics are created via `scripts/manage_kafka_topics.py` which:
 1. Reads configuration from environment variables or defaults
-2. Creates topics idempotently (skips if already exists)
-3. Validates topic configuration matches expected settings
+2. Creates topics idempotently with `--if-not-exists`
+3. Validates exact partition count, replication factor, and explicit retention for both new and existing topics
 4. Returns non-zero exit code on failure for CI/CD integration
 
 Local development uses Docker Compose health checks to ensure Kafka is ready before topic creation.
+
+Replication factor is 1 for the local single-broker stack: it provides no broker
+failure redundancy. Retention is a replay window, not a substitute for durable
+lake storage. Configuration drift fails validation and is never automatically
+altered or deleted. After a timeout or partial failure, rerun creation against
+the same target; successfully created topics are preserved and checked again.
+
+See [the script guide](../../scripts/README.md) for commands and target selection.
 
 ## Alternatives Considered
 
@@ -107,6 +123,6 @@ Local development uses Docker Compose health checks to ensure Kafka is ready bef
 
 2. **Auto-create topics:** Rejected because implicit topic creation leads to typos, inconsistent configuration, and makes deployment state unclear.
 
-3. **Higher partition counts (6+):** Rejected for initial implementation. Local development resources are limited and three partitions provides sufficient parallelism demonstration. Production scaling can increase partition count via topic reassignment when actual throughput requirements are measured.
+3. **Higher partition counts (6+):** Rejected for initial implementation. Local development resources are limited and three partitions provides sufficient parallelism demonstration. Future partition expansion requires measured throughput needs and a migration plan for ordering.
 
 4. **Time-based partition keys:** Rejected because time-based keys would scatter observations for the same product across many partitions, breaking ordering guarantees needed for deduplication.

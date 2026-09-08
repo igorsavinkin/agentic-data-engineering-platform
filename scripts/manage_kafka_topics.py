@@ -16,17 +16,18 @@ Usage:
     python scripts/manage_kafka_topics.py list
 
 Environment Variables:
-    KAFKA_BOOTSTRAP_SERVERS: Kafka broker address (default: localhost:9092)
+    KAFKA_BOOTSTRAP_SERVERS: Broker address reachable by the selected CLI
+                           (Compose default: kafka:29092; direct: localhost:9092)
     KAFKA_BIN_DIR: Path to Kafka bin directory for CLI tools (optional,
-                   uses docker exec for local development if not set)
+                   uses docker compose exec if not set)
 """
 
-import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
 
 
 @dataclass
@@ -87,12 +88,33 @@ TOPICS = [
 
 
 def get_bootstrap_servers() -> str:
-    """Get Kafka bootstrap servers from environment or default."""
-    return os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    """Select the listener reachable from the explicitly selected CLI mode."""
+    default = "localhost:9092" if os.environ.get("KAFKA_BIN_DIR") else "kafka:29092"
+    return os.environ.get("KAFKA_BOOTSTRAP_SERVERS", default)
+
+
+def kafka_command(bootstrap_servers: str, *arguments: str) -> list[str]:
+    """Use one target consistently; never fall back to a different cluster."""
+    bin_dir = os.environ.get("KAFKA_BIN_DIR")
+    if bin_dir:
+        executable = "kafka-topics.bat" if os.name == "nt" else "kafka-topics.sh"
+        prefix = [str(Path(bin_dir) / executable)]
+    else:
+        prefix = [
+            "docker",
+            "compose",
+            "-f",
+            str(Path(__file__).resolve().parents[1] / "docker-compose.yml"),
+            "exec",
+            "-T",
+            "kafka",
+            "/opt/kafka/bin/kafka-topics.sh",
+        ]
+    return [*prefix, "--bootstrap-server", bootstrap_servers, *arguments]
 
 
 def run_kafka_command(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
-    """Run a Kafka CLI command and return exit code, stdout, stderr."""
+    """Bound each CLI call and surface failures to the caller."""
     try:
         result = subprocess.run(
             cmd,
@@ -104,56 +126,20 @@ def run_kafka_command(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return 1, "", f"Command timed out after {timeout}s"
-    except FileNotFoundError as e:
-        return 1, "", f"Command not found: {e}"
+    except OSError as error:
+        return 1, "", f"Cannot execute Kafka CLI: {error}"
 
 
 def create_topic(topic: TopicConfig, bootstrap_servers: str) -> bool:
-    """Create a Kafka topic if it doesn't already exist.
+    """Create if absent, then verify settings even on retries or concurrent creation.
 
-    Returns True if topic was created or already exists with correct config.
+    No alter/delete commands are issued: a drifted topic requires operator action.
+    If execution times out after creation, rerunning safely verifies the result.
     """
-    # Check if topic already exists
-    list_cmd = [
-        "docker",
-        "exec",
-        "ai-data-platform-kafka-1",
-        "/opt/kafka/bin/kafka-topics.sh",
-        "--bootstrap-server",
-        "localhost:9092",
-        "--list",
-    ]
-    returncode, stdout, stderr = run_kafka_command(list_cmd)
-
-    if returncode != 0:
-        # Fallback to direct kafka-topics if docker exec fails
-        list_cmd = [
-            "/opt/kafka/bin/kafka-topics.sh",
-            "--bootstrap-server",
-            bootstrap_servers,
-            "--list",
-        ]
-        returncode, stdout, stderr = run_kafka_command(list_cmd)
-
-    if returncode != 0:
-        print(f"ERROR: Failed to list topics: {stderr}")
-        return False
-
-    existing_topics = [t.strip() for t in stdout.strip().split("\n") if t.strip()]
-
-    if topic.name in existing_topics:
-        print(f"Topic '{topic.name}' already exists, skipping creation")
-        return True
-
-    # Create the topic
-    create_cmd = [
-        "docker",
-        "exec",
-        "ai-data-platform-kafka-1",
-        "/opt/kafka/bin/kafka-topics.sh",
-        "--bootstrap-server",
-        "localhost:9092",
+    command = kafka_command(
+        bootstrap_servers,
         "--create",
+        "--if-not-exists",
         "--topic",
         topic.name,
         "--partitions",
@@ -162,218 +148,94 @@ def create_topic(topic: TopicConfig, bootstrap_servers: str) -> bool:
         str(topic.replication_factor),
         "--config",
         f"retention.ms={topic.retention_ms}",
-        "--if-not-exists",
-    ]
-
-    print(f"Creating topic '{topic.name}'...")
-    returncode, stdout, stderr = run_kafka_command(create_cmd)
-
-    if returncode != 0:
-        # Fallback to direct command
-        create_cmd = [
-            "/opt/kafka/bin/kafka-topics.sh",
-            "--bootstrap-server",
-            bootstrap_servers,
-            "--create",
-            "--topic",
-            topic.name,
-            "--partitions",
-            str(topic.partitions),
-            "--replication-factor",
-            str(topic.replication_factor),
-            "--config",
-            f"retention.ms={topic.retention_ms}",
-            "--if-not-exists",
-        ]
-        returncode, stdout, stderr = run_kafka_command(create_cmd)
-
-    if returncode != 0:
-        print(f"ERROR: Failed to create topic '{topic.name}': {stderr}")
+    )
+    code, _, error = run_kafka_command(command)
+    if code:
+        print(f"ERROR: Failed to create topic '{topic.name}': {error}", file=sys.stderr)
         return False
-
-    print(f"Successfully created topic '{topic.name}'")
-    return True
+    return validate_topic(topic, bootstrap_servers)
 
 
 def validate_topic(topic: TopicConfig, bootstrap_servers: str) -> bool:
-    """Validate that a topic exists and has the correct configuration."""
-    describe_cmd = [
-        "docker",
-        "exec",
-        "ai-data-platform-kafka-1",
-        "/opt/kafka/bin/kafka-topics.sh",
-        "--bootstrap-server",
-        "localhost:9092",
-        "--describe",
-        "--topic",
-        topic.name,
-    ]
-
-    returncode, stdout, stderr = run_kafka_command(describe_cmd)
-
-    if returncode != 0:
-        # Fallback to direct command
-        describe_cmd = [
-            "/opt/kafka/bin/kafka-topics.sh",
-            "--bootstrap-server",
-            bootstrap_servers,
-            "--describe",
-            "--topic",
-            topic.name,
-        ]
-        returncode, stdout, stderr = run_kafka_command(describe_cmd)
-
-    if returncode != 0:
-        print(f"ERROR: Topic '{topic.name}' does not exist")
+    """Require exact metadata and explicit retention overrides from ADR-001."""
+    code, output, error = run_kafka_command(
+        kafka_command(bootstrap_servers, "--describe", "--topic", topic.name)
+    )
+    if code:
+        print(f"ERROR: Cannot describe topic '{topic.name}': {error}", file=sys.stderr)
         return False
 
-    # Parse the output to validate configuration
-    lines = stdout.strip().split("\n")
-    if not lines:
-        print(f"ERROR: No description found for topic '{topic.name}'")
+    # Kafka accepts a regex for --topic. Select this exact topic's summary, not
+    # another regex match or a partition-detail line. Whitespace varies by version.
+    summaries = []
+    for line in output.splitlines():
+        fields = dict(re.findall(r"(Topic|PartitionCount|ReplicationFactor):\s*([^\s]+)", line))
+        if fields.get("Topic") == topic.name and "PartitionCount" in fields:
+            summaries.append((line, fields))
+    if len(summaries) != 1:
+        print(f"ERROR: Missing or ambiguous metadata for '{topic.name}'", file=sys.stderr)
         return False
-
-    # First line contains topic metadata
-    metadata_line = lines[0]
-
-    # Check partition count
-    if f"PartitionCount:{topic.partitions}" not in metadata_line:
-        print(
-            f"ERROR: Topic '{topic.name}' has wrong partition count. "
-            f"Expected {topic.partitions}, got different value"
-        )
-        print(f"Metadata: {metadata_line}")
-        return False
-
-    # Check replication factor
-    if f"ReplicationFactor:{topic.replication_factor}" not in metadata_line:
-        print(
-            f"ERROR: Topic '{topic.name}' has wrong replication factor. "
-            f"Expected {topic.replication_factor}, got different value"
-        )
-        return False
-
-    # Check retention from Configs line
-    configs_line = next((line for line in lines if "Configs:" in line), None)
-    if configs_line:
-        expected_retention = f"retention.ms={topic.retention_ms}"
-        if expected_retention not in configs_line:
+    line, fields = summaries[0]
+    expected = {
+        "PartitionCount": str(topic.partitions),
+        "ReplicationFactor": str(topic.replication_factor),
+    }
+    for key, value in expected.items():
+        if fields.get(key) != value:
             print(
-                f"WARNING: Topic '{topic.name}' retention may not match expected value. "
-                f"Expected {expected_retention}"
+                f"ERROR: Topic '{topic.name}' {key}: expected {value}, got {fields.get(key)!r}",
+                file=sys.stderr,
             )
-            print(f"Configs: {configs_line}")
-    else:
-        print(f"WARNING: Could not verify retention for topic '{topic.name}'")
-
+            return False
+    configs = line.split("Configs:", 1)[1] if "Configs:" in line else ""
+    retention = re.search(r"(?:^|[,\s])retention\.ms=(-?\d+)(?=,|\s|$)", configs)
+    if retention is None or int(retention[1]) != topic.retention_ms:
+        print(
+            f"ERROR: Topic '{topic.name}' requires retention.ms={topic.retention_ms}; "
+            "explicit value is missing or different",
+            file=sys.stderr,
+        )
+        return False
     print(f"Topic '{topic.name}' configuration is valid")
     return True
 
 
 def list_topics(bootstrap_servers: str) -> bool:
-    """List all topics with their configurations."""
-    list_cmd = [
-        "docker",
-        "exec",
-        "ai-data-platform-kafka-1",
-        "/opt/kafka/bin/kafka-topics.sh",
-        "--bootstrap-server",
-        "localhost:9092",
-        "--list",
-    ]
-
-    returncode, stdout, stderr = run_kafka_command(list_cmd)
-
-    if returncode != 0:
-        # Fallback to direct command
-        list_cmd = [
-            "/opt/kafka/bin/kafka-topics.sh",
-            "--bootstrap-server",
-            bootstrap_servers,
-            "--list",
-        ]
-        returncode, stdout, stderr = run_kafka_command(list_cmd)
-
-    if returncode != 0:
-        print(f"ERROR: Failed to list topics: {stderr}")
+    """Describe listed topics, failing if any details cannot be retrieved."""
+    code, output, error = run_kafka_command(kafka_command(bootstrap_servers, "--list"))
+    if code:
+        print(f"ERROR: Failed to list topics: {error}", file=sys.stderr)
         return False
-
-    topics = [t.strip() for t in stdout.strip().split("\n") if t.strip()]
-
-    if not topics:
-        print("No topics found")
-        return True
-
-    print(f"Found {len(topics)} topic(s):\n")
-
-    for topic_name in sorted(topics):
-        # Describe each topic
-        describe_cmd = [
-            "docker",
-            "exec",
-            "ai-data-platform-kafka-1",
-            "/opt/kafka/bin/kafka-topics.sh",
-            "--bootstrap-server",
-            "localhost:9092",
-            "--describe",
-            "--topic",
-            topic_name,
-        ]
-
-        returncode, stdout, stderr = run_kafka_command(describe_cmd)
-
-        if returncode == 0:
-            print(stdout)
+    success = True
+    for name in sorted(filter(None, (line.strip() for line in output.splitlines()))):
+        code, details, error = run_kafka_command(
+            kafka_command(bootstrap_servers, "--describe", "--topic", name)
+        )
+        if code:
+            print(f"ERROR: Cannot describe topic '{name}': {error}", file=sys.stderr)
+            success = False
         else:
-            print(f"  {topic_name} (could not retrieve details)")
+            print(details)
+    return success
 
-    return True
 
-
-def main():
-    """Main entry point for Kafka topic management."""
-    if len(sys.argv) < 2:
+def main() -> int:
+    """Return a failing exit status for any partial failure."""
+    if len(sys.argv) != 2:
         print(__doc__)
-        sys.exit(1)
-
+        return 1
     command = sys.argv[1].lower()
     bootstrap_servers = get_bootstrap_servers()
-
-    if command == "create":
-        print("Creating Kafka topics...\n")
-        success = True
-        for topic in TOPICS:
-            if not create_topic(topic, bootstrap_servers):
-                success = False
-        if success:
-            print("\nAll topics created successfully")
-            sys.exit(0)
-        else:
-            print("\nSome topics failed to create", file=sys.stderr)
-            sys.exit(1)
-
-    elif command == "validate":
-        print("Validating Kafka topic configuration...\n")
-        success = True
-        for topic in TOPICS:
-            if not validate_topic(topic, bootstrap_servers):
-                success = False
-        if success:
-            print("\nAll topics validated successfully")
-            sys.exit(0)
-        else:
-            print("\nSome topics failed validation", file=sys.stderr)
-            sys.exit(1)
-
-    elif command == "list":
-        if not list_topics(bootstrap_servers):
-            sys.exit(1)
-
-    else:
-        print(f"Unknown command: {command}")
-        print("Available commands: create, validate, list")
-        sys.exit(1)
+    if command == "list":
+        return 0 if list_topics(bootstrap_servers) else 1
+    if command not in ("create", "validate"):
+        print(f"Unknown command: {command}. Available commands: create, validate, list")
+        return 1
+    operation = create_topic if command == "create" else validate_topic
+    # Evaluate every topic even if an earlier operation failed.
+    results = [operation(topic, bootstrap_servers) for topic in TOPICS]
+    return 0 if all(results) else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
