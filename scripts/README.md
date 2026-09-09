@@ -96,3 +96,7 @@ mypy, pytest, then repository structure validation. `python -m mypy` has no `.`
 argument so it uses `pyproject.toml`'s configured targets. The current CI and
 default pytest run exclude integration tests; run those separately when relevant.
 Keep both task-check helpers aligned whenever CI changes.
+# Task workflow agent
+
+Run `python scripts/task_workflow.py --help` for the Codex/Qwen workflow runner.
+See [setup, execution and recovery](../docs/AUTOMATED_TASK_WORKFLOW.md).
