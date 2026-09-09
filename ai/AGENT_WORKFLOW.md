@@ -288,6 +288,11 @@ Codex may take over Qoder's builder role. Each task still has a separate agent
 execution and exact `feature/TASK-xxx` branch; no automatic task chaining.
 The human selects each next task and retains the merge decision.
 
+For the one-task automation in `scripts/task_workflow.py`, the owner may delegate
+that task's merge decision explicitly with `--auto-merge`. This authorizes merge
+only after independent approval and successful final-revision CI; it does not
+authorize architecture changes, rejection of blockers, or task chaining.
+
 Start a dependent task only after its prerequisite implementation is committed
 and interfaces are stable. For contract-sensitive work (especially TASK-006 and
 TASK-007), wait for independent approval before starting dependent work. If a

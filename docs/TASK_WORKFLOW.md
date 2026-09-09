@@ -1,5 +1,9 @@
 # Task workflow: Codex implementation and Qwen review
 
+For the executable one-task runner, see
+[Automated task workflow](AUTOMATED_TASK_WORKFLOW.md). It follows these gates
+and accepts an explicit `--auto-merge` owner delegation for the selected task.
+
 Follow this order for each task:
 
 **Implement → local checks → local commit → Qwen review → fixes and approval → push → PR and CI → owner merge decision.**
