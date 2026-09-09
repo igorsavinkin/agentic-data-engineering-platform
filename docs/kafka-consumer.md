@@ -84,7 +84,7 @@ The consumer handles SIGINT/SIGTERM signals for clean shutdown:
 
 1. Signal handler sets `_shutdown_requested` flag
 2. `poll()` returns empty list when shutdown requested
-3. `close()` flushes pending commits before leaving group
+3. `close()` leaves the consumer group **without committing** unprocessed offsets
 4. Context manager (`with` statement) ensures cleanup
 
 Example:
@@ -92,11 +92,28 @@ Example:
 with KafkaConsumer(settings) as consumer:
     consumer.subscribe(["products.raw.v1"])
     while not consumer.is_shutdown_requested():
-        messages = consumer.poll(timeout=1.0)
+        messages, errors = consumer.poll(timeout=1.0)
+        # Handle deserialization errors
+        for err in errors:
+            logger.error(
+                "deserialization_failed",
+                extra={
+                    "topic": err.topic,
+                    "partition": err.partition,
+                    "offset": err.offset,
+                    "error": str(err.error),
+                },
+            )
+            # Optionally route to DLQ or skip
+        # Process successful messages
         for msg in messages:
-            process(msg)
-            consumer.commit_message(msg)
-# Automatically closes and commits pending offsets
+            try:
+                process(msg)
+                consumer.commit_message(msg)  # Only after success
+            except ProcessingError:
+                logger.error("processing_failed", extra={"offset": msg.offset})
+                # Do NOT commit - message will be redelivered
+# close() does NOT commit unprocessed offsets; they will be redelivered on restart
 ```
 
 ## At-Least-Once Delivery
@@ -119,15 +136,16 @@ pytest tests/test_kafka_consumer.py -v
 
 Test scenarios covered:
 1. ✅ Valid event consumption and deserialization
-2. ✅ Malformed JSON handling (logged and skipped)
-3. ✅ Invalid schema handling (logged and skipped)
-4. ✅ Offset commit after successful processing
-5. ✅ No offset commit on processing failure
-6. ✅ Consumer restart with committed offsets
-7. ✅ Uncommitted messages redelivered on restart
-8. ✅ Duplicate delivery tolerance (same event_id, different offsets)
-9. ✅ Graceful shutdown with signal handling
-10. ✅ Kafka error handling (EOF, transport errors, unknown topics)
+2. ✅ Malformed JSON handling (returned as `DeserializationError`)
+3. ✅ Invalid schema handling (returned as `DeserializationError`)
+4. ✅ None value handling (returned as `DeserializationError`)
+5. ✅ Offset commit after successful processing
+6. ✅ No offset commit on processing failure
+7. ✅ Consumer restart with committed offsets
+8. ✅ Uncommitted messages redelivered on restart
+9. ✅ Duplicate delivery tolerance (same event_id, different offsets)
+10. ✅ Graceful shutdown with signal handling
+11. ✅ Kafka error handling (EOF, transport errors, unknown topics)
 
 ## Integration with Existing Components
 
@@ -147,7 +165,20 @@ def run_processor() -> None:
     with KafkaConsumer(settings) as consumer:
         consumer.subscribe(["products.raw.v1"])
         while not consumer.is_shutdown_requested():
-            messages = consumer.poll(timeout=1.0)
+            messages, errors = consumer.poll(timeout=1.0)
+            # Handle deserialization errors
+            for err in errors:
+                logger.error(
+                    "deserialization_failed",
+                    extra={
+                        "topic": err.topic,
+                        "partition": err.partition,
+                        "offset": err.offset,
+                        "error": str(err.error),
+                    },
+                )
+                # Optionally route to DLQ or skip
+            # Process successful messages
             for msg in messages:
                 try:
                     # Validate and transform
