@@ -11,6 +11,7 @@ build/
 dist/
 docs/review prompt.txt
 docs/task prompt.md
+tmp/
 
 # Environment / secrets — never commit real credentials
 .env
