@@ -111,7 +111,7 @@ class TestValidEventConsumption:
         # Consume
         settings = KafkaConsumerSettings(kafka_group_id="test-group")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
 
         # Verify
         assert len(messages) == 1
@@ -131,7 +131,7 @@ class TestValidEventConsumption:
 
         settings = KafkaConsumerSettings(kafka_group_id="test-group")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
 
         assert messages == []
 
@@ -140,8 +140,8 @@ class TestMalformedEventHandling:
     """Test handling of malformed/invalid events."""
 
     @patch("confluent_kafka.Consumer")
-    def test_malformed_json_is_skipped(self, mock_consumer_class: MagicMock) -> None:
-        """Malformed JSON should be logged and skipped, not included in results."""
+    def test_malformed_json_is_returned_as_error(self, mock_consumer_class: MagicMock) -> None:
+        """Malformed JSON should be surfaced as DeserializationError for caller to handle."""
         mock_consumer = MagicMock()
         mock_consumer_class.return_value = mock_consumer
 
@@ -155,14 +155,21 @@ class TestMalformedEventHandling:
 
         settings = KafkaConsumerSettings(kafka_group_id="test-group")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
 
-        # Should skip malformed message
+        # Should NOT include in successful messages
         assert messages == []
+        # Should surface error with full context (H2 fix)
+        assert len(errors) == 1
+        err = errors[0]
+        assert err.topic == "products.raw.v1"
+        assert err.partition == 0
+        assert err.offset == 10
+        assert err.raw_value is not None
 
     @patch("confluent_kafka.Consumer")
-    def test_invalid_schema_is_skipped(self, mock_consumer_class: MagicMock) -> None:
-        """JSON with wrong schema should be logged and skipped."""
+    def test_invalid_schema_is_returned_as_error(self, mock_consumer_class: MagicMock) -> None:
+        """JSON with wrong schema should be surfaced as DeserializationError."""
         mock_consumer = MagicMock()
         mock_consumer_class.return_value = mock_consumer
 
@@ -176,14 +183,20 @@ class TestMalformedEventHandling:
 
         settings = KafkaConsumerSettings(kafka_group_id="test-group")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
 
-        # Should skip invalid schema
+        # Should NOT include in successful messages
         assert messages == []
+        # Should surface error (H2 fix)
+        assert len(errors) == 1
+        err = errors[0]
+        assert err.topic == "products.raw.v1"
+        assert err.partition == 0
+        assert err.offset == 11
 
     @patch("confluent_kafka.Consumer")
-    def test_none_value_is_skipped(self, mock_consumer_class: MagicMock) -> None:
-        """Messages with None value should be handled gracefully."""
+    def test_none_value_is_returned_as_error(self, mock_consumer_class: MagicMock) -> None:
+        """Messages with None value should be surfaced as DeserializationError."""
         mock_consumer = MagicMock()
         mock_consumer_class.return_value = mock_consumer
 
@@ -197,9 +210,15 @@ class TestMalformedEventHandling:
 
         settings = KafkaConsumerSettings(kafka_group_id="test-group")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
 
         assert messages == []
+        # Should surface error (H2 fix)
+        assert len(errors) == 1
+        err = errors[0]
+        assert err.topic == "products.raw.v1"
+        assert err.offset == 12
+        assert err.raw_value is None
 
 
 class TestOffsetCommitBehavior:
@@ -304,7 +323,7 @@ class TestConsumerRestart:
 
         settings = KafkaConsumerSettings(kafka_group_id="processor")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
             assert len(messages) == 1
             # Intentionally do NOT commit - simulating crash/failure
 
@@ -352,7 +371,7 @@ class TestDuplicateDelivery:
         with KafkaConsumer(settings) as consumer:
             messages = []
             while True:
-                batch = consumer.poll(timeout=0.1)
+                batch, errors = consumer.poll(timeout=0.1)
                 if not batch:
                     break
                 messages.extend(batch)
@@ -395,7 +414,7 @@ class TestDuplicateDelivery:
         with KafkaConsumer(settings) as consumer:
             messages = []
             while True:
-                batch = consumer.poll(timeout=0.1)
+                batch, errors = consumer.poll(timeout=0.1)
                 if not batch:
                     break
                 messages.extend(batch)
@@ -419,8 +438,13 @@ class TestGracefulShutdown:
     """Test graceful shutdown behavior."""
 
     @patch("confluent_kafka.Consumer")
-    def test_shutdown_commits_pending_offsets(self, mock_consumer_class: MagicMock) -> None:
-        """Shutdown should flush pending commits."""
+    def test_shutdown_does_not_commit_unprocessed_offsets(self, mock_consumer_class: MagicMock) -> None:
+        """Shutdown should NOT commit unprocessed offsets (at-least-once semantics).
+        
+        The caller is responsible for explicitly committing via commit_message() after
+        successful processing. close() only closes the consumer without committing,
+        ensuring unprocessed messages are redelivered on restart.
+        """
         mock_consumer = MagicMock()
         mock_consumer_class.return_value = mock_consumer
 
@@ -428,8 +452,8 @@ class TestGracefulShutdown:
         consumer = KafkaConsumer(settings)
         consumer.close()
 
-        # Verify commit was attempted during shutdown
-        assert mock_consumer.commit.called
+        # Verify NO commit was called during shutdown (H1 fix)
+        assert not mock_consumer.commit.called, "close() must not commit unprocessed offsets"
         assert mock_consumer.close.called
 
     @patch("confluent_kafka.Consumer")
@@ -448,7 +472,7 @@ class TestGracefulShutdown:
             assert consumer.is_shutdown_requested() is True
 
             # Poll should return empty when shutdown requested
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
             assert messages == []
 
     @patch("confluent_kafka.Consumer")
@@ -506,7 +530,7 @@ class TestKafkaErrors:
 
         settings = KafkaConsumerSettings(kafka_group_id="test-group")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
 
         assert messages == []
 
@@ -525,7 +549,7 @@ class TestKafkaErrors:
 
         settings = KafkaConsumerSettings(kafka_group_id="test-group")
         with KafkaConsumer(settings) as consumer:
-            messages = consumer.poll(timeout=0.1)
+            messages, errors = consumer.poll(timeout=0.1)
 
         assert messages == []
 
