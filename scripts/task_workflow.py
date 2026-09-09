@@ -248,6 +248,7 @@ class Workflow:
             self.worktree,
             self.args.codex,
             "exec",
+            "--approve-for-me",
             "--sandbox",
             "workspace-write",
             "-",
@@ -554,6 +555,9 @@ class Workflow:
             raise WorkflowError(f"Another run or stale lock exists: {lock}") from exc
         try:
             os.write(descriptor, str(os.getpid()).encode())
+            # State may have advanced between construction and lock acquisition.
+            if self.state_file.exists():
+                self.state = json.loads(self.state_file.read_text(encoding="utf-8"))
             if self.state.get("origin"):
                 os.environ["GH_REPO"] = github_repository(self.state["origin"])
             if self.args.review_again:

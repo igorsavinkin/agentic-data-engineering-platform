@@ -267,6 +267,7 @@ def test_full_review_fix_publish_merge_cleanup(
                 1 if reviews == 1 else 0,
             )
         if args[0] == "codex":
+            assert "--approve-for-me" in args
             repairs += 1
             (cwd / "implementation.txt").write_text(f"repair {repairs}", encoding="utf-8")
             local_git(cwd, "add", "implementation.txt")

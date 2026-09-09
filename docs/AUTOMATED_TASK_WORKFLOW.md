@@ -11,7 +11,7 @@ First merge this tooling into main. Start from the clean main checkout, with
 Python 3.12+, Git, authenticated Codex and Qwen Code CLIs, and authenticated
 GitHub CLI available on PATH. Git must be able to run the project's Bash hooks.
 The installed versions used to check CLI compatibility were Qwen Code 0.23.0
-and the local Codex CLI supporting `exec --sandbox workspace-write`.
+and the local Codex CLI supporting `exec --approve-for-me --sandbox workspace-write`.
 
 ```powershell
 . .venv/Scripts/Activate.ps1
@@ -46,7 +46,9 @@ serializes its own runs using a repository-wide lock.
 
 ## Review and merge gates
 
-Codex runs with the workspace-write sandbox and existing approval controls.
+Codex runs with the workspace-write sandbox and `--approve-for-me`, which routes
+requests such as Git metadata writes through automatic approval review. Use a
+Codex CLI version supporting that option; rejected requests still stop the work.
 It commits locally with hooks, then the runner independently executes Ruff
 format/lint, mypy, pytest and repository structure validation. The virtual
 environment lives in Git's shared metadata outside the task worktree and is
