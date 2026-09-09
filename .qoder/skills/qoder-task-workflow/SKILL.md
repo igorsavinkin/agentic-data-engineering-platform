@@ -87,6 +87,13 @@ if head == before:
 - Worktree isolation via `create_chat_session` environment parameter
 - No `--approve-for-me` or `--sandbox` flags needed
 
+**Critical limitation**: `create_chat_session` does not accept a working directory parameter. The agent operates in whatever directory Qoder was opened in. For proper filesystem isolation:
+
+- **Option 1 (recommended)**: Open Qoder directly in the worktree directory before invoking this skill
+- **Option 2**: Use Qoder Cloud Agents MCP with `environment_id` targeting the worktree path
+
+Without explicit worktree targeting, agents may commit to the wrong branch or modify files outside the task scope. This limitation differs from Codex CLI's `cwd=` parameter which provided explicit directory control.
+
 ### 3. Review with Qwen
 
 Unchanged from Codex workflow. Run local checks, then send diff to Qwen:
@@ -166,6 +173,7 @@ Agent transcripts save to `task-workflow/TASK-xxx/qoder-{attempt}.txt`. These co
 - Sessions persist until explicitly archived; clean up old sessions periodically
 - Worktree isolation means each session has separate `.git` but shares object store
 - Maximum 2 concurrent task worktrees enforced by orchestrator lock
+- **Worktree targeting gap**: `create_chat_session` lacks directory parameter; open Qoder in worktree or use QCA environments
 
 ## See also
 
