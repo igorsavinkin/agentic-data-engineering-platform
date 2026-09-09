@@ -249,8 +249,6 @@ class Workflow:
             self.args.codex,
             "exec",
             "--approve-for-me",
-            "--sandbox",
-            "workspace-write",
             "-",
             stdin=prompt,
         )
