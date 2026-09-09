@@ -105,7 +105,7 @@ class KafkaConsumer:
                     # consumer.commit_offsets([TopicPartition(err.topic, err.partition, err.offset + 1)])
                     # Option 2: Route to DLQ (TODO: TASK-010)
                     # Option 3: Leave uncommitted for redelivery
-                
+
                 # Process successful messages
                 for msg in messages:
                     try:

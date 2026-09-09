@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
-# Set test environment for all KafkaConsumerSettings instantiations
-os.environ["APP_ENVIRONMENT"] = "test"
+# Set development environment for all KafkaConsumerSettings instantiations
+os.environ["APP_ENVIRONMENT"] = "development"
 
 import pytest
 from confluent_kafka import KafkaError, KafkaException, TopicPartition
@@ -26,7 +26,6 @@ from confluent_kafka import KafkaError, KafkaException, TopicPartition
 from libs.common.config import ConfigurationError
 from libs.common.kafka_consumer import (
     ConsumerMessage,
-    DeserializationError,
     KafkaConsumer,
     KafkaConsumerSettings,
 )
@@ -313,10 +312,6 @@ class TestConsumerRestart:
         self, mock_consumer_class: MagicMock
     ) -> None:
         """Messages consumed but not committed should be redelivered."""
-        mock_consumer = MagicMock()
-        mock_consumer_class.return_value = mock_consumer
-
-        # First session: consume message at offset 42 but don't commit
         valid_event = _make_valid_event()
         mock_msg = MagicMock()
         mock_msg.error.return_value = None
@@ -324,7 +319,11 @@ class TestConsumerRestart:
         mock_msg.partition.return_value = 0
         mock_msg.offset.return_value = 42
         mock_msg.value.return_value = valid_event.model_dump_json().encode("utf-8")
-        mock_consumer.poll.return_value = mock_msg
+
+        # First session: consume message at offset 42 but don't commit
+        mock_consumer1 = MagicMock()
+        mock_consumer1.poll.return_value = mock_msg
+        mock_consumer_class.return_value = mock_consumer1
 
         settings = KafkaConsumerSettings(kafka_group_id="processor")
         with KafkaConsumer(settings) as consumer:
@@ -333,11 +332,12 @@ class TestConsumerRestart:
             # Intentionally do NOT commit - simulating crash/failure
 
         # On restart, same message should be delivered again
-        mock_consumer.reset_mock()
-        mock_consumer.poll.return_value = mock_msg
+        mock_consumer2 = MagicMock()
+        mock_consumer2.poll.return_value = mock_msg
+        mock_consumer_class.return_value = mock_consumer2
 
         with KafkaConsumer(settings) as consumer2:
-            messages2 = consumer2.poll(timeout=0.1)
+            messages2, errors2 = consumer2.poll(timeout=0.1)
             assert len(messages2) == 1
             assert messages2[0].offset == 42  # Same offset redelivered
 
@@ -443,9 +443,11 @@ class TestGracefulShutdown:
     """Test graceful shutdown behavior."""
 
     @patch("confluent_kafka.Consumer")
-    def test_shutdown_does_not_commit_unprocessed_offsets(self, mock_consumer_class: MagicMock) -> None:
+    def test_shutdown_does_not_commit_unprocessed_offsets(
+        self, mock_consumer_class: MagicMock
+    ) -> None:
         """Shutdown should NOT commit unprocessed offsets (at-least-once semantics).
-        
+
         The caller is responsible for explicitly committing via commit_message() after
         successful processing. close() only closes the consumer without committing,
         ensuring unprocessed messages are redelivered on restart.
