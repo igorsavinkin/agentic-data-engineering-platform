@@ -12,9 +12,13 @@ Test scenarios:
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
+
+# Set test environment for all KafkaConsumerSettings instantiations
+os.environ["APP_ENVIRONMENT"] = "test"
 
 import pytest
 from confluent_kafka import KafkaError, KafkaException, TopicPartition
@@ -22,6 +26,7 @@ from confluent_kafka import KafkaError, KafkaException, TopicPartition
 from libs.common.config import ConfigurationError
 from libs.common.kafka_consumer import (
     ConsumerMessage,
+    DeserializationError,
     KafkaConsumer,
     KafkaConsumerSettings,
 )
