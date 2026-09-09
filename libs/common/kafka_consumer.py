@@ -4,12 +4,14 @@ This module provides a consumer that reads from Kafka topics with explicit
 consumer-group configuration, deserialization, validation, and offset handling.
 
 Offset commit semantics:
-- Offsets are committed ONLY after successful processing of a message
+- Offsets are committed ONLY after successful processing of a message via commit_message()
 - If processing fails, the offset is NOT committed so the message will be
   redelivered on restart/rebalance
+- Deserialization errors are surfaced to the caller with full context; the caller
+  decides whether to commit (skip), route to DLQ, or leave uncommitted for retry
+- On graceful shutdown, the consumer closes without committing unprocessed offsets
 - This implements at-least-once delivery; downstream consumers must handle
   duplicates via event_id deduplication
-- On graceful shutdown, pending offsets are flushed before closing
 """
 
 from __future__ import annotations
@@ -42,9 +44,6 @@ class KafkaConsumerSettings(AppSettings):
     kafka_enable_auto_commit: bool = False  # Explicit manual commits only
 
     def __init__(self, **kwargs: str | int | bool) -> None:
-        # Provide default environment if not specified (for direct instantiation in tests)
-        if "environment" not in kwargs:
-            kwargs["environment"] = "development"
         super().__init__(**kwargs)  # type: ignore[arg-type]
 
     @property
@@ -71,6 +70,17 @@ class ConsumerMessage:
     offset: int
 
 
+@dataclass(frozen=True)
+class DeserializationError:
+    """A message that failed deserialization, with metadata for handling."""
+
+    topic: str
+    partition: int
+    offset: int
+    error: Exception
+    raw_value: bytes | None = None
+
+
 class ProcessingError(Exception):
     """Raised when message processing fails irrecoverably."""
 
@@ -87,7 +97,16 @@ class KafkaConsumer:
         with KafkaConsumer(settings) as consumer:
             consumer.subscribe(["products.raw.v1"])
             while not consumer.is_shutdown_requested():
-                messages = consumer.poll(timeout=1.0)
+                messages, errors = consumer.poll(timeout=1.0)
+                # Handle deserialization errors
+                for err in errors:
+                    logger.error(f"Failed at {err.topic}:{err.partition}:{err.offset}")
+                    # Option 1: Commit to skip (mark as processed)
+                    # consumer.commit_offsets([TopicPartition(err.topic, err.partition, err.offset + 1)])
+                    # Option 2: Route to DLQ (TODO: TASK-010)
+                    # Option 3: Leave uncommitted for redelivery
+                
+                # Process successful messages
                 for msg in messages:
                     try:
                         process(msg)
@@ -138,15 +157,18 @@ class KafkaConsumer:
             },
         )
 
-    def poll(self, timeout: float = 1.0) -> list[ConsumerMessage]:
+    def poll(
+        self, timeout: float = 1.0
+    ) -> tuple[list[ConsumerMessage], list[DeserializationError]]:
         """Poll for new messages and deserialize them.
 
         Args:
             timeout: Maximum time to wait for messages in seconds.
 
         Returns:
-            List of successfully deserialized messages. Messages that fail
-            deserialization are logged and skipped (not included in result).
+            Tuple of (successful_messages, deserialization_errors). The caller
+            can decide how to handle failed messages: commit their offset to skip,
+            route to DLQ, or leave uncommitted for redelivery.
 
         Raises:
             RuntimeError: If consumer is closed.
@@ -155,25 +177,26 @@ class KafkaConsumer:
             raise RuntimeError("Cannot poll: consumer is closed")
 
         if self._shutdown_requested:
-            return []
+            return [], []
 
         messages: list[ConsumerMessage] = []
+        errors: list[DeserializationError] = []
         msg = self._consumer.poll(timeout=timeout)
 
         if msg is None:
-            return messages
+            return messages, errors
 
         error = msg.error()
         if error is not None:
             if error.code() == KafkaError._PARTITION_EOF:
                 # End of partition, not an actual error
-                return messages
+                return messages, errors
             if error.code() == KafkaError._TRANSPORT:
                 logger.warning(
                     "kafka_transport_error",
                     extra={"error_code": error.code(), "error_str": error.str()},
                 )
-                return messages
+                return messages, errors
             raise KafkaException(error)
 
         topic = msg.topic()
@@ -182,7 +205,7 @@ class KafkaConsumer:
 
         if topic is None or partition is None or offset is None:
             logger.warning("kafka_message_missing_metadata")
-            return messages
+            return messages, errors
 
         try:
             value = msg.value()
@@ -208,10 +231,19 @@ class KafkaConsumer:
                     "error": str(exc),
                 },
             )
-            # Skip malformed messages but do NOT commit their offset
-            # They will be redelivered unless manually handled by caller
+            # Surface the error to the caller with full context so they can
+            # decide whether to commit (skip), route to DLQ, or retry.
+            errors.append(
+                DeserializationError(
+                    topic=topic,
+                    partition=partition,
+                    offset=offset,
+                    error=exc,
+                    raw_value=msg.value(),
+                )
+            )
 
-        return messages
+        return messages, errors
 
     def commit_message(self, message: ConsumerMessage) -> None:
         """Commit the offset for a successfully processed message.
@@ -280,19 +312,14 @@ class KafkaConsumer:
     def close(self) -> None:
         """Gracefully shut down the consumer.
 
-        Commits any pending offsets and leaves the consumer group cleanly.
+        Leaves the consumer group cleanly without committing unprocessed offsets.
+        The caller is responsible for explicitly committing offsets via commit_message()
+        after successful processing. This ensures at-least-once semantics are preserved:
+        if a message was fetched but not successfully processed, its offset remains
+        uncommitted and will be redelivered on restart.
         """
         if self._closed:
             return
-
-        try:
-            # Flush pending commits
-            self._consumer.commit(asynchronous=False)
-        except KafkaException as exc:
-            logger.warning(
-                "kafka_shutdown_commit_failed",
-                extra={"error": str(exc)},
-            )
 
         try:
             self._consumer.close()
