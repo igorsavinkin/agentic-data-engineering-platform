@@ -12,3 +12,4 @@ needs a documented rationale. The owner decides disputed findings.
 | TASK-009 / 463012b | Min2: Signal handler registration as library side effect | Acceptable for standalone service pattern; already has try/except fallback | If service needs custom signal handling or runs consumer in non-main thread | Open |
 | TASK-009 / 463012b | Min3: Documentation/config gaps (.env.example, README, port discrepancy) | Cosmetic polish; doesn't affect functionality | When onboarding new developers or creating official docs | Open |
 | TASK-009 / 463012b | Min4: Stale comment in test_commit_after_successful_processing | Comment-only issue with zero runtime impact | Next time this test file is modified | Open |
+| TASK-009 / dc54cc4 | Min5: Test module mutates global environment at import | Cosmetic; doesn't affect test outcomes for current scope | When refactoring test isolation or adding new consumer tests | Open |
