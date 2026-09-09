@@ -17,9 +17,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
-# Set development environment for all KafkaConsumerSettings instantiations
-os.environ["APP_ENVIRONMENT"] = "development"
-
 import pytest
 from confluent_kafka import KafkaError, KafkaException, TopicPartition
 
@@ -30,6 +27,14 @@ from libs.common.kafka_consumer import (
     KafkaConsumerSettings,
 )
 from libs.event_contracts import ProductObservationEvent, ProductObservationPayload
+
+
+@pytest.fixture(autouse=True)
+def consumer_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in list(os.environ):
+        if name.startswith("APP_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("APP_ENVIRONMENT", "development")
 
 
 def _make_valid_event() -> ProductObservationEvent:
@@ -250,7 +255,7 @@ class TestOffsetCommitBehavior:
             consumer.close()
 
         # Verify commit was called with correct offset (next offset = current + 1)
-        # First call is from commit_message, second from close()
+        # Only explicit processing success commits an offset
         assert mock_consumer.commit.call_count >= 1
         first_call_args = mock_consumer.commit.call_args_list[0]
         offsets = first_call_args[1]["offsets"]
