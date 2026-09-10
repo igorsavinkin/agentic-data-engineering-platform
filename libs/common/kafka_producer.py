@@ -13,6 +13,7 @@ from pydantic import Field, field_validator
 
 from libs.common.config import AppSettings, ConfigurationError
 from libs.event_contracts import ProductObservationEvent, deserialize_event, serialize_event
+from libs.observability.kafka_metrics import KafkaMetric, KafkaMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ class KafkaEventProducer:
         self._settings = settings
         self._lock = Lock()
         self._closed = False
+        self.metrics = KafkaMetrics()
         try:
             self._producer = Producer(
                 {
@@ -95,6 +97,7 @@ class KafkaEventProducer:
     def publish(self, event: ProductObservationEvent) -> DeliveryReceipt:
         with self._lock:
             if self._closed:
+                self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
                 raise PublishError("Kafka producer is closed")
             try:
                 value = serialize_event(event).encode("utf-8")
@@ -103,6 +106,8 @@ class KafkaEventProducer:
                 snapshot = deserialize_event(value.decode("utf-8"))
                 key = snapshot.partition_key.encode("utf-8")
             except Exception as exc:
+                self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
+                self.metrics.increment(KafkaMetric.INVALID)
                 logger.error("event_serialization_failed", extra={"operation": "serialize"})
                 raise EventSerializationError("Canonical event serialization failed") from exc
 
@@ -144,15 +149,19 @@ class KafkaEventProducer:
                 # success: a failed delivery also removes a message from the queue.
                 pending = self._producer.flush(self._settings.kafka_delivery_timeout_ms / 1000 + 1)
             except (KafkaException, BufferError) as exc:
+                self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
                 logger.error("kafka_publish_failed", extra=context)
                 raise PublishError("Kafka publish failed; retain the event for retry") from exc
             if failure is not None:
+                self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
                 raise PublishError(
                     f"Kafka delivery failed (code {failure.code()}); retain event for retry"
                 )
             if pending or receipt is None:
+                self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
                 logger.error("kafka_delivery_unconfirmed", extra=context)
                 raise PublishError("Kafka delivery unconfirmed; retry may duplicate the event")
+            self.metrics.increment(KafkaMetric.PRODUCED)
             return receipt
 
     def close(self) -> None:
@@ -163,8 +172,10 @@ class KafkaEventProducer:
             try:
                 pending = self._producer.flush(self._settings.kafka_delivery_timeout_ms / 1000 + 1)
             except KafkaException as exc:
+                self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
                 raise PublishError("Kafka shutdown failed") from exc
             if pending:
+                self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
                 raise PublishError("Kafka shutdown has unconfirmed deliveries")
             self._closed = True
 
