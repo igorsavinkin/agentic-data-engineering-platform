@@ -1,6 +1,6 @@
 # Qoder Task Orchestrator
 
-Automates the complete task development lifecycle by orchestrating independent Qoder chat sessions for each task phase. Replaces manual task execution with automated workflow management.
+Automates the complete task development lifecycle in a single session. The agent creates a worktree, implements the task, runs review, creates a PR, and monitors CI — all sequentially without spawning child sessions.
 
 ## When to Use
 
@@ -20,16 +20,19 @@ Before invoking, verify:
 
 ## Architecture
 
-The orchestrator creates **independent Qoder chat sessions** for each phase:
+Single-session linear workflow — no child sessions, no delegation:
 
 ```
-Main OrchAgent
-    ├─ Session 1: Implementation (worktree isolation)
-    ├─ Session 2: Review assistance (optional)
-    └─ Monitors: Git state, CI status, PR lifecycle
+One Agent Session
+    ├─ Phase 1: Prepare (create worktree)
+    ├─ Phase 2: Implement (edit files, commit)
+    ├─ Phase 3: Review (quality checks + Qwen review)
+    ├─ Phase 4: Publish (push + create PR)
+    ├─ Phase 5: Monitor CI (poll until pass/fail)
+    └─ Phase 6: Cleanup (remove worktree)
 ```
 
-Each session runs with full Read/Edit/Bash/Git tool access in its own worktree environment.
+**DO NOT use `create_chat_session()` or `fork_chat_session()`.** All work happens in this session.
 
 ## CRITICAL: Review Phase is MANDATORY
 
@@ -89,59 +92,55 @@ state = {
 }
 ```
 
-### Phase 2: Implement via Qoder Session
+### Phase 2: Implement
 
-Spawn an independent Qoder conversation targeting the worktree:
+Implement the task directly in this session. All file operations target the worktree.
 
 ```python
-# Create implementation session
-impl_session = create_chat_session(
-    prompt=f"""
-Working directory: {worktree_path}
+# STEP 1: Read required context files
+read_file("ai/AGENTS.md")  # agent conventions
+read_file("ai/PROJECT.md")  # project context
+read_file(spec_path)  # task specification
+# Read relevant ADRs, SPECIFICATION.md, ROADMAP.md as needed
 
-Implement only TASK-xxx from ai/tasks/TASK-xxx-specification.md.
+# STEP 2: Implement the task
+# Edit/create files in the worktree using absolute paths
+# e.g., Edit file_path=f"{worktree_path}/services/processor/module.py"
 
-Required reading before starting:
-- ai/AGENTS.md (agent conventions)
-- ai/PROJECT.md (project context)
-- Relevant ADRs in ai/adrs/
-- ai/SPECIFICATION.md (architecture spec)
-- ai/ROADMAP.md (development roadmap)
-- ai/AGENT_WORKFLOW.md (workflow rules)
-
-Steps:
-1. Check prerequisites; stop if unmet
-2. Run required checks plus task-relevant integration tests
-3. Inspect the diff carefully
-4. Stage explicit task file paths
-5. Commit locally with hooks enabled
-
-Constraints:
-- Do NOT push, create/merge PRs, change branches, or start another task
-- Do NOT modify review reports
-- Resolve all blocking review findings
-- Fix useful in-scope minor findings
-- Record non-blocking recommendations in docs/reviews/FOLLOWUPS.md
-- Stop with a clean worktree and report checks passed
-"""
+# STEP 3: Run quality checks in the worktree
+run_in_worktree(
+    worktree_path,
+    [
+        ["python", "-m", "ruff", "format", "--check", "."],
+        ["python", "-m", "ruff", "check", "."],
+        ["python", "-m", "mypy"],
+        ["python", "-m", "pytest"],
+    ],
 )
 
-# Wait for implementation to complete
-wait_chat_sessions(sessionIds=[impl_session["sessionId"]], timeoutMs=3600000)
+# STEP 4: Inspect the diff
+git_diff("--stat", f"{base}...HEAD")
+git_diff(f"{base}...HEAD")
 
-# Read transcript for logging
-transcript = read_chat_session(sessionId=impl_session["sessionId"])
-save_log(f"task-workflow/TASK-xxx/qoder-{attempt}.txt", transcript)
+# STEP 5: Stage and commit
+git_add(*changed_files)
+git_commit("-m", f"feat(TASK-xxx): <descriptive message>")
 
-# Verify agent made commits
+# STEP 6: Verify commit was made
 head = git(worktree, "rev-parse", "HEAD")
-if head == before:
-    raise Error("Qoder made no commit - inspect transcript")
+if head == base:
+    raise Error("No commits made — implementation failed")
 
-# Update state to mark implementation complete
+# STEP 7: Update state
 state.update(phase="implement-complete")
 write_json(f"task-workflow/TASK-xxx/state.json", state)
 ```
+
+**Implementation constraints:**
+- Work only in the worktree — never modify the main repo checkout
+- Do NOT push, create/merge PRs, or change branches
+- Do NOT start another task
+- Stop with a clean worktree (no uncommitted changes)
 
 ---
 
@@ -168,7 +167,7 @@ Run quality checks and invoke Qwen for review:
 ```python
 # STEP 1: Verify implementation completed
 head = git(worktree, "rev-parse", "HEAD")
-if head == before:
+if head == base:
     raise Error("Implementation made no commits - cannot proceed to review")
 
 print(f"Implementation commit: {head}")
@@ -176,14 +175,15 @@ print("Starting mandatory review phase...")
 
 # STEP 2: Execute local quality checks
 print("Running quality checks...")
-run_checks(
+run_in_worktree(
+    worktree_path,
     [
         ["python", "-m", "ruff", "format", "--check", "."],
         ["python", "-m", "ruff", "check", "."],
         ["python", "-m", "mypy"],
         ["python", "-m", "pytest"],
         ["python", "scripts/verify_repository_structure.py"],
-    ]
+    ],
 )
 print("Quality checks passed")
 
@@ -202,20 +202,20 @@ verdict = parse_workflow_review(review_output, head)
 if verdict != "APPROVED":
     print(f"Review verdict: {verdict}")
     print("Implementation needs fixes - cannot proceed to PR creation")
-    # Handle fix cycle or escalate
+    # Fix blocking findings in the worktree, commit, and re-review
     raise Error(f"Review not approved: {verdict}")
 
 print("Review APPROVED")
 
-# STEP 7: Update state to mark review complete (MANDATORY)
+# STEP 6: Update state to mark review complete
 state.update(phase="review-complete", reviewed=head, approved_head=head)
 write_json(f"task-workflow/TASK-xxx/state.json", state)
 print(f"State updated: phase='review-complete', reviewed='{head}'")
 
-# STEP 8: Save review report (MANDATORY)
-write_file(f"docs/reviews/TASK-xxx-review.md", review_output)
+# STEP 7: Save review report
+write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", review_output)
 git_add("docs/reviews/TASK-xxx-review.md")
-git_commit("-m", f"Record TASK-xxx Qwen review")
+git_commit("-m", f"docs: Record TASK-xxx Qwen review")
 
 print("Review phase complete. Proceeding to Phase 4...")
 ```
@@ -239,7 +239,7 @@ Before proceeding to Phase 4, you MUST verify ALL of the following:
 import os
 
 # Check 1: Review report file exists
-review_report_path = f"docs/reviews/TASK-xxx-review.md"
+review_report_path = f"{worktree_path}/docs/reviews/TASK-xxx-review.md"
 if not os.path.exists(review_report_path):
     raise Error(
         f"BLOCKED: Review report not found at {review_report_path}\n"
@@ -248,7 +248,7 @@ if not os.path.exists(review_report_path):
     )
 
 # Check 2: Review report is committed
-review_committed = git("log", "--oneline", "--all", "--", review_report_path)
+review_committed = git(worktree, "log", "--oneline", "--", "docs/reviews/TASK-xxx-review.md")
 if not review_committed:
     raise Error(
         f"BLOCKED: Review report exists but is not committed.\n"
@@ -270,7 +270,7 @@ if not state.get("reviewed"):
         "The review phase must record the reviewed commit."
     )
 
-print("✓ Phase gate passed: Review phase verified")
+print("Phase gate passed: Review phase verified")
 print(f"  - Review report: {review_report_path}")
 print(f"  - Reviewed commit: {state['reviewed']}")
 print("Proceeding to Phase 4...")
@@ -315,19 +315,18 @@ while time.monotonic() < deadline:
     # Evaluate results
     if any(check["conclusion"] == "failure" for check in check_runs):
         state.update(phase="fix", feedback=f"CI failed for PR #{pr_number}. Fix and resume.")
-        return  # Pause for manual intervention
+        # Fix in worktree, commit, push, and re-enter this phase
+        break
 
     if all_required_checks_passed(check_runs, statuses):
         if auto_merge:
             gh_pr_merge(pr_number, squash=True, match_head=head)
             state.update(phase="merged")
         else:
-            print(f"CI passed. Resume with --auto-merge to merge.")
-        return
+            print(f"CI passed. Resume to merge.")
+        break
 
     time.sleep(15)  # Poll interval
-
-raise Error("CI timed out")
 ```
 
 ### Phase 6: Cleanup
@@ -384,32 +383,18 @@ If interrupted mid-phase:
 2. **Finish partial work manually** in the worktree
 
 3. **Resume orchestration:**
-   ```python
-   # The orchestrator reads state.json and continues from current phase
-   orchestrator.resume(task_id="TASK-xxx")
-   ```
-
-## Session Logs
-
-Agent transcripts save to `task-workflow/TASK-xxx/qoder-{attempt}.txt`. These contain:
-- Full conversation history
-- Tool call details
-- Agent reasoning
-- Error messages
-
-**Do not commit these files** - they may contain repository metadata.
+   Read the state file and continue from the current phase.
 
 ## Error Handling
 
 ### Common Failure Modes
 
-**Agent Made No Commit:**
+**No Commits Made:**
 ```
-Error: Qoder made no commit; inspect transcript
+Error: No commits made — implementation failed
 ```
-→ Read `qoder-1.txt` to understand why
-→ Manually implement or adjust the prompt
-→ Resume with incremented round count
+→ Check what went wrong (missing dependencies, wrong paths, etc.)
+→ Fix and retry implementation
 
 **Review Blocked:**
 ```
@@ -417,15 +402,15 @@ Error: Qwen marked the task BLOCKED
 ```
 → Read `docs/reviews/TASK-xxx-review.md`
 → Fix blocking issues in worktree
-→ Resume with `--review-again`
+→ Re-run review phase
 
 **CI Failures:**
 ```
 Error: CI checks failed for PR #42
 ```
 → Inspect GitHub Actions logs via `gh run view`
-→ Fix code in worktree, commit
-→ Orchestrator will re-push and re-check
+→ Fix code in worktree, commit, push
+→ Re-enter CI monitor phase
 
 **Worktree Conflicts:**
 ```
@@ -437,9 +422,7 @@ Error: Unmanaged task branch/worktree exists
 
 ## Limitations
 
-- **Must run within Qoder agent environment** - requires `create_chat_session` and related tools
 - **Maximum 2 concurrent task worktrees** enforced by orchestrator lock
-- **Sessions persist until archived** - clean up old sessions periodically
 - **No stacked prerequisites** - all dependencies must be merged to main first
 - **Single repository focus** - does not support cross-repository workflows
 
