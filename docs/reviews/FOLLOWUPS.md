@@ -6,6 +6,7 @@ needs a documented rationale. The owner decides disputed findings.
 
 | Task / reviewed commit | Finding / report link | Reason deferred | Revisit trigger | Status |
 | --- | --- | --- | --- | --- |
+| TASK-011 / 7816258 | [Observation 1: revisit committed-offset lag semantics](TASK-011-review.md) | Current committed-next-offset lag and unknown values are documented and meet TASK-011; exporter representation belongs to later observability work | TASK-084 Prometheus gauge design: preserve unknown versus zero and document fetched-but-uncommitted work | Open |
 | TASK-009 / 463012b | M1: KafkaConsumerSettings.__init__ passthrough with type ignore | Internal implementation detail; no runtime impact | When adding new config validation or mypy reports unused ignore | Resolved in TASK-010: inherited settings initializer |
 | TASK-009 / 463012b | M2: Missing settings validation and allow.auto.create.topics=false | Broker-level enforcement per ADR-001; not a runtime risk for local scope | TASK-012 production hardening | Partially resolved in TASK-010: client auto-creation disabled; settings validators remain open |
 | TASK-009 / 463012b | Min1: Broad except Exception in poll() | Current behavior correctly surfaces all errors via DeserializationError list | If bug discovered where legitimate errors are swallowed | Resolved in TASK-010: explicit validation/decode exception types |

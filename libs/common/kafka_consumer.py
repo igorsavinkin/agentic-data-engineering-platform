@@ -17,6 +17,7 @@ Offset commit semantics:
 from __future__ import annotations
 
 import logging
+import math
 import signal
 import time
 from collections.abc import Callable
@@ -35,6 +36,7 @@ from libs.common.kafka_errors import (
     diagnostic_envelope,
 )
 from libs.event_contracts import ProductObservationEvent, deserialize_event
+from libs.observability.kafka_metrics import KafkaMetric, KafkaMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,15 @@ class ProcessingError(Exception):
     """Raised when message processing fails irrecoverably."""
 
 
+@dataclass(frozen=True)
+class ConsumerLag:
+    """Committed-offset lag; None means no usable commit (never assume zero)."""
+
+    topic: str
+    partition: int
+    lag: int | None
+
+
 class MessageDeserializationError(Exception):
     """The message could not be deserialized into a valid event."""
 
@@ -112,6 +123,7 @@ class KafkaConsumer:
 
         self._settings = settings
         self._closed = False
+        self.metrics = KafkaMetrics()
         self._shutdown_requested = False
         self._subscribed_topics: list[str] = []
 
@@ -170,7 +182,11 @@ class KafkaConsumer:
 
         messages: list[ConsumerMessage] = []
         errors: list[DeserializationError] = []
-        msg = self._consumer.poll(timeout=timeout)
+        try:
+            msg = self._consumer.poll(timeout=timeout)
+        except KafkaException:
+            self.metrics.increment(KafkaMetric.CONSUMER_ERRORS)
+            raise
 
         if msg is None:
             return messages, errors
@@ -180,6 +196,7 @@ class KafkaConsumer:
             if error.code() == KafkaError._PARTITION_EOF:
                 # End of partition, not an actual error
                 return messages, errors
+            self.metrics.increment(KafkaMetric.CONSUMER_ERRORS)
             if error.code() == KafkaError._TRANSPORT:
                 logger.warning(
                     "kafka_transport_error",
@@ -188,11 +205,13 @@ class KafkaConsumer:
                 return messages, errors
             raise KafkaException(error)
 
+        self.metrics.increment(KafkaMetric.CONSUMED)
         topic = msg.topic()
         partition = msg.partition()
         offset = msg.offset()
 
         if topic is None or partition is None or offset is None:
+            self.metrics.increment(KafkaMetric.CONSUMER_ERRORS)
             raise RuntimeError("Kafka message missing metadata; stop for replay")
 
         try:
@@ -211,6 +230,7 @@ class KafkaConsumer:
                 )
             )
         except (ValidationError, UnicodeDecodeError, MessageDeserializationError) as exc:
+            self.metrics.increment(KafkaMetric.INVALID)
             logger.error(
                 "kafka_deserialization_failed",
                 extra={
@@ -271,6 +291,7 @@ class KafkaConsumer:
                         failure = None
                         break
                     except TransientProcessingError as exc:
+                        self.metrics.increment(KafkaMetric.PROCESSING_ERRORS)
                         failure = exc
                         logger.warning(
                             "kafka_processing_retry", extra={**context, "attempt": attempts}
@@ -278,8 +299,12 @@ class KafkaConsumer:
                         if attempts < retry.max_attempts:
                             time.sleep(retry.backoff_seconds * attempts)
                     except ProcessingError as exc:
+                        self.metrics.increment(KafkaMetric.PROCESSING_ERRORS)
                         failure = exc
                         break
+                    except Exception:
+                        self.metrics.increment(KafkaMetric.PROCESSING_ERRORS)
+                        raise
             if self.is_shutdown_requested():
                 self.close()
                 return False
@@ -296,7 +321,10 @@ class KafkaConsumer:
                     )
                 )
                 logger.warning("kafka_dead_letter_delivered", extra=context)
+                self.metrics.increment(KafkaMetric.DEAD_LETTERED)
             self.commit_offsets([TopicPartition(record.topic, record.partition, record.offset + 1)])
+            if failure is None:
+                self.metrics.increment(KafkaMetric.PROCESSED)
             return True
         except BaseException:
             logger.error(
@@ -369,6 +397,7 @@ class KafkaConsumer:
                     raise KafkaException(partition.error)
             logger.debug("kafka_offsets_committed", extra={"offset_count": len(offsets)})
         except KafkaException as exc:
+            self.metrics.increment(KafkaMetric.CONSUMER_ERRORS)
             logger.error("kafka_commit_failed", extra={"error": str(exc)})
             raise
 
@@ -387,6 +416,7 @@ class KafkaConsumer:
         try:
             self._consumer.close()
         except KafkaException as exc:
+            self.metrics.increment(KafkaMetric.CONSUMER_ERRORS)
             logger.warning(
                 "kafka_close_failed",
                 extra={"error": str(exc)},
@@ -398,6 +428,44 @@ class KafkaConsumer:
     def is_shutdown_requested(self) -> bool:
         """Check if shutdown has been requested via signal handler."""
         return self._shutdown_requested
+
+    def sample_lag(self, timeout: float = 5.0) -> list[ConsumerLag]:
+        """Query lag for current assignments on the consumer's owning thread.
+
+        Uses broker high watermarks minus committed NEXT offsets, not fetched
+        positions. No commits, polls, or seeks occur. The total query budget is
+        bounded; failure raises rather than returning zero or stale samples.
+        """
+        if self._closed:
+            raise RuntimeError("Cannot sample lag: consumer is closed")
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Lag timeout must be finite and positive")
+        deadline = time.monotonic() + timeout
+
+        def remaining() -> float:
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                raise TimeoutError("Kafka lag query timed out")
+            return budget
+
+        try:
+            assigned = self.get_assignment()
+            if not assigned:
+                return []
+            committed = self._consumer.committed(assigned, timeout=remaining())
+            samples = []
+            for partition in committed:
+                if partition.error is not None:
+                    raise KafkaException(partition.error)
+                low, high = self._consumer.get_watermark_offsets(
+                    partition, timeout=remaining(), cached=False
+                )
+                lag = high - partition.offset if 0 <= low <= partition.offset <= high else None
+                samples.append(ConsumerLag(partition.topic, partition.partition, lag))
+            return samples
+        except (KafkaException, TimeoutError):
+            self.metrics.increment(KafkaMetric.LAG_ERRORS)
+            raise
 
     def get_assignment(self) -> list[TopicPartition]:
         """Get current partition assignments.
