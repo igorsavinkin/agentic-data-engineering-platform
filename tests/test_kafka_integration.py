@@ -33,7 +33,6 @@ from libs.common.kafka_consumer import (
     ProcessingError,
 )
 from libs.common.kafka_errors import (
-    DeadLetterSink,
     RetryPolicy,
     TransientProcessingError,
 )
@@ -259,7 +258,7 @@ class TestProducerToConsumerFlow:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            consumed_events = []
+            consumed_events: list[ProductObservationEvent] = []
             deadline = time.monotonic() + 15
             while len(consumed_events) < 5 and time.monotonic() < deadline:
                 batch, _ = consumer.poll(timeout=1.0)
@@ -315,7 +314,7 @@ class TestInvalidEventHandling:
             )
             producer.flush(timeout=5)
         finally:
-            producer.close()
+            producer.close()  # type: ignore[attr-defined]
 
         # Consumer should detect and report the error
         consumer = KafkaConsumer(consumer_settings)
@@ -368,7 +367,7 @@ class TestInvalidEventHandling:
             )
             producer.flush(timeout=5)
         finally:
-            producer.close()
+            producer.close()  # type: ignore[attr-defined]
 
         # Consumer should detect schema validation failure
         consumer = KafkaConsumer(consumer_settings)
@@ -421,7 +420,7 @@ class TestDuplicateEventHandling:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            consumed_messages = []
+            consumed_messages: list[ConsumerMessage] = []
             deadline = time.monotonic() + 15
             while len(consumed_messages) < 2 and time.monotonic() < deadline:
                 batch, _ = consumer.poll(timeout=1.0)
@@ -654,7 +653,7 @@ class TestFailureAndRetryPaths:
             # Use process_next which handles retries
             result = consumer.process_next(
                 process_with_transient_failure,
-                dead_letter=DeadLetterSink(dead_letter_sink),
+                dead_letter=dead_letter_sink,
                 retry=RetryPolicy(max_attempts=3, backoff_seconds=0.1),
                 timeout=1.0,
             )
@@ -690,7 +689,7 @@ class TestFailureAndRetryPaths:
 
             result = consumer.process_next(
                 process_with_permanent_failure,
-                dead_letter=DeadLetterSink(dead_letter_sink),
+                dead_letter=dead_letter_sink,
                 retry=RetryPolicy(max_attempts=2, backoff_seconds=0.01),
                 timeout=1.0,
             )
@@ -924,16 +923,16 @@ class TestMilestone1AcceptanceCriteria:
             producer.publish(valid_event)
 
         # Produce raw invalid JSON bytes directly to the topic
-        producer = Producer({"bootstrap.servers": real_broker})
+        raw_producer = Producer({"bootstrap.servers": real_broker})
         try:
-            producer.produce(
+            raw_producer.produce(
                 "products.raw.v1",
                 value=b'{"event_id": "invalid", "no_payload": true}',
                 key=b"invalid-key",
             )
-            producer.flush(timeout=5)
+            raw_producer.flush(timeout=5)
         finally:
-            producer.close()
+            raw_producer.close()  # type: ignore[attr-defined]
 
         # Valid event should still be consumable
         consumer = KafkaConsumer(consumer_settings)
@@ -989,7 +988,7 @@ class TestMilestone1AcceptanceCriteria:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            received = []
+            received: list[ConsumerMessage] = []
             deadline = time.monotonic() + 15
             while len(received) < 3 and time.monotonic() < deadline:
                 batch, _ = consumer.poll(timeout=1.0)
