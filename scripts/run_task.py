@@ -113,9 +113,27 @@ def check_prerequisites() -> list[str]:
 
     # Check Qwen Code CLI
     try:
-        subprocess.run(["qwen", "--version"], capture_output=True, timeout=5, check=True)
+        result = subprocess.run(
+            ["qwen", "--version"], capture_output=True, text=True, timeout=5, check=True
+        )
     except FileNotFoundError:
-        issues.append("Qwen Code CLI is not installed")
+        # On Windows, qwen might be installed but not on PATH
+        import platform
+
+        if platform.system() == "Windows":
+            qwen_paths = [
+                Path.home() / "AppData" / "Local" / "qwen-code" / "bin" / "qwen.cmd",
+                Path.home() / "AppData" / "Roaming" / "npm" / "qwen.cmd",
+            ]
+            found = False
+            for qwen_path in qwen_paths:
+                if qwen_path.exists():
+                    found = True
+                    break
+            if not found:
+                issues.append("Qwen Code CLI is not installed (or not on PATH)")
+        else:
+            issues.append("Qwen Code CLI is not installed")
 
     # Check main branch is clean
     try:
