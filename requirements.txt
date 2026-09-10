@@ -9,3 +9,6 @@ python-dotenv>=1.0
 
 # Kafka transport client (TASK-008).
 confluent-kafka>=2.15,<3
+
+# Polars for analytical processing (TASK-013).
+polars>=1.0,<2
