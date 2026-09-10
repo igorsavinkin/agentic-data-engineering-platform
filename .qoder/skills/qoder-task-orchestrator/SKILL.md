@@ -40,6 +40,31 @@ The workflow has these **mandatory sequential phases**:
 
 You MUST execute ALL phases. Never stop after Phase 2.
 
+### Common Anti-Pattern (DO NOT DO THIS)
+
+```
+❌ WRONG: Implement → Commit → Create PR
+❌ WRONG: Implement → Commit → Stop and report "done"
+❌ WRONG: Implement → Commit → Push → Create PR (without review)
+```
+
+### Correct Workflow
+
+```
+✅ RIGHT: Implement → Commit → Quality Checks → Qwen Review → Save Report → Push → Create PR
+```
+
+### Phase State Transitions
+
+| Phase | State Value | Gate to Next Phase |
+|-------|------------|-------------------|
+| 1. Prepare | `preparing` | Worktree created, state initialized |
+| 2. Implement | `implement` → `implement-complete` | Commits exist, state updated |
+| 3. Review | `implement-complete` → `review-complete` | Report saved, state updated, APPROVED |
+| 4. Publish | `review-complete` → `ci` | **Phase gate validates review exists** |
+| 5. CI Monitor | `ci` → `merged` | All checks pass |
+| 6. Cleanup | `merged` → `done` | Worktree removed |
+
 ## Workflow Phases
 
 ### Phase 1: Prepare Environment
@@ -112,7 +137,27 @@ save_log(f"task-workflow/TASK-xxx/qoder-{attempt}.txt", transcript)
 head = git(worktree, "rev-parse", "HEAD")
 if head == before:
     raise Error("Qoder made no commit - inspect transcript")
+
+# Update state to mark implementation complete
+state.update(phase="implement-complete")
+write_json(f"task-workflow/TASK-xxx/state.json", state)
 ```
+
+---
+
+## ⛔ STOP: IMPLEMENTATION COMPLETE - REVIEW PHASE REQUIRED ⛔
+
+**DO NOT PROCEED TO PR CREATION.**
+
+You have completed Phase 2 (Implementation). The workflow is NOT complete.
+
+**MANDATORY NEXT STEP:** Execute Phase 3 (Qwen Review) immediately.
+
+Skipping the review phase is a **CRITICAL WORKFLOW FAILURE**. The review must complete before any PR can be created.
+
+Proceed to Phase 3 now.
+
+---
 
 ### Phase 3: Automated Review (MANDATORY - DO NOT SKIP)
 
@@ -162,7 +207,12 @@ if verdict != "APPROVED":
 
 print("Review APPROVED")
 
-# STEP 6: Save review report (MANDATORY)
+# STEP 7: Update state to mark review complete (MANDATORY)
+state.update(phase="review-complete", reviewed=head, approved_head=head)
+write_json(f"task-workflow/TASK-xxx/state.json", state)
+print(f"State updated: phase='review-complete', reviewed='{head}'")
+
+# STEP 8: Save review report (MANDATORY)
 write_file(f"docs/reviews/TASK-xxx-review.md", review_output)
 git_add("docs/reviews/TASK-xxx-review.md")
 git_commit("-m", f"Record TASK-xxx Qwen review")
@@ -180,6 +230,51 @@ print("Review phase complete. Proceeding to Phase 4...")
 If any of these are missing, STOP and fix before proceeding.
 
 ### Phase 4: Publish & Create PR
+
+**PHASE GATE - MANDATORY VALIDATION:**
+Before proceeding to Phase 4, you MUST verify ALL of the following:
+
+```python
+# CRITICAL: Validate review phase completed before creating PR
+import os
+
+# Check 1: Review report file exists
+review_report_path = f"docs/reviews/TASK-xxx-review.md"
+if not os.path.exists(review_report_path):
+    raise Error(
+        f"BLOCKED: Review report not found at {review_report_path}\n"
+        "You MUST complete Phase 3 (Qwen Review) before creating a PR.\n"
+        "Go back and execute the review phase now."
+    )
+
+# Check 2: Review report is committed
+review_committed = git("log", "--oneline", "--all", "--", review_report_path)
+if not review_committed:
+    raise Error(
+        f"BLOCKED: Review report exists but is not committed.\n"
+        "Commit the review report before proceeding to PR creation."
+    )
+
+# Check 3: State file shows review completed
+state = read_json(f"task-workflow/TASK-xxx/state.json")
+if state.get("phase") not in ["review-complete", "ci", "publish"]:
+    raise Error(
+        f"BLOCKED: State shows phase='{state.get('phase')}'\n"
+        "Expected phase='review-complete' or later.\n"
+        "Complete the review phase before proceeding."
+    )
+
+if not state.get("reviewed"):
+    raise Error(
+        "BLOCKED: State file missing 'reviewed' commit hash.\n"
+        "The review phase must record the reviewed commit."
+    )
+
+print("✓ Phase gate passed: Review phase verified")
+print(f"  - Review report: {review_report_path}")
+print(f"  - Reviewed commit: {state['reviewed']}")
+print("Proceeding to Phase 4...")
+```
 
 ```python
 # Push branch to remote
@@ -362,17 +457,39 @@ The wrapper handles UI/orchestration concerns; this agent handles execution.
 
 A task workflow is **only complete** when ALL of these are true:
 
-1. ✅ Implementation committed to feature branch
-2. ✅ Quality checks pass (ruff, mypy, pytest)
-3. ✅ **Qwen review invoked and APPROVED**
-4. ✅ Review report saved to `docs/reviews/TASK-xxx-review.md`
-5. ✅ PR created on GitHub
-6. ✅ CI checks passing
-7. ✅ PR merged (if auto-merge enabled)
+1. Implementation committed to feature branch
+2. Quality checks pass (ruff, mypy, pytest)
+3. **Qwen review invoked and APPROVED**
+4. Review report saved to `docs/reviews/TASK-xxx-review.md`
+5. Review report committed to git
+6. State file updated with `phase: "review-complete"` and `reviewed` hash
+7. PR created on GitHub
+8. CI checks passing
+9. PR merged (if auto-merge enabled)
 
 **Missing any of these means the workflow is INCOMPLETE.**
 
-Most commonly, agents stop after step 1 (implementation). This is WRONG. The review phase (step 3) is a mandatory quality gate that cannot be skipped.
+### Self-Check Before Declaring Complete
+
+Before telling the user the workflow is done, verify:
+
+```bash
+# 1. Does the review report exist?
+ls docs/reviews/TASK-xxx-review.md
+
+# 2. Is it committed?
+git log --oneline -- docs/reviews/TASK-xxx-review.md
+
+# 3. Does state show review-complete or later?
+cat task-workflow/TASK-xxx/state.json | grep phase
+
+# 4. Does a PR exist?
+gh pr list --head feature/TASK-xxx
+```
+
+If any of these fail, the workflow is NOT complete. Go back and finish the missing phase.
+
+Most commonly, agents stop after implementation. This is WRONG. The review phase is a mandatory quality gate that cannot be skipped.
 
 ## See Also
 
