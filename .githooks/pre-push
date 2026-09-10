@@ -4,5 +4,8 @@ cd "$(git rev-parse --show-toplevel)"
 # Tests create separate repositories; do not let hook-local Git variables
 # redirect their commands into the repository being pushed.
 unset $(git rev-parse --local-env-vars)
-python -m pytest
-python -m mypy
+
+if [ "${SKIP_TESTS:-}" != "1" ]; then
+  python -m pytest
+  python -m mypy
+fi

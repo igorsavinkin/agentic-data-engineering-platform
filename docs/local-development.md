@@ -102,6 +102,42 @@ The reachability and restart-persistence checks are automated in
 pytest -m integration    # requires the Docker daemon; skips otherwise
 ```
 
+## Git hooks
+
+A pre-push hook runs tests and type checking before every push to prevent
+broken code from reaching the remote. To skip these checks temporarily:
+
+```powershell
+# PowerShell (one-liner — only this push skips tests)
+$env:SKIP_TESTS="1"; git push; Remove-Item Env:\SKIP_TESTS
+```
+
+```bash
+# Git Bash / WSL (only this push skips tests)
+SKIP_TESTS=1 git push
+```
+
+```cmd
+# Command Prompt (CMD) — only this push skips tests
+set SKIP_TESTS=1 && git push
+```
+
+To skip tests for the entire session:
+
+```powershell
+# PowerShell
+$env:SKIP_TESTS="1"
+git push  # tests skipped
+Remove-Item Env:\SKIP_TESTS  # re-enable tests for future pushes
+```
+
+```bash
+# Git Bash / WSL
+export SKIP_TESTS=1
+git push  # tests skipped
+unset SKIP_TESTS  # re-enable tests
+```
+
 ## Troubleshooting
 
 - `docker compose up -d --wait` fails with a port conflict: another service
