@@ -48,9 +48,9 @@ def get_completed_tasks_from_git() -> set[str]:
     return completed
 
 
-def list_tasks() -> list[dict[str, str]]:
+def list_tasks() -> list[dict[str, Any]]:
     """Discover available task specifications."""
-    tasks = []
+    tasks: list[dict[str, Any]] = []
 
     if not TASKS_DIR.exists():
         return tasks
@@ -75,7 +75,8 @@ def get_task_state(task_id: str) -> dict[str, Any] | None:
     """Read the current state of a task workflow if it exists."""
     state_file = STATE_DIR / task_id / "state.json"
     if state_file.exists():
-        return json.loads(state_file.read_text(encoding="utf-8"))
+        state: dict[str, Any] = json.loads(state_file.read_text(encoding="utf-8"))
+        return state
     return None
 
 

@@ -277,7 +277,7 @@ class Workflow:
                 "This script must run within a Qoder agent environment."
             )
 
-        result = create_chat_session(
+        result: dict[str, Any] = create_chat_session(
             prompt=prompt,
         )
         return result
@@ -285,7 +285,7 @@ class Workflow:
     def _wait_for_session(self, session_id: str, timeout: int = 3600) -> None:
         """Wait for a Qoder chat session to reach idle/completed state."""
         try:
-            from qoder_tools import wait_chat_sessions  # type: ignore
+            from qoder_tools import wait_chat_sessions
         except ImportError:
             raise WorkflowError(
                 "Qoder chat session tools are not available. "
@@ -304,7 +304,7 @@ class Workflow:
     def _read_session(self, session_id: str) -> str:
         """Read the transcript from a completed Qoder chat session."""
         try:
-            from qoder_tools import read_chat_session  # type: ignore
+            from qoder_tools import read_chat_session
         except ImportError:
             raise WorkflowError(
                 "Qoder chat session tools are not available. "
