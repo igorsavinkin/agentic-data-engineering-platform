@@ -31,6 +31,15 @@ Main OrchAgent
 
 Each session runs with full Read/Edit/Bash/Git tool access in its own worktree environment.
 
+## CRITICAL: Review Phase is MANDATORY
+
+**DO NOT STOP AFTER IMPLEMENTATION.** The Qwen review phase (Phase 3) is a mandatory gate that must complete before proceeding to PR creation. Skipping review is a critical failure.
+
+The workflow has these **mandatory sequential phases**:
+1. Prepare → 2. Implement → **3. Review (MANDATORY)** → 4. Publish → 5. CI Monitor → 6. Cleanup
+
+You MUST execute ALL phases. Never stop after Phase 2.
+
 ## Workflow Phases
 
 ### Phase 1: Prepare Environment
@@ -105,12 +114,23 @@ if head == before:
     raise Error("Qoder made no commit - inspect transcript")
 ```
 
-### Phase 3: Automated Review
+### Phase 3: Automated Review (MANDATORY - DO NOT SKIP)
+
+**THIS PHASE IS REQUIRED.** After implementation completes, you MUST immediately execute the review phase. Never stop after Phase 2.
 
 Run quality checks and invoke Qwen for review:
 
 ```python
-# Execute local checks
+# STEP 1: Verify implementation completed
+head = git(worktree, "rev-parse", "HEAD")
+if head == before:
+    raise Error("Implementation made no commits - cannot proceed to review")
+
+print(f"Implementation commit: {head}")
+print("Starting mandatory review phase...")
+
+# STEP 2: Execute local quality checks
+print("Running quality checks...")
 run_checks(
     [
         ["python", "-m", "ruff", "format", "--check", "."],
@@ -120,22 +140,44 @@ run_checks(
         ["python", "scripts/verify_repository_structure.py"],
     ]
 )
+print("Quality checks passed")
 
-# Get diff for review
+# STEP 3: Get diff for review
 diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{head}")
+spec_content = read_file(spec_path)
 
-# Send to Qwen in plan mode
+# STEP 4: Send to Qwen for review (MANDATORY)
+print("Invoking Qwen review...")
 review_output = run_qwen_review(diff=diff, spec=spec_content, head=head, base=base)
 
-# Parse verdict
+# STEP 5: Parse verdict
 verdict = parse_workflow_review(review_output, head)
 # Must be exactly "APPROVED" with blocking_findings=0
 
-# Save review report
+if verdict != "APPROVED":
+    print(f"Review verdict: {verdict}")
+    print("Implementation needs fixes - cannot proceed to PR creation")
+    # Handle fix cycle or escalate
+    raise Error(f"Review not approved: {verdict}")
+
+print("Review APPROVED")
+
+# STEP 6: Save review report (MANDATORY)
 write_file(f"docs/reviews/TASK-xxx-review.md", review_output)
 git_add("docs/reviews/TASK-xxx-review.md")
 git_commit("-m", f"Record TASK-xxx Qwen review")
+
+print("Review phase complete. Proceeding to Phase 4...")
 ```
+
+**Validation Checklist Before Proceeding:**
+- [ ] Quality checks passed (ruff, mypy, pytest)
+- [ ] Qwen review invoked and completed
+- [ ] Verdict is exactly "APPROVED"
+- [ ] Review report saved to `docs/reviews/TASK-xxx-review.md`
+- [ ] Review commit created
+
+If any of these are missing, STOP and fix before proceeding.
 
 ### Phase 4: Publish & Create PR
 
@@ -315,6 +357,22 @@ Use alongside `scripts/run_task.py` for:
 - Git-based completion detection
 
 The wrapper handles UI/orchestration concerns; this agent handles execution.
+
+## Mandatory Completion Criteria
+
+A task workflow is **only complete** when ALL of these are true:
+
+1. ✅ Implementation committed to feature branch
+2. ✅ Quality checks pass (ruff, mypy, pytest)
+3. ✅ **Qwen review invoked and APPROVED**
+4. ✅ Review report saved to `docs/reviews/TASK-xxx-review.md`
+5. ✅ PR created on GitHub
+6. ✅ CI checks passing
+7. ✅ PR merged (if auto-merge enabled)
+
+**Missing any of these means the workflow is INCOMPLETE.**
+
+Most commonly, agents stop after step 1 (implementation). This is WRONG. The review phase (step 3) is a mandatory quality gate that cannot be skipped.
 
 ## See Also
 
