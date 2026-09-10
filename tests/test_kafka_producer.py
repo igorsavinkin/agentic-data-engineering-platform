@@ -242,8 +242,10 @@ def test_flush_exception_is_reported(client: MagicMock, event: ProductObservatio
     producer = KafkaEventProducer(load_settings(KafkaProducerSettings))
     with pytest.raises(PublishError, match="publish failed"):
         producer.publish(event)
+    assert producer.metrics.snapshot()["ingestion_errors_total"] == 1
     with pytest.raises(PublishError, match="shutdown failed"):
         producer.close()
+    assert producer.metrics.snapshot()["ingestion_errors_total"] == 2
 
 
 def test_successful_context_body_still_reports_shutdown_failure(client: MagicMock) -> None:
@@ -261,8 +263,10 @@ def test_shutdown_and_publish_after_close(
     producer.close()
     producer.close()
     client.flush.assert_called_once()
+    assert producer.metrics.snapshot()["ingestion_errors_total"] == 0
     with pytest.raises(PublishError, match="closed"):
         producer.publish(event)
+    assert producer.metrics.snapshot()["ingestion_errors_total"] == 1
 
 
 def test_shutdown_failure_can_be_retried(client: MagicMock) -> None:
@@ -270,8 +274,10 @@ def test_shutdown_failure_can_be_retried(client: MagicMock) -> None:
     client.flush.side_effect = [1, 0]
     with pytest.raises(PublishError, match="unconfirmed"):
         producer.close()
+    assert producer.metrics.snapshot()["ingestion_errors_total"] == 1
     producer.close()
     assert client.flush.call_count == 2
+    assert producer.metrics.snapshot()["ingestion_errors_total"] == 1
 
 
 def test_shutdown_does_not_mask_original_error(

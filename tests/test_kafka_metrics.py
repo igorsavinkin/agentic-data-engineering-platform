@@ -76,6 +76,18 @@ def test_producer_metrics(mode: str) -> None:
         assert "secret-canary" not in str(counts)
 
 
+def test_consumer_close_failure_counted_once(client: MagicMock) -> None:  # noqa: F811
+    client.close.side_effect = KafkaException(KafkaError(KafkaError._TRANSPORT))
+    c = consumer()
+    assert c.metrics.snapshot()[KafkaMetric.CONSUMER_ERRORS] == 0
+    c.close()
+    assert c.metrics.snapshot()[KafkaMetric.CONSUMER_ERRORS] == 1
+    c.close()
+    client.close.assert_called_once()
+    assert c.metrics.snapshot()[KafkaMetric.CONSUMER_ERRORS] == 1
+    client.commit.assert_not_called()
+
+
 def test_consumption_retries_and_commits_are_distinct(client: MagicMock) -> None:  # noqa: F811
     with consumer() as c:
         handler = MagicMock(side_effect=[TransientProcessingError("secret-canary"), None])
@@ -172,6 +184,25 @@ def test_lag_requires_bounded_timeout(client: MagicMock, timeout: float) -> None
         with pytest.raises(ValueError):
             c.sample_lag(timeout)
     client.committed.assert_not_called()
+
+
+def test_lag_budget_exhaustion_is_counted_and_recoverable(client: MagicMock) -> None:  # noqa: F811
+    assigned = [TopicPartition("products.raw.v1", 0)]
+    client.assignment.return_value = assigned
+    client.committed.return_value = [TopicPartition("products.raw.v1", 0, 2)]
+    client.get_watermark_offsets.return_value = (0, 3)
+    with consumer() as c:
+        # The committed-offset query consumes the remaining total query budget.
+        with patch("libs.common.kafka_consumer.time.monotonic", side_effect=[10, 11, 15]):
+            with pytest.raises(TimeoutError, match="Kafka lag query timed out"):
+                c.sample_lag(timeout=5)
+        client.committed.assert_called_once_with(assigned, timeout=4)
+        client.get_watermark_offsets.assert_not_called()
+        assert c.metrics.snapshot()[KafkaMetric.LAG_ERRORS] == 1
+        assert c.sample_lag() == [ConsumerLag("products.raw.v1", 0, 1)]
+        assert c.metrics.snapshot()[KafkaMetric.LAG_ERRORS] == 1
+    client.poll.assert_not_called()
+    client.commit.assert_not_called()
 
 
 @pytest.mark.integration
