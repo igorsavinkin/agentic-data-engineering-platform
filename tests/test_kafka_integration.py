@@ -13,6 +13,7 @@ Run with: pytest tests/test_kafka_integration.py -v --integration
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -22,12 +23,19 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from confluent_kafka import Producer
 
 from libs.common.kafka_consumer import (
     ConsumerMessage,
     DeserializationError,
     KafkaConsumer,
     KafkaConsumerSettings,
+    ProcessingError,
+)
+from libs.common.kafka_errors import (
+    DeadLetterSink,
+    RetryPolicy,
+    TransientProcessingError,
 )
 from libs.common.kafka_producer import (
     EventSerializationError,
@@ -35,7 +43,7 @@ from libs.common.kafka_producer import (
     KafkaProducerSettings,
     PublishError,
 )
-from libs.event_contracts import ProductObservationEvent, deserialize_event, serialize_event
+from libs.event_contracts import ProductObservationEvent, deserialize_event
 from scripts import manage_kafka_topics as manager
 
 # ============================================================================
@@ -73,23 +81,6 @@ def valid_event() -> ProductObservationEvent:
             },
         }
     )
-
-
-@pytest.fixture
-def invalid_event_payload() -> dict:
-    """Return an event payload missing required fields."""
-    return {
-        "event_id": f"invalid-{uuid4().hex[:12]}",
-        "source": "test-source",
-        "produced_at": "2026-09-10T12:00:00Z",
-        # Missing 'payload' field entirely
-    }
-
-
-@pytest.fixture
-def duplicate_event(valid_event: ProductObservationEvent) -> ProductObservationEvent:
-    """Create a second event instance with the same event_id."""
-    return deserialize_event(valid_event.model_dump())
 
 
 @pytest.fixture
@@ -278,6 +269,9 @@ class TestProducerToConsumerFlow:
 
             assert len(consumed_events) == 5
 
+            # Verify consumption order matches publication order
+            assert [e.event_id for e in consumed_events] == [e.event_id for e in events]
+
             # Verify offsets are sequential within partition
             offsets = [r.offset for r in receipts]
             for i in range(len(offsets) - 1):
@@ -298,14 +292,13 @@ class TestInvalidEventHandling:
     def test_invalid_event_rejected_by_producer(
         self,
         producer_settings: KafkaProducerSettings,
-        invalid_event_payload: dict,
+        valid_event: ProductObservationEvent,
     ) -> None:
-        """Producer should reject events missing required fields."""
+        """Producer should reject events that fail validation after mutation."""
         with pytest.raises(EventSerializationError):
             with KafkaEventProducer(producer_settings) as producer:
-                # Attempt to publish invalid event (missing payload)
-                invalid_event = deserialize_event(invalid_event_payload)
-                producer.publish(invalid_event)
+                valid_event.schema_version = 99
+                producer.publish(valid_event)
 
     def test_malformed_json_handling(
         self,
@@ -313,9 +306,6 @@ class TestInvalidEventHandling:
         real_broker: str,
     ) -> None:
         """Consumer should surface malformed JSON as deserialization error."""
-        # Manually produce malformed bytes to raw topic
-        from confluent_kafka import Producer
-
         producer = Producer({"bootstrap.servers": real_broker})
         try:
             producer.produce(
@@ -332,7 +322,11 @@ class TestInvalidEventHandling:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            _, errors = consumer.poll(timeout=5.0)
+            errors: list = []
+            deadline = time.monotonic() + 10
+            while not errors and time.monotonic() < deadline:
+                _, batch_errors = consumer.poll(timeout=1.0)
+                errors.extend(batch_errors)
             assert len(errors) == 1
             error = errors[0]
             assert isinstance(error, DeserializationError)
@@ -347,13 +341,10 @@ class TestInvalidEventHandling:
         real_broker: str,
     ) -> None:
         """Consumer should handle events that fail schema validation."""
-        # Produce event with wrong schema version
-        from confluent_kafka import Producer
-
         invalid_schema_event = {
             "event_id": f"bad-schema-{uuid4().hex[:8]}",
             "event_type": "product.observation",
-            "schema_version": 999,  # Unsupported version
+            "schema_version": 999,
             "source": "test-source",
             "produced_at": "2026-09-10T12:00:00Z",
             "payload": {
@@ -372,7 +363,7 @@ class TestInvalidEventHandling:
         try:
             producer.produce(
                 "products.raw.v1",
-                value=serialize_event(deserialize_event(invalid_schema_event)).encode(),
+                value=json.dumps(invalid_schema_event).encode("utf-8"),
                 key=b"test-key",
             )
             producer.flush(timeout=5)
@@ -384,11 +375,14 @@ class TestInvalidEventHandling:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            _, errors = consumer.poll(timeout=5.0)
+            errors: list = []
+            deadline = time.monotonic() + 10
+            while not errors and time.monotonic() < deadline:
+                _, batch_errors = consumer.poll(timeout=1.0)
+                errors.extend(batch_errors)
             assert len(errors) == 1
             error = errors[0]
             assert isinstance(error, DeserializationError)
-            # Error should contain validation context
             assert (
                 "schema_version" in str(error.error).lower()
                 or "validation" in str(error.error).lower()
@@ -510,7 +504,11 @@ class TestConsumerRestart:
         try:
             consumer1.subscribe(["products.raw.v1"])
 
-            messages, _ = consumer1.poll(timeout=5.0)
+            messages: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 10
+            while not messages and time.monotonic() < deadline:
+                batch, _ = consumer1.poll(timeout=1.0)
+                messages.extend(batch)
             assert len(messages) == 1
             consumer1.commit_message(messages[0])
         finally:
@@ -543,7 +541,11 @@ class TestConsumerRestart:
         try:
             consumer1.subscribe(["products.raw.v1"])
 
-            messages, _ = consumer1.poll(timeout=5.0)
+            messages: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 10
+            while not messages and time.monotonic() < deadline:
+                batch, _ = consumer1.poll(timeout=1.0)
+                messages.extend(batch)
             assert len(messages) == 1
             # Intentionally do NOT commit - simulating crash/failure
         finally:
@@ -554,11 +556,15 @@ class TestConsumerRestart:
         try:
             consumer2.subscribe(["products.raw.v1"])
 
-            messages, _ = consumer2.poll(timeout=5.0)
-            assert len(messages) == 1
-            assert messages[0].event.event_id == valid_event.event_id
+            messages2: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 10
+            while not messages2 and time.monotonic() < deadline:
+                batch, _ = consumer2.poll(timeout=1.0)
+                messages2.extend(batch)
+            assert len(messages2) == 1
+            assert messages2[0].event.event_id == valid_event.event_id
             # Same offset should be redelivered
-            consumer2.commit_message(messages[0])
+            consumer2.commit_message(messages2[0])
         finally:
             consumer2.close()
 
@@ -578,7 +584,11 @@ class TestConsumerRestart:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            messages, _ = consumer.poll(timeout=5.0)
+            messages: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 10
+            while not messages and time.monotonic() < deadline:
+                batch, _ = consumer.poll(timeout=1.0)
+                messages.extend(batch)
             assert len(messages) == 1
             # Don't commit, just close gracefully
         finally:
@@ -589,7 +599,11 @@ class TestConsumerRestart:
         try:
             consumer2.subscribe(["products.raw.v1"])
 
-            messages2, _ = consumer2.poll(timeout=5.0)
+            messages2: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 10
+            while not messages2 and time.monotonic() < deadline:
+                batch, _ = consumer2.poll(timeout=1.0)
+                messages2.extend(batch)
             assert len(messages2) == 1
             assert messages2[0].event.event_id == valid_event.event_id
         finally:
@@ -612,8 +626,6 @@ class TestFailureAndRetryPaths:
         valid_event: ProductObservationEvent,
     ) -> None:
         """Transient errors should trigger retry before DLQ."""
-        from libs.common.kafka_errors import DeadLetterSink, TransientProcessingError
-
         # Publish event
         with KafkaEventProducer(producer_settings) as producer:
             producer.publish(valid_event)
@@ -640,8 +652,6 @@ class TestFailureAndRetryPaths:
             consumer.subscribe(["products.raw.v1"])
 
             # Use process_next which handles retries
-            from libs.common.kafka_errors import RetryPolicy
-
             result = consumer.process_next(
                 process_with_transient_failure,
                 dead_letter=DeadLetterSink(dead_letter_sink),
@@ -662,8 +672,6 @@ class TestFailureAndRetryPaths:
         valid_event: ProductObservationEvent,
     ) -> None:
         """Permanent processing failures should route to dead letter queue."""
-        from libs.common.kafka_errors import DeadLetterSink, ProcessingError
-
         # Publish event
         with KafkaEventProducer(producer_settings) as producer:
             producer.publish(valid_event)
@@ -680,8 +688,6 @@ class TestFailureAndRetryPaths:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            from libs.common.kafka_errors import RetryPolicy
-
             result = consumer.process_next(
                 process_with_permanent_failure,
                 dead_letter=DeadLetterSink(dead_letter_sink),
@@ -693,8 +699,13 @@ class TestFailureAndRetryPaths:
             assert result is True
             assert len(dead_letter_calls) == 1
             envelope = dead_letter_calls[0]
-            assert envelope["event_id"] == valid_event.event_id
-            assert envelope["error_type"] == "ProcessingError"
+            # DLQ envelope has generated event_id, not original
+            assert "event_id" in envelope
+            assert envelope["event_type"] == "product.invalid"
+            # error_type is nested under payload
+            assert envelope["payload"]["error_type"] == "ProcessingError"
+            # raw_value_base64 contains the original event
+            assert "raw_value_base64" in envelope["payload"]
         finally:
             consumer.close()
 
@@ -731,20 +742,90 @@ class TestFailureAndRetryPaths:
         real_broker: str,
     ) -> None:
         """Consumer should recover after brief Kafka broker interruption."""
-        # Publish event
+        compose_file = Path(__file__).resolve().parents[1] / "docker-compose.yml"
+        compose_cmd = ["docker", "compose", "-f", str(compose_file)]
+
+        # Publish event before restart
         with KafkaEventProducer(producer_settings) as producer:
             producer.publish(valid_event)
 
+        # Consume and commit before restart
         consumer = KafkaConsumer(consumer_settings)
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            # Should be able to consume normally
-            messages, _ = consumer.poll(timeout=5.0)
+            messages: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 10
+            while not messages and time.monotonic() < deadline:
+                batch, _ = consumer.poll(timeout=1.0)
+                messages.extend(batch)
             assert len(messages) == 1
             consumer.commit_message(messages[0])
         finally:
             consumer.close()
+
+        # Stop Kafka broker
+        subprocess.run(
+            [*compose_cmd, "stop", "kafka"],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+
+        # Start Kafka broker again
+        subprocess.run(
+            [*compose_cmd, "start", "kafka"],
+            capture_output=True,
+            check=True,
+            timeout=120,
+        )
+
+        # Wait for broker to become responsive
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                probe = Producer({"bootstrap.servers": real_broker})
+                probe.poll(0)
+                break
+            except Exception:
+                time.sleep(1)
+
+        # Publish another event after restart
+        post_restart_event = deserialize_event(
+            {
+                "event_id": f"post-restart-{uuid4().hex[:8]}",
+                "source": "test-source",
+                "produced_at": "2026-09-10T12:00:00Z",
+                "payload": {
+                    "external_id": "product-post-restart",
+                    "name": "Post Restart Product",
+                    "url": "https://example.com/post-restart",
+                    "price": "49.99",
+                    "currency": "USD",
+                    "availability": "in_stock",
+                    "category": "electronics",
+                    "collected_at": "2026-09-10T11:59:00Z",
+                },
+            }
+        )
+        with KafkaEventProducer(producer_settings) as producer:
+            producer.publish(post_restart_event)
+
+        # New consumer should recover and consume the post-restart event
+        consumer2 = KafkaConsumer(consumer_settings)
+        try:
+            consumer2.subscribe(["products.raw.v1"])
+
+            recovered: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 20
+            while not recovered and time.monotonic() < deadline:
+                batch, _ = consumer2.poll(timeout=1.0)
+                recovered.extend(batch)
+            assert len(recovered) >= 1
+            assert recovered[0].event.event_id == post_restart_event.event_id
+            consumer2.commit_message(recovered[0])
+        finally:
+            consumer2.close()
 
 
 # ============================================================================
@@ -793,9 +874,14 @@ class TestMilestone1AcceptanceCriteria:
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            messages, errors = consumer.poll(timeout=10.0)
+            messages: list[ConsumerMessage] = []
+            deadline = time.monotonic() + 10
+            while not messages and time.monotonic() < deadline:
+                batch, batch_errors = consumer.poll(timeout=1.0)
+                messages.extend(batch)
+                if batch_errors:
+                    pytest.fail(f"Unexpected deserialization errors: {batch_errors}")
             assert len(messages) == 1
-            assert len(errors) == 0
 
             consumed = messages[0]
             assert consumed.event.event_id == event.event_id
@@ -811,6 +897,7 @@ class TestMilestone1AcceptanceCriteria:
         self,
         producer_settings: KafkaProducerSettings,
         consumer_settings: KafkaConsumerSettings,
+        real_broker: str,
     ) -> None:
         """Invalid events should be caught without breaking the pipeline."""
         # Valid event
@@ -836,27 +923,35 @@ class TestMilestone1AcceptanceCriteria:
         with KafkaEventProducer(producer_settings) as producer:
             producer.publish(valid_event)
 
-        # Try to publish invalid event (should fail)
-        with pytest.raises(EventSerializationError):
-            with KafkaEventProducer(producer_settings) as producer:
-                invalid = deserialize_event(
-                    {
-                        "event_id": f"invalid-{uuid4().hex[:8]}",
-                        "source": "test",
-                        "produced_at": "2026-09-10T12:00:00Z",
-                        # Missing payload
-                    }
-                )
-                producer.publish(invalid)
+        # Produce raw invalid JSON bytes directly to the topic
+        producer = Producer({"bootstrap.servers": real_broker})
+        try:
+            producer.produce(
+                "products.raw.v1",
+                value=b'{"event_id": "invalid", "no_payload": true}',
+                key=b"invalid-key",
+            )
+            producer.flush(timeout=5)
+        finally:
+            producer.close()
 
         # Valid event should still be consumable
         consumer = KafkaConsumer(consumer_settings)
         try:
             consumer.subscribe(["products.raw.v1"])
 
-            messages, _ = consumer.poll(timeout=10.0)
+            messages: list[ConsumerMessage] = []
+            errors: list = []
+            deadline = time.monotonic() + 10
+            while (not messages or not errors) and time.monotonic() < deadline:
+                batch, batch_errors = consumer.poll(timeout=1.0)
+                messages.extend(batch)
+                errors.extend(batch_errors)
+
             assert len(messages) == 1
             assert messages[0].event.event_id == valid_event.event_id
+            assert len(errors) == 1
+            assert isinstance(errors[0], DeserializationError)
         finally:
             consumer.close()
 
