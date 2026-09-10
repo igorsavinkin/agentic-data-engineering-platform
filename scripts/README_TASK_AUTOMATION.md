@@ -213,13 +213,15 @@ if head == before:
 
 ```python
 # Run local quality checks
-run_checks([
-    ["python", "-m", "ruff", "format", "--check", "."],
-    ["python", "-m", "ruff", "check", "."],
-    ["python", "-m", "mypy"],
-    ["python", "-m", "pytest"],
-    ["python", "scripts/verify_repository_structure.py"]
-])
+run_checks(
+    [
+        ["python", "-m", "ruff", "format", "--check", "."],
+        ["python", "-m", "ruff", "check", "."],
+        ["python", "-m", "mypy"],
+        ["python", "-m", "pytest"],
+        ["python", "scripts/verify_repository_structure.py"],
+    ]
+)
 
 # Get diff for review
 diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{head}")
@@ -255,10 +257,7 @@ Qwen approved implementation `{reviewed_head}`; see
 `docs/reviews/TASK-010-review.md`. Local repository checks passed.
 """
     pr_number = gh_pr_create(
-        base="main",
-        head="feature/TASK-010",
-        title="Implement TASK-010",
-        body=pr_body
+        base="main", head="feature/TASK-010", title="Implement TASK-010", body=pr_body
     )
 ```
 

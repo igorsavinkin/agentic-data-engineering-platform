@@ -9,7 +9,7 @@ orchestrator = TaskOrchestrator(
     task_id="TASK-010",
     repo_path="C:\\Users\\igors\\RnD\\agentic-data-platform",
     auto_merge=True,
-    integration=False
+    integration=False,
 )
 
 orchestrator.execute()
@@ -29,7 +29,7 @@ This will:
 orchestrator = TaskOrchestrator(
     task_id="TASK-011",
     depends_on=["TASK-009", "TASK-010"],  # Must be merged first
-    auto_merge=True
+    auto_merge=True,
 )
 
 orchestrator.execute()
@@ -42,7 +42,7 @@ The orchestrator validates that prerequisite PRs are merged before starting.
 ```python
 orchestrator = TaskOrchestrator(
     task_id="TASK-012",
-    auto_merge=False  # Stop after CI passes
+    auto_merge=False,  # Stop after CI passes
 )
 
 orchestrator.execute()
@@ -72,11 +72,7 @@ orchestrator.resume(review_again=True)  # Re-run review phase
 tasks = ["TASK-010", "TASK-011", "TASK-012"]
 
 for task_id in tasks:
-    orchestrator = TaskOrchestrator(
-        task_id=task_id,
-        auto_merge=True,
-        max_rounds=3
-    )
+    orchestrator = TaskOrchestrator(task_id=task_id, auto_merge=True, max_rounds=3)
     try:
         orchestrator.execute()
         print(f"✅ {task_id} completed")

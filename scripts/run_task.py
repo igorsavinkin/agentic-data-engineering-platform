@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 # Repository root (parent of scripts/)
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "ai" / "tasks"
@@ -34,8 +33,7 @@ def get_completed_tasks_from_git() -> set[str]:
     completed = set()
     try:
         result = subprocess.run(
-            ["git", "log", "--oneline"],
-            cwd=ROOT, capture_output=True, text=True, timeout=10
+            ["git", "log", "--oneline"], cwd=ROOT, capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
@@ -53,8 +51,7 @@ def get_completed_tasks_from_git() -> set[str]:
 def list_tasks() -> list[dict[str, str]]:
     """Discover available task specifications."""
     tasks = []
-    completed_from_git = get_completed_tasks_from_git()
-    
+
     if not TASKS_DIR.exists():
         return tasks
 
@@ -63,12 +60,14 @@ def list_tasks() -> list[dict[str, str]]:
         if match:
             number = f"TASK-{match.group(1)}"
             slug = match.group(2).replace("-", " ").title()
-            tasks.append({
-                "id": number,
-                "slug": slug,
-                "path": spec,
-                "number": int(match.group(1)),
-            })
+            tasks.append(
+                {
+                    "id": number,
+                    "slug": slug,
+                    "path": spec,
+                    "number": int(match.group(1)),
+                }
+            )
     return tasks
 
 
@@ -87,8 +86,7 @@ def check_prerequisites() -> list[str]:
     # Check Python
     try:
         result = subprocess.run(
-            [sys.executable, "--version"],
-            capture_output=True, text=True, timeout=5
+            [sys.executable, "--version"], capture_output=True, text=True, timeout=5
         )
         version_match = re.search(r"Python (\d+\.\d+)", result.stdout)
         if version_match:
@@ -106,10 +104,7 @@ def check_prerequisites() -> list[str]:
 
     # Check GitHub CLI
     try:
-        result = subprocess.run(
-            ["gh", "auth", "status"],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=5)
         if result.returncode != 0:
             issues.append("GitHub CLI is not authenticated (run 'gh auth login')")
     except FileNotFoundError:
@@ -124,15 +119,13 @@ def check_prerequisites() -> list[str]:
     # Check main branch is clean
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=ROOT, capture_output=True, text=True, timeout=5
+            ["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True, timeout=5
         )
         if result.stdout.strip():
             issues.append("Working directory is dirty (commit or stash changes first)")
 
         result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=ROOT, capture_output=True, text=True, timeout=5
+            ["git", "branch", "--show-current"], cwd=ROOT, capture_output=True, text=True, timeout=5
         )
         if result.stdout.strip() != "main":
             issues.append(f"Not on main branch (currently on '{result.stdout.strip()}')")
@@ -169,7 +162,7 @@ def cmd_list(args: argparse.Namespace) -> None:
     """List all available tasks."""
     tasks = list_tasks()
     completed_from_git = get_completed_tasks_from_git()
-    
+
     if not tasks:
         print("No task specifications found in ai/tasks/")
         return
@@ -259,10 +252,10 @@ def cmd_run(args: argparse.Namespace) -> None:
     specs = list(TASKS_DIR.glob(f"{task_id}-*.md"))
     if not specs and not args.spec:
         print(f"Error: No specification found for {task_id}")
-        print(f"\nAvailable tasks:")
+        print("\nAvailable tasks:")
         for task in list_tasks():
             print(f"  - {task['id']}")
-        print(f"\nTo create a new task, use: --spec path/to/spec.md")
+        print("\nTo create a new task, use: --spec path/to/spec.md")
         sys.exit(1)
 
     # Check prerequisites
@@ -300,9 +293,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         cmd.extend(["--ci-timeout", str(args.ci_timeout)])
 
     # Show what we're about to do
-    print(f"\n{'='*60}")
-    print(f"Running Qoder Task Workflow")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("Running Qoder Task Workflow")
+    print(f"{'=' * 60}")
     print(f"Task:      {task_id}")
     if args.spec:
         print(f"Spec:      {args.spec}")
@@ -312,7 +305,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(f"Auto-merge:  {'Yes' if args.auto_merge else 'No'}")
     print(f"Max rounds:  {args.max_rounds or 3}")
     print(f"CI timeout:  {args.ci_timeout or 1800}s")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # Confirm
     if not args.yes:
@@ -325,8 +318,8 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Execute
     print(f"\nStarting workflow for {task_id}...\n")
     try:
-        result = subprocess.run(cmd, cwd=ROOT, check=True)
-        print(f"\n[OK] Workflow completed successfully!")
+        subprocess.run(cmd, cwd=ROOT, check=True)
+        print("\n[OK] Workflow completed successfully!")
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] Workflow failed with exit code {e.returncode}")
         print(f"\nCheck logs in: task-workflow/{task_id}/")
@@ -346,7 +339,7 @@ Examples:
   %(prog)s 009 --auto-merge          Run with auto-merge enabled
   %(prog)s 010 --depends-on 009      Run with dependency
   %(prog)s 050 --spec my-task.md     Create and run new task
-        """
+        """,
     )
 
     # Mode selection
@@ -360,18 +353,20 @@ Examples:
 
     # Options
     parser.add_argument("--spec", type=str, help="Path to task specification file")
-    parser.add_argument("--depends-on", action="append", default=[],
-                        help="Prerequisite task (can be repeated)")
-    parser.add_argument("--integration", action="store_true",
-                        help="Run integration tests")
-    parser.add_argument("--auto-merge", action="store_true",
-                        help="Automatically merge after CI passes")
-    parser.add_argument("--max-rounds", type=int, default=3,
-                        help="Maximum implementation rounds (default: 3)")
-    parser.add_argument("--ci-timeout", type=int, default=1800,
-                        help="CI timeout in seconds (default: 1800)")
-    parser.add_argument("-y", "--yes", action="store_true",
-                        help="Skip confirmation prompt")
+    parser.add_argument(
+        "--depends-on", action="append", default=[], help="Prerequisite task (can be repeated)"
+    )
+    parser.add_argument("--integration", action="store_true", help="Run integration tests")
+    parser.add_argument(
+        "--auto-merge", action="store_true", help="Automatically merge after CI passes"
+    )
+    parser.add_argument(
+        "--max-rounds", type=int, default=3, help="Maximum implementation rounds (default: 3)"
+    )
+    parser.add_argument(
+        "--ci-timeout", type=int, default=1800, help="CI timeout in seconds (default: 1800)"
+    )
+    parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
 
     args = parser.parse_args()
 

@@ -111,24 +111,21 @@ Run quality checks and invoke Qwen for review:
 
 ```python
 # Execute local checks
-run_checks([
-    ["python", "-m", "ruff", "format", "--check", "."],
-    ["python", "-m", "ruff", "check", "."],
-    ["python", "-m", "mypy"],
-    ["python", "-m", "pytest"],
-    ["python", "scripts/verify_repository_structure.py"]
-])
+run_checks(
+    [
+        ["python", "-m", "ruff", "format", "--check", "."],
+        ["python", "-m", "ruff", "check", "."],
+        ["python", "-m", "mypy"],
+        ["python", "-m", "pytest"],
+        ["python", "scripts/verify_repository_structure.py"],
+    ]
+)
 
 # Get diff for review
 diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{head}")
 
 # Send to Qwen in plan mode
-review_output = run_qwen_review(
-    diff=diff,
-    spec=spec_content,
-    head=head,
-    base=base
-)
+review_output = run_qwen_review(diff=diff, spec=spec_content, head=head, base=base)
 
 # Parse verdict
 verdict = parse_workflow_review(review_output, head)
@@ -147,12 +144,7 @@ git_commit("-m", f"Record TASK-xxx Qwen review")
 git_push("-u", "origin", f"feature/TASK-xxx")
 
 # Check for existing PR
-prs = gh_pr_list(
-    state="open",
-    base="main",
-    head=f"feature/TASK-xxx",
-    json=["number"]
-)
+prs = gh_pr_list(state="open", base="main", head=f"feature/TASK-xxx", json=["number"])
 
 if prs:
     pr_number = prs[0]["number"]
@@ -165,10 +157,7 @@ Qwen approved implementation `{reviewed_head}`; see
 `docs/reviews/TASK-xxx-review.md`. Local repository checks passed.
 """
     pr_number = gh_pr_create(
-        base="main",
-        head=f"feature/TASK-xxx",
-        title=f"Implement TASK-xxx",
-        body=pr_body
+        base="main", head=f"feature/TASK-xxx", title=f"Implement TASK-xxx", body=pr_body
     )
 
 state.update(phase="ci", pr=pr_number)
@@ -181,21 +170,14 @@ state.update(phase="ci", pr=pr_number)
 deadline = time.monotonic() + ci_timeout
 while time.monotonic() < deadline:
     # Get check runs
-    check_runs = gh_api(
-        f"repos/{repo}/commits/{head}/check-runs?per_page=100"
-    )
+    check_runs = gh_api(f"repos/{repo}/commits/{head}/check-runs?per_page=100")
 
     # Get commit statuses
-    statuses = gh_api(
-        f"repos/{repo}/commits/{head}/status?per_page=100"
-    )
+    statuses = gh_api(f"repos/{repo}/commits/{head}/status?per_page=100")
 
     # Evaluate results
     if any(check["conclusion"] == "failure" for check in check_runs):
-        state.update(
-            phase="fix",
-            feedback=f"CI failed for PR #{pr_number}. Fix and resume."
-        )
+        state.update(phase="fix", feedback=f"CI failed for PR #{pr_number}. Fix and resume.")
         return  # Pause for manual intervention
 
     if all_required_checks_passed(check_runs, statuses):
