@@ -12,6 +12,7 @@ dist/
 docs/review prompt.txt
 docs/task prompt.md
 tmp/
+task-workflow/
 
 # Environment / secrets — never commit real credentials
 .env
