@@ -48,6 +48,7 @@ import polars as pl
 from libs.common.kafka_consumer import ConsumerMessage
 from libs.common.kafka_errors import DeadLetterSink
 from libs.event_contracts import ProductObservationEvent
+from libs.observability.processor_metrics import ProcessorMetric, ProcessorMetrics
 from services.processor.data_validation import validate
 from services.processor.deduplication import (
     DeduplicationState,
@@ -153,6 +154,9 @@ class ProcessorPipeline:
         ``products.invalid.v1``. Must raise on delivery failure.
     dedup_state:
         Optional cross-batch deduplication state.
+    metrics:
+        Optional ``ProcessorMetrics`` instance for observability. Metrics
+        failures never alter processing semantics (TASK-018).
     """
 
     def __init__(
@@ -160,10 +164,12 @@ class ProcessorPipeline:
         validated_sink: ValidatedSink,
         invalid_sink: DeadLetterSink,
         dedup_state: DeduplicationState | None = None,
+        metrics: ProcessorMetrics | None = None,
     ) -> None:
         self._validated_sink = validated_sink
         self._invalid_sink = invalid_sink
         self._dedup_state = dedup_state
+        self._metrics = metrics
 
     def process_batch(self, messages: list[ConsumerMessage]) -> PipelineResult:
         """Process a batch of consumer messages through the full pipeline.
@@ -173,6 +179,34 @@ class ProcessorPipeline:
         """
         if not messages:
             return PipelineResult()
+
+        batch_size = len(messages)
+        if self._metrics is not None:
+            self._metrics.increment(ProcessorMetric.BATCHES_TOTAL)
+            self._metrics.increment(ProcessorMetric.BATCH_RECORDS_TOTAL, batch_size)
+
+        try:
+            if self._metrics is not None:
+                with self._metrics.time_batch():
+                    result = self._run_pipeline(messages, batch_size)
+            else:
+                result = self._run_pipeline(messages, batch_size)
+        except Exception:
+            if self._metrics is not None:
+                self._metrics.increment(ProcessorMetric.EVENTS_FAILED, batch_size)
+            raise
+
+        if self._metrics is not None:
+            self._metrics.increment(ProcessorMetric.EVENTS_PROCESSED, batch_size)
+            self._metrics.increment(ProcessorMetric.EVENTS_VALID, result.published_valid)
+            self._metrics.increment(ProcessorMetric.EVENTS_INVALID, result.published_invalid)
+            self._metrics.increment(ProcessorMetric.EVENTS_DUPLICATE, result.duplicates_skipped)
+
+        return result
+
+    def _run_pipeline(self, messages: list[ConsumerMessage], batch_size: int) -> PipelineResult:
+        """Execute the processing chain and return the outcome."""
+        del batch_size
 
         event_index: dict[str, ConsumerMessage] = {}
         events: list[ProductObservationEvent] = []
