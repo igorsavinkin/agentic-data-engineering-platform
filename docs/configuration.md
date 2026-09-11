@@ -69,5 +69,6 @@ the repository.
 ## Reference
 
 - Implementation: `libs/common/config.py` (TASK-003)
+- MinIO storage: `libs/common/minio_storage.py` (TASK-020); see `docs/minio-storage.md`
 - Example file: `.env.example`
 - Tests: `tests/test_configuration.py`
