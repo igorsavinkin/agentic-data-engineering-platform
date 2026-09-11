@@ -90,11 +90,13 @@ class ProcessorMetrics:
 
     def snapshot(self) -> dict[str, int | float | None]:
         with self._lock:
-            counts = {metric.value: count for metric, count in self._counts.items()}
+            counts: dict[str, int | float | None] = {
+                metric.value: count for metric, count in self._counts.items()
+            }
         counts.update(self._latency.snapshot())
         return counts
 
-    def time_batch(self):
+    def time_batch(self) -> _BatchTimer:
         """Context manager that measures batch processing duration.
 
         Usage::

@@ -78,7 +78,9 @@ def test_latency_observation() -> None:
     metrics.observe_latency(0.05)
     snap = metrics.snapshot()
     assert snap["processor_processing_seconds_count"] == 3
-    assert abs(snap["processor_processing_seconds_sum"] - 0.45) < 1e-9
+    sum_val = snap["processor_processing_seconds_sum"]
+    assert isinstance(sum_val, (int, float))
+    assert abs(sum_val - 0.45) < 1e-9
     assert snap["processor_processing_seconds_min"] == 0.05
     assert snap["processor_processing_seconds_max"] == 0.3
 
@@ -98,7 +100,9 @@ def test_time_batch_context_manager() -> None:
         time.sleep(0.01)
     snap = metrics.snapshot()
     assert snap["processor_processing_seconds_count"] == 1
-    assert snap["processor_processing_seconds_sum"] >= 0.01
+    sum_val = snap["processor_processing_seconds_sum"]
+    assert isinstance(sum_val, (int, float))
+    assert sum_val >= 0.01
 
 
 def test_time_batch_records_on_exception() -> None:
@@ -109,7 +113,9 @@ def test_time_batch_records_on_exception() -> None:
             raise RuntimeError("test")
     snap = metrics.snapshot()
     assert snap["processor_processing_seconds_count"] == 1
-    assert snap["processor_processing_seconds_sum"] >= 0.01
+    sum_val = snap["processor_processing_seconds_sum"]
+    assert isinstance(sum_val, (int, float))
+    assert sum_val >= 0.01
 
 
 def test_label_cardinality_guard() -> None:
@@ -221,7 +227,9 @@ def test_pipeline_latency_observed() -> None:
     pipeline.process_batch([msg])
     snap = metrics.snapshot()
     assert snap["processor_processing_seconds_count"] == 1
-    assert snap["processor_processing_seconds_sum"] > 0
+    sum_val = snap["processor_processing_seconds_sum"]
+    assert isinstance(sum_val, (int, float))
+    assert sum_val > 0
 
 
 def test_pipeline_empty_batch_no_metrics() -> None:
