@@ -76,6 +76,10 @@ def event_to_row(event: ProductObservationEvent) -> dict[str, Any]:
 
     All envelope fields and payload fields are preserved.  Nullable fields
     (e.g. ``price``) remain nullable in the resulting schema.
+
+    Price is stored as a string to preserve exact Decimal precision without
+    floating-point loss.  Downstream consumers can convert back to Decimal
+    when needed.
     """
     return {
         # Envelope
@@ -88,7 +92,7 @@ def event_to_row(event: ProductObservationEvent) -> dict[str, Any]:
         "external_id": event.payload.external_id,
         "name": event.payload.name,
         "url": event.payload.url,
-        "price": float(event.payload.price) if event.payload.price is not None else None,
+        "price": str(event.payload.price) if event.payload.price is not None else None,
         "currency": event.payload.currency,
         "availability": event.payload.availability.value,
         "category": event.payload.category,
@@ -154,8 +158,20 @@ class BronzeWriter:
         """Add an event to the current batch.
 
         Returns True when the batch has reached its flush threshold.
+
+        .. deprecated:: Use ``write_event`` for at-least-once delivery.
+           Batch mode risks losing committed-but-unwritten records on crash.
         """
         return self._batch.add(event)
+
+    def write_event(self, event: ProductObservationEvent) -> None:
+        """Persist a single event to Bronze Parquet immediately.
+
+        This is the preferred method for at-least-once delivery: each event
+        is written and confirmed before the caller commits the Kafka offset.
+        Raises ``StorageError`` on failure so the offset is NOT committed.
+        """
+        self._write_single(event)
 
     def flush_batch(self) -> None:
         """Persist the accumulated batch as individual Parquet files.

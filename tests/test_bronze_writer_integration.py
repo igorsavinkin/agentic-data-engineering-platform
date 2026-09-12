@@ -5,6 +5,8 @@ These tests require a running MinIO container.  They verify:
 * partition directory structure;
 * replay idempotency (same key overwrites);
 * null field handling in persisted Parquet.
+
+Run with: pytest -m integration
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ import pytest
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.event_contracts import Availability, ProductObservationEvent, ProductObservationPayload
 from libs.raw_writer import BronzeWriter, build_partition_key
+
+pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -106,7 +110,7 @@ class TestBronzeWriterIntegration:
         row = df.row(0, named=True)
         assert row["event_id"] == "int-rw-1"
         assert row["source"] == "integration-test"
-        assert row["price"] == 42.50
+        assert row["price"] == "42.50"  # stored as string for precision
 
     def test_null_price_persists(
         self, storage: MinIOStorage, minio_settings: MinIOSettings

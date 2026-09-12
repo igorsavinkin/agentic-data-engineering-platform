@@ -22,7 +22,7 @@ from typing import Any
 from libs.common.config import load_settings
 from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaConsumerSettings
 from libs.common.kafka_errors import DeadLetterSink, RetryPolicy
-from libs.common.minio_storage import MinIOSettings, MinIOStorage, StorageError
+from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.raw_writer import BronzeWriter
 
 logger = logging.getLogger(__name__)
@@ -31,16 +31,23 @@ RAW_TOPIC = "products.raw.v1"
 
 
 def _build_dead_letter_sink() -> DeadLetterSink:
-    """Return a no-op DLQ sink for local development.
+    """Return a DLQ sink that fails closed.
 
-    In production this would publish to a Kafka DLQ topic or write to a
-    persistent error log.  For TASK-021 scope we log and continue.
+    When a message cannot be deserialized or processed, this sink logs the
+    failure and raises ``RuntimeError`` so the caller does NOT commit the
+    offset.  The record will be redelivered on restart for manual inspection.
+
+    In production this would publish to a Kafka DLQ topic; here we fail
+    closed to avoid silently acknowledging discarded records.
     """
 
     def sink(envelope: dict[str, Any]) -> None:
         logger.error(
-            "raw_writer_dlq",
-            extra={"envelope": envelope},
+            "raw_writer_dlq_failed",
+            extra={"envelope": str(envelope)},
+        )
+        raise RuntimeError(
+            f"dead-letter delivery failed — refusing to commit offset for envelope: {envelope}"
         )
 
     return sink
@@ -50,15 +57,16 @@ def process_message(
     message: ConsumerMessage,
     writer: BronzeWriter,
 ) -> None:
-    """Process a single Kafka message: add to batch and flush if needed.
+    """Process a single Kafka message: persist to Bronze immediately.
+
+    Each event is written individually so that the offset is committed ONLY
+    after successful persistence.  This implements at-least-once delivery
+    with no risk of losing committed-but-unwritten records.
 
     Raises ``StorageError`` on write failure so the caller does NOT commit
     the offset.
     """
-    event = message.event
-    should_flush = writer.add_event(event)
-    if should_flush:
-        writer.flush_batch()
+    writer.write_event(message.event)
 
 
 def run_consumer() -> None:
@@ -97,11 +105,6 @@ def run_consumer() -> None:
     except KeyboardInterrupt:
         logger.info("raw_writer_interrupted")
     finally:
-        # Flush any remaining events in the batch
-        try:
-            writer.flush_batch()
-        except StorageError as exc:
-            logger.error("raw_writer_final_flush_failed", extra={"error": str(exc)})
         consumer.close()
         storage.close()
         logger.info("raw_writer_stopped")

@@ -128,10 +128,11 @@ class TestEventToRow:
         assert row["availability"] == "in_stock"
         assert row["category"] == "electronics"
 
-    def test_price_as_float(self) -> None:
+    def test_price_as_string(self) -> None:
         event = make_event(price=Decimal("149.50"))
         row = event_to_row(event)
-        assert row["price"] == 149.50
+        assert row["price"] == "149.50"
+        assert isinstance(row["price"], str)
 
     def test_null_price_preserved(self) -> None:
         event = make_event(price=None)
@@ -228,7 +229,7 @@ class TestBronzeWriter:
         df = pl.read_parquet(buf)
         row = df.row(0, named=True)
         assert row["event_id"] == "roundtrip-1"
-        assert row["price"] == 75.0
+        assert row["price"] == "75.00"  # stored as string for precision
         assert row["currency"] == "EUR"
         assert row["availability"] == "in_stock"
 
