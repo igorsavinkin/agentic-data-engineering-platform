@@ -15,15 +15,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING
 
 import polars as pl
 
 from libs.common.minio_storage import MinIOStorage
 from libs.partitioning import LakeLayer
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +134,15 @@ def list_partitions(
     objects = storage.list_objects(bucket, prefix=prefix)
 
     # Extract unique partition prefixes
+    # Keys from MinIO are relative to the bucket, so we need to prepend the layer
     partition_prefixes: set[str] = set()
     for obj_key in objects:
+        # Prepend layer to get full path: "source=fake-store/..." -> "bronze/source=fake-store/..."
+        full_key = (
+            f"{layer_value}/{obj_key}" if not obj_key.startswith(f"{layer_value}/") else obj_key
+        )
         # Extract partition directory: everything up to and including day=<DD>/
-        parts = obj_key.split("/")
+        parts = full_key.split("/")
         if len(parts) >= 5:
             # Reconstruct partition prefix
             partition_prefix = "/".join(parts[:5]) + "/"
@@ -161,8 +162,11 @@ def list_partitions(
         if end_date is not None and part_date > end_date:
             continue
 
-        # Count files in partition
-        file_count = sum(1 for k in objects if k.startswith(pp) and k.endswith(".parquet"))
+        # Count files in partition (keys are bucket-relative, pp has layer prefix)
+        bucket_relative_prefix = pp.lstrip(f"{layer_value}/")
+        file_count = sum(
+            1 for k in objects if k.startswith(bucket_relative_prefix) and k.endswith(".parquet")
+        )
         info.file_count = file_count
         result.append(info)
 
@@ -219,11 +223,30 @@ class LazyScanner:
         self._columns = columns
         self._lazy_frame: pl.LazyFrame | None = None
 
+    def _build_storage_options(self) -> dict[str, str]:
+        """Build Polars-compatible storage options for S3/MinIO access.
+
+        Returns a dict that can be passed to ``pl.scan_parquet(storage_options=...)``
+        to enable direct S3 reads without downloading files locally.
+        """
+        settings = self._storage._settings
+        endpoint = settings.minio_endpoint
+        access_key = settings.minio_access_key.get_secret_value()
+        secret_key = settings.minio_secret_key.get_secret_value()
+
+        return {
+            "aws_region": settings.minio_region,
+            "aws_access_key_id": access_key,
+            "aws_secret_access_key": secret_key,
+            "endpoint_url": endpoint,
+            "allow_non_standard_hosts": "true",  # For localhost MinIO
+        }
+
     def _discover_files(self) -> list[str]:
         """Discover Parquet files matching the scan criteria.
 
-        Returns local file paths or S3 URIs that Polars can read.
-        For MinIO, we download to temporary locations or use direct reads.
+        Returns S3 URIs (s3://bucket/key) that Polars can read via
+        storage_options, avoiding local file downloads.
         """
         partitions = list_partitions(
             self._storage,
@@ -245,13 +268,15 @@ class LazyScanner:
             )
             return []
 
-        # Collect all parquet files from matching partitions
+        # Collect all parquet files from matching partitions as S3 URIs
         files: list[str] = []
         for part in partitions:
             prefix = part.prefix
             objects = self._storage.list_objects(self._bucket, prefix=prefix)
             parquet_files = [k for k in objects if k.endswith(".parquet")]
-            files.extend(parquet_files)
+            # Object keys already include the layer prefix (e.g., "bronze/source=...")
+            # so we just prepend s3://{bucket}/
+            files.extend(f"s3://{self._bucket}/{k}" for k in parquet_files)
 
         logger.info(
             "files_discovered_for_scan",
@@ -287,8 +312,11 @@ class LazyScanner:
                 f"date_range=({self._start_date}, {self._end_date})"
             )
 
-        # Use parallel scan for multiple files
-        lf = pl.scan_parquet(files)
+        # Build storage options for S3/MinIO access
+        storage_opts = self._build_storage_options()
+
+        # Use parallel scan with storage options for S3 reads
+        lf = pl.scan_parquet(files, storage_options=storage_opts)
 
         # Apply column projection after scan (Polars will push it down)
         if self._columns:

@@ -194,7 +194,10 @@ class MinIOStorage:
             raise StorageError(f"object_exists failed: bucket={bucket!r} key={key!r}") from exc
 
     def list_objects(self, bucket: str, prefix: str = "") -> list[str]:
-        """List object keys under a prefix (non-recursive).
+        """List object keys under a prefix (paginated).
+
+        Uses S3 ListObjectsV2 pagination to retrieve all objects matching
+        the given prefix. This is used for partition discovery in the data lake.
 
         Parameters
         ----------

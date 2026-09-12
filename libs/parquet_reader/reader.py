@@ -13,16 +13,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING
 
 import polars as pl
 
 from libs.common.minio_storage import MinIOStorage
 from libs.parquet_reader.scanner import LazyScanner, PartitionInfo, list_partitions
 from libs.partitioning import LakeLayer
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

@@ -11,18 +11,13 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date
 from unittest.mock import MagicMock
 
 import polars as pl
 import pytest
 
 from libs.common.minio_storage import MinIOStorage
-from libs.event_contracts import (
-    Availability,
-    ProductObservationEvent,
-    ProductObservationPayload,
-)
 from libs.parquet_reader import LakeReader, LazyScanner, PartitionFilter, list_partitions
 from libs.partitioning import LakeLayer
 
@@ -31,50 +26,32 @@ from libs.partitioning import LakeLayer
 # ---------------------------------------------------------------------------
 
 
-def make_event(
-    event_id: str = "evt-001",
-    source: str = "fake-store",
-    collected_at: datetime | None = None,
-) -> ProductObservationEvent:
-    """Create a minimal test event."""
-    if collected_at is None:
-        collected_at = datetime(2026, 9, 12, 10, 0, 0, tzinfo=timezone.utc)
-    return ProductObservationEvent(
-        event_id=event_id,
-        event_type="product.observation",
-        schema_version=1,
-        source=source,
-        produced_at=datetime(2026, 9, 12, 10, 5, 0, tzinfo=timezone.utc),
-        payload=ProductObservationPayload(
-            external_id="prod-123",
-            name="Test Product",
-            url="https://example.com/product/123",
-            price=29.99,
-            currency="USD",
-            availability=Availability.IN_STOCK,
-            category="Electronics",
-            collected_at=collected_at,
-        ),
-    )
-
-
 @pytest.fixture
-def mock_storage() -> MinIOStorage:
+def mock_storage() -> MagicMock:
     """Create a mocked MinIO storage instance."""
+
+    from libs.common.minio_storage import MinIOSettings
+
     storage = MagicMock(spec=MinIOStorage)
     storage.check_health.return_value = MagicMock(healthy=True)
+    # Provide _settings for storage_options building
+    storage._settings = MinIOSettings(environment="development")
     return storage
 
 
 @pytest.fixture
 def sample_objects() -> list[str]:
-    """Sample object keys representing partitioned Bronze data."""
+    """Sample object keys representing partitioned Bronze data.
+
+    Note: MinIO/S3 object keys are relative to the bucket, so they don't
+    include the bucket name as a prefix.
+    """
     return [
-        "bronze/source=fake-store/year=2026/month=09/day=12/evt-001.parquet",
-        "bronze/source=fake-store/year=2026/month=09/day=12/evt-002.parquet",
-        "bronze/source=fake-store/year=2026/month=09/day=13/evt-003.parquet",
-        "bronze/source=bestbuy/year=2026/month=09/day=12/evt-004.parquet",
-        "bronze/source=fake-store/year=2026/month=08/day=31/evt-005.parquet",
+        "source=fake-store/year=2026/month=09/day=12/evt-001.parquet",
+        "source=fake-store/year=2026/month=09/day=12/evt-002.parquet",
+        "source=fake-store/year=2026/month=09/day=13/evt-003.parquet",
+        "source=bestbuy/year=2026/month=09/day=12/evt-004.parquet",
+        "source=fake-store/year=2026/month=08/day=31/evt-005.parquet",
     ]
 
 
@@ -87,10 +64,17 @@ class TestListPartitions:
     """Tests for partition discovery functionality."""
 
     def test_list_all_partitions_no_filters(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Listing without filters returns all partitions."""
-        mock_storage.list_objects.return_value = sample_objects
+
+        # Mock should return objects matching the prefix
+        def mock_list(bucket: str, prefix: str = "") -> list[str]:
+            if prefix:
+                return [o for o in sample_objects if o.startswith(prefix.lstrip("bronze/"))]
+            return sample_objects
+
+        mock_storage.list_objects.side_effect = mock_list
 
         partitions = list_partitions(mock_storage, "bronze", LakeLayer.BRONZE)
 
@@ -99,7 +83,7 @@ class TestListPartitions:
         sources = {p.source for p in partitions}
         assert sources == {"fake-store", "bestbuy"}
 
-    def test_filter_by_source(self, mock_storage: MinIOStorage, sample_objects: list[str]) -> None:
+    def test_filter_by_source(self, mock_storage: MagicMock, sample_objects: list[str]) -> None:
         """Source filter prunes partitions."""
 
         # Mock should only return fake-store objects when prefix includes source
@@ -115,11 +99,16 @@ class TestListPartitions:
         assert len(partitions) == 3  # Only fake-store partitions
         assert all(p.source == "fake-store" for p in partitions)
 
-    def test_filter_by_date_range(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
-    ) -> None:
+    def test_filter_by_date_range(self, mock_storage: MagicMock, sample_objects: list[str]) -> None:
         """Date range filter prunes partitions outside range."""
-        mock_storage.list_objects.return_value = sample_objects
+
+        # Mock should return objects matching the prefix
+        def mock_list(bucket: str, prefix: str = "") -> list[str]:
+            if prefix:
+                return [o for o in sample_objects if o.startswith(prefix.lstrip("bronze/"))]
+            return sample_objects
+
+        mock_storage.list_objects.side_effect = mock_list
 
         partitions = list_partitions(
             mock_storage,
@@ -132,7 +121,7 @@ class TestListPartitions:
         assert len(partitions) == 2  # Only Sept 12 partitions
         assert all(p.year == 2026 and p.month == 9 and p.day == 12 for p in partitions)
 
-    def test_empty_result_no_matching_partitions(self, mock_storage: MinIOStorage) -> None:
+    def test_empty_result_no_matching_partitions(self, mock_storage: MagicMock) -> None:
         """Returns empty list when no partitions match."""
         mock_storage.list_objects.return_value = []
 
@@ -146,10 +135,17 @@ class TestListPartitions:
         assert partitions == []
 
     def test_file_count_per_partition(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Each partition reports correct file count."""
-        mock_storage.list_objects.return_value = sample_objects
+
+        # Mock should return objects matching the prefix
+        def mock_list(bucket: str, prefix: str = "") -> list[str]:
+            if prefix:
+                return [o for o in sample_objects if o.startswith(prefix.lstrip("bronze/"))]
+            return sample_objects
+
+        mock_storage.list_objects.side_effect = mock_list
 
         partitions = list_partitions(mock_storage, "bronze", LakeLayer.BRONZE, source="fake-store")
 
@@ -159,12 +155,12 @@ class TestListPartitions:
         assert counts[(2026, 9, 13)] == 1
         assert counts[(2026, 8, 31)] == 1
 
-    def test_invalid_partition_prefix_ignored(self, mock_storage: MinIOStorage) -> None:
+    def test_invalid_partition_prefix_ignored(self, mock_storage: MagicMock) -> None:
         """Non-conforming prefixes are skipped."""
         mock_storage.list_objects.return_value = [
-            "bronze/source=fake-store/year=2026/month=09/day=12/evt-001.parquet",
-            "bronze/invalid/path/structure/file.parquet",  # Should be ignored
-            "bronze/source=fake-store/year=bad/month=09/day=12/evt-002.parquet",  # Invalid year
+            "source=fake-store/year=2026/month=09/day=12/evt-001.parquet",
+            "invalid/path/structure/file.parquet",  # Should be ignored
+            "source=fake-store/year=bad/month=09/day=12/evt-002.parquet",  # Invalid year
         ]
 
         partitions = list_partitions(mock_storage, "bronze", LakeLayer.BRONZE)
@@ -182,10 +178,17 @@ class TestLazyScanner:
     """Tests for lazy scanning functionality."""
 
     def test_scan_creates_lazy_frame(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Scan returns a LazyFrame without materializing data."""
-        mock_storage.list_objects.return_value = sample_objects
+
+        # Mock should return objects matching the prefix
+        def mock_list(bucket: str, prefix: str = "") -> list[str]:
+            if prefix:
+                return [o for o in sample_objects if o.startswith(prefix.lstrip("bronze/"))]
+            return sample_objects
+
+        mock_storage.list_objects.side_effect = mock_list
 
         scanner = LazyScanner(
             mock_storage,
@@ -200,10 +203,17 @@ class TestLazyScanner:
         assert isinstance(lf, pl.LazyFrame)
 
     def test_scan_with_column_projection(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Column projection is passed to scan_parquet."""
-        mock_storage.list_objects.return_value = sample_objects
+
+        # Mock should return objects matching the prefix
+        def mock_list(bucket: str, prefix: str = "") -> list[str]:
+            if prefix:
+                return [o for o in sample_objects if o.startswith(prefix.lstrip("bronze/"))]
+            return sample_objects
+
+        mock_storage.list_objects.side_effect = mock_list
 
         scanner = LazyScanner(
             mock_storage,
@@ -217,7 +227,7 @@ class TestLazyScanner:
         # (actual column filtering happens at Polars level)
         assert isinstance(lf, pl.LazyFrame)
 
-    def test_scan_no_files_raises_error(self, mock_storage: MinIOStorage) -> None:
+    def test_scan_no_files_raises_error(self, mock_storage: MagicMock) -> None:
         """Scan raises ValueError when no files match."""
         mock_storage.list_objects.return_value = []
 
@@ -232,10 +242,17 @@ class TestLazyScanner:
             scanner.scan()
 
     def test_count_returns_row_count(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Count method returns number of rows without full materialization."""
-        mock_storage.list_objects.return_value = sample_objects
+
+        # Mock should return objects matching the prefix
+        def mock_list(bucket: str, prefix: str = "") -> list[str]:
+            if prefix:
+                return [o for o in sample_objects if o.startswith(prefix.lstrip("bronze/"))]
+            return sample_objects
+
+        mock_storage.list_objects.side_effect = mock_list
 
         scanner = LazyScanner(
             mock_storage,
@@ -249,15 +266,22 @@ class TestLazyScanner:
         try:
             count = scanner.count()
             assert isinstance(count, int)
-        except (FileNotFoundError, pl.exceptions.ComputeError):
-            # Expected when files don't actually exist on disk
+        except (FileNotFoundError, OSError, pl.exceptions.ComputeError):
+            # Expected when files don't actually exist on disk or MinIO isn't running
             pass
 
     def test_cached_lazy_frame_reused(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Subsequent scan() calls return cached LazyFrame."""
-        mock_storage.list_objects.return_value = sample_objects
+
+        # Mock should return objects matching the prefix
+        def mock_list(bucket: str, prefix: str = "") -> list[str]:
+            if prefix:
+                return [o for o in sample_objects if o.startswith(prefix.lstrip("bronze/"))]
+            return sample_objects
+
+        mock_storage.list_objects.side_effect = mock_list
 
         scanner = LazyScanner(mock_storage, "bronze", LakeLayer.BRONZE)
         lf1 = scanner.scan()
@@ -275,7 +299,7 @@ class TestLakeReader:
     """Tests for high-level LakeReader API."""
 
     def test_discover_partitions_delegates_to_list_partitions(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """discover_partitions returns PartitionInfo list."""
         mock_storage.list_objects.return_value = sample_objects
@@ -292,7 +316,7 @@ class TestLakeReader:
         assert all(isinstance(p, type(partitions[0])) for p in partitions)
 
     def test_read_returns_dataframe(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """read() returns a DataFrame (empty if files don't exist)."""
         mock_storage.list_objects.return_value = sample_objects
@@ -310,7 +334,7 @@ class TestLakeReader:
         assert isinstance(df, pl.DataFrame)
 
     def test_read_with_column_projection(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """read() respects column projection in filter."""
         mock_storage.list_objects.return_value = sample_objects
@@ -327,7 +351,7 @@ class TestLakeReader:
         if len(df) == 0:
             assert set(df.columns) == {"event_id", "price"}
 
-    def test_read_empty_result_returns_empty_frame(self, mock_storage: MinIOStorage) -> None:
+    def test_read_empty_result_returns_empty_frame(self, mock_storage: MagicMock) -> None:
         """read() returns empty DataFrame when no data matches."""
         mock_storage.list_objects.return_value = []
 
@@ -342,7 +366,7 @@ class TestLakeReader:
         assert len(df) == 0
 
     def test_scan_returns_lazy_frame(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """scan() returns LazyFrame for further transformation."""
         mock_storage.list_objects.return_value = sample_objects
@@ -360,13 +384,13 @@ class TestLakeReader:
             # Expected if files don't exist
             pass
 
-    def test_health_check_delegates_to_storage(self, mock_storage: MinIOStorage) -> None:
+    def test_health_check_delegates_to_storage(self, mock_storage: MagicMock) -> None:
         """health_check probes underlying storage."""
         reader = LakeReader(mock_storage, bucket="bronze")
         assert reader.health_check() is True
         mock_storage.check_health.assert_called_once()
 
-    def test_bucket_override(self, mock_storage: MinIOStorage, sample_objects: list[str]) -> None:
+    def test_bucket_override(self, mock_storage: MagicMock, sample_objects: list[str]) -> None:
         """read() can override default bucket via parameter."""
         mock_storage.list_objects.return_value = sample_objects
 
@@ -425,7 +449,7 @@ class TestEndToEnd:
     """End-to-end style tests verifying API composition."""
 
     def test_discover_then_read_workflow(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Typical workflow: discover partitions, then read matching data."""
         mock_storage.list_objects.return_value = sample_objects
@@ -453,7 +477,7 @@ class TestEndToEnd:
             assert isinstance(df, pl.DataFrame)
 
     def test_multiple_sources_in_same_query(
-        self, mock_storage: MinIOStorage, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str]
     ) -> None:
         """Querying without source filter includes all sources."""
         mock_storage.list_objects.return_value = sample_objects
