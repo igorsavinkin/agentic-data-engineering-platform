@@ -128,3 +128,73 @@ After fixing:
 4. Convert timestamps to datetime objects and schema_version to string (m5, m6)
 5. Run and verify all quality checks: pytest, ruff check ., ruff format --check ., mypy src/
 6. Consider adding a round-trip test that verifies schema metadata in Parquet output (i2)
+
+---
+
+## Re-Review (Post-Fix Verification)
+
+**Date:** 2026-09-12
+**Reviewer:** Qwen Code
+
+### M1 Fix Verification
+
+**FIXED — Correct.** In `libs/schema/parquet_schemas.py` lines 163–177, the `_compare_fields` function now checks the nullability of added fields:
+
+```python
+# Check for added fields
+for name in new_fields:
+    if name not in old_fields:
+        new_field = new_fields[name]
+        # Adding a non-nullable field is breaking — existing data has no value for it
+        is_breaking = not new_field.nullable
+        changes.append(
+            SchemaChange(
+                field_name=name,
+                change_type="added",
+                old_value=None,
+                new_value=str(new_field.type),
+                is_breaking=is_breaking,
+            )
+        )
+```
+
+Previously, `is_breaking=False` was hardcoded for all added fields. Now `is_breaking = not new_field.nullable` correctly distinguishes nullable (compatible) from non-nullable (breaking) additions. This exactly matches the fix recommended in the original review.
+
+A new test `test_adding_non_nullable_field_is_incompatible` (lines 160–168 in `tests/test_parquet_schemas.py`) verifies this behaviour: it creates a schema with a non-nullable added field and asserts `compat == SchemaCompatibility.INCOMPATIBLE`. The existing test `test_adding_nullable_field_is_compatible` continues to verify the compatible case. Both paths are covered.
+
+### M2 Fix Verification
+
+**FIXED — Correct.** Two complementary changes address the original issue:
+
+1. **Type checking function added:** A new `_check_type_compatible(value, pa_type)` function (lines 261–306 in `parquet_schemas.py`) validates that Python values are compatible with declared PyArrow types. It correctly handles:
+   - `str` values for `pa.string()` fields
+   - `int` values for integer fields (excluding `bool`, since `bool` is a subclass of `int` in Python)
+   - `int` and `float` values for float fields (allowing int→float widening)
+   - `bool` values for boolean fields
+   - `datetime` objects AND ISO-format `str` for `pa.timestamp()` fields (accepting the `.isoformat()` serialisation used by the writers)
+   - `None` values (delegated to nullability checks)
+
+2. **`validate_row_against_schema` now calls `_check_type_compatible`:** Lines 342–346 invoke the type check for every non-null value and produce a `"Type mismatch"` error on failure. The function was also restructured to iterate over `row.items()` for presence/type checks and then iterate over schema fields for missing-required checks, which is logically cleaner than the original.
+
+3. **Writer integration confirms enforcement:** Both `BronzeWriter._write_single` (line 205) and `SilverWriter._write_single` (line 206) call `validate_row_against_schema` before creating the DataFrame, raising `ValueError` on violations. This means type mismatches are caught before Parquet serialisation.
+
+### Additional Checks
+
+**schema_version str conversion (minor issue m6):** Both `event_to_row` (bronze_writer.py line 72) and `validated_event_to_row` (silver_writer.py line 73) now convert `event.schema_version` to `str(event.schema_version)`, matching the `pa.string()` type declared in the schema. The `_check_type_compatible` function accepts `str` for `pa.string()` fields, so this passes validation correctly.
+
+**Type annotations on test row dicts:** All five row dictionaries in `TestRowValidation` are now explicitly typed as `dict[str, object]` (lines 222, 231, 238, 244, 250), satisfying the type annotation requirement and ensuring mypy compatibility with the `validate_row_against_schema` signature.
+
+**Minor issues from original review (non-blocking):**
+- m1 (misleading test name): The test `test_valid_row_passes` still has the same name/assertion pattern, but the `dict[str, object]` annotation was added. Non-blocking, cosmetic.
+- m3 (SchemaChange not exported): `SchemaChange` is still not in `libs/schema/__init__.py`'s `__all__`. Tests import directly from `libs.schema.parquet_schemas`, so this works but is inconsistent. Non-blocking.
+- m4 (BronzeSchemaError unused): Still defined but never raised. Non-blocking.
+
+**No new issues introduced:** The fixes are surgical and do not alter unrelated behaviour. The `_check_type_compatible` function uses deferred `from datetime import datetime` imports (lines 295, 301), which is slightly unconventional but harmless.
+
+### Updated Verdict: APPROVED
+
+Both blocking findings are correctly resolved:
+- M1: Adding a non-nullable field is now correctly detected as a breaking change, with test coverage.
+- M2: Row validation now checks value types against schema types, with correct handling of ISO timestamp strings and int→float widening. Writers enforce validation before Parquet serialisation.
+
+The acceptance criterion "Incompatible changes cannot silently land" is now satisfied. The implementation is ready to merge.
