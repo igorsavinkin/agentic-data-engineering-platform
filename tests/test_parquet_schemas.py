@@ -11,7 +11,7 @@ These tests validate:
 
 from __future__ import annotations
 
-import pyarrow as pa
+import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from libs.schema.parquet_schemas import (
@@ -219,7 +219,7 @@ class TestSchemaCompatibility:
 class TestRowValidation:
     def test_valid_row_passes(self) -> None:
         """A row with all required fields should pass validation."""
-        row = {"event_id": "evt-001", "name": "Test"}
+        row: dict[str, object] = {"event_id": "evt-001", "name": "Test"}
         errors = validate_row_against_schema(row, BRONZE_SCHEMA)
         # Should only fail on missing required fields
         required_errors = [e for e in errors if "required" in e.lower() or "missing" in e.lower()]
@@ -235,19 +235,19 @@ class TestRowValidation:
 
     def test_null_required_field_fails(self) -> None:
         """Null value for required field should produce an error."""
-        row = {"event_id": None, "event_type": "test"}
+        row: dict[str, object] = {"event_id": None, "event_type": "test"}
         errors = validate_row_against_schema(row, BRONZE_SCHEMA)
         assert any("event_id" in e for e in errors)
 
     def test_extra_fields_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         """Extra fields beyond schema should trigger a warning log."""
-        row = {"event_id": "evt-001", "extra_field": "unexpected"}
+        row: dict[str, object] = {"event_id": "evt-001", "extra_field": "unexpected"}
         validate_row_against_schema(row, BRONZE_SCHEMA)
         assert any("extra_fields" in record.message for record in caplog.records)
 
     def test_nullable_field_can_be_none(self) -> None:
         """Nullable fields can be None without error."""
-        row = {"event_id": "evt-001", "name": None}
+        row: dict[str, object] = {"event_id": "evt-001", "name": None}
         errors = validate_row_against_schema(row, BRONZE_SCHEMA)
         # name is nullable, so no error for it being None
         assert not any("name" in e for e in errors if "required" in e.lower())
