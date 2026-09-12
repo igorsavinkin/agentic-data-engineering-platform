@@ -7,6 +7,7 @@ Silver Parquet persistence including read-back verification.
 from __future__ import annotations
 
 import io
+from collections.abc import Generator
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -38,7 +39,7 @@ def minio_settings() -> MinIOSettings:
 
 
 @pytest.fixture
-def storage(minio_settings: MinIOSettings) -> MinIOStorage:
+def storage(minio_settings: MinIOSettings) -> Generator[MinIOStorage, None, None]:
     s = MinIOStorage(minio_settings)
     s.ensure_bucket(minio_settings.minio_bucket_silver)
     yield s
