@@ -163,13 +163,16 @@ def _compare_fields(
     # Check for added fields
     for name in new_fields:
         if name not in old_fields:
+            new_field = new_fields[name]
+            # Adding a non-nullable field is breaking — existing data has no value for it
+            is_breaking = not new_field.nullable
             changes.append(
                 SchemaChange(
                     field_name=name,
                     change_type="added",
                     old_value=None,
-                    new_value=str(new_fields[name].type),
-                    is_breaking=False,  # Adding nullable fields is compatible
+                    new_value=str(new_field.type),
+                    is_breaking=is_breaking,
                 )
             )
 
@@ -255,8 +258,60 @@ def check_schema_compatibility(
     return SchemaCompatibility.COMPATIBLE, changes
 
 
+def _check_type_compatible(value: object, pa_type: pa.DataType) -> bool:
+    """Check if a Python value is compatible with a PyArrow type for Parquet serialization.
+
+    Polars/PyArrow can serialize these Python types to Parquet:
+    - str -> pa.string()
+    - int -> pa.int32(), pa.int64(), etc.
+    - float -> pa.float32(), pa.float64()
+    - bool -> pa.bool_()
+    - datetime -> pa.timestamp()
+    - None -> any nullable type
+    - str (ISO format) -> pa.timestamp() via Polars parsing
+    """
+    if value is None:
+        return True  # Nullability checked separately
+
+    # String values are compatible with string fields
+    if pa.types.is_string(pa_type) or pa.types.is_large_string(pa_type):
+        return isinstance(value, str)
+
+    # Integer values
+    if pa.types.is_integer(pa_type):
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    # Float values
+    if pa.types.is_floating(pa_type):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    # Boolean values
+    if pa.types.is_boolean(pa_type):
+        return isinstance(value, bool)
+
+    # Timestamp values — accept both datetime objects and ISO format strings
+    # (Polars will parse ISO strings when writing Parquet)
+    if pa.types.is_timestamp(pa_type):
+        from datetime import datetime
+
+        return isinstance(value, (datetime, str))
+
+    # Duration values
+    if pa.types.is_duration(pa_type):
+        from datetime import timedelta
+
+        return isinstance(value, (timedelta, int))
+
+    # For other types, be permissive — let Polars handle conversion
+    return True
+
+
 def validate_row_against_schema(row: dict[str, object], schema: pa.Schema) -> list[str]:
     """Validate a data row against a schema, returning list of errors.
+
+    Checks:
+    - Required fields are present and non-null
+    - Field values have compatible Python types for the declared PyArrow types
 
     Parameters
     ----------
@@ -272,16 +327,32 @@ def validate_row_against_schema(row: dict[str, object], schema: pa.Schema) -> li
     """
     errors: list[str] = []
 
-    # Check required fields
+    schema_fields = {f.name: f for f in schema}
+
+    for field_name, value in row.items():
+        if field_name not in schema_fields:
+            continue  # Extra fields logged below
+
+        field = schema_fields[field_name]
+
+        # Check required fields
+        if not field.nullable and value is None:
+            errors.append(f"Required field is null: {field_name}")
+
+        # Check type compatibility (only for non-null values)
+        if value is not None and not _check_type_compatible(value, field.type):
+            errors.append(
+                f"Type mismatch for '{field_name}': "
+                f"expected {field.type}, got {type(value).__name__}"
+            )
+
+    # Check for missing required fields
     for field in schema:
         if not field.nullable and field.name not in row:
             errors.append(f"Missing required field: {field.name}")
-        elif field.name in row and row[field.name] is None and not field.nullable:
-            errors.append(f"Required field is null: {field.name}")
 
     # Check for unexpected extra fields (informational, not an error)
-    schema_fields = {f.name for f in schema}
-    extra_fields = set(row.keys()) - schema_fields
+    extra_fields = set(row.keys()) - schema_fields.keys()
     if extra_fields:
         logger.warning(
             "extra_fields_in_row",

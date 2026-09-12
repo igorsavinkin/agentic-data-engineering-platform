@@ -61,12 +61,16 @@ def validated_event_to_row(event: ProductObservationEvent) -> dict[str, Any]:
     Price is stored as a string to preserve exact Decimal precision without
     floating-point loss.  Downstream consumers can convert back to Decimal
     when needed.
+
+    ``schema_version`` is converted to string to match the Parquet schema.
+    Timestamps are serialized as ISO format strings; Polars will parse them
+    when writing Parquet with the explicit timestamp columns.
     """
     return {
         # Envelope
         "event_id": event.event_id,
         "event_type": event.event_type,
-        "schema_version": event.schema_version,
+        "schema_version": str(event.schema_version),
         "source": event.source,
         "produced_at": event.produced_at.isoformat(),
         # Payload

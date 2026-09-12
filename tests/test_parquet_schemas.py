@@ -157,6 +157,16 @@ class TestSchemaCompatibility:
         assert changes[0].change_type == "added"
         assert not changes[0].is_breaking
 
+    def test_adding_non_nullable_field_is_incompatible(self) -> None:
+        """Adding a non-nullable field is incompatible — existing data has no value."""
+        old_schema = pa.schema([pa.field("a", pa.string())])
+        new_schema = pa.schema(
+            [pa.field("a", pa.string()), pa.field("b", pa.string(), nullable=False)]
+        )
+        compat, changes = check_schema_compatibility(old_schema, new_schema)
+        assert compat == SchemaCompatibility.INCOMPATIBLE
+        assert any(c.change_type == "added" and c.is_breaking for c in changes)
+
     def test_removing_field_is_incompatible(self) -> None:
         """Removing a field is a breaking change."""
         old_schema = pa.schema([pa.field("a", pa.string()), pa.field("b", pa.string())])
