@@ -42,6 +42,7 @@ import polars as pl
 from libs.common.minio_storage import MinIOStorage, StorageError
 from libs.event_contracts import ProductObservationEvent
 from libs.partitioning import LakeLayer, build_partition_key
+from libs.schema import SILVER_SCHEMA, validate_row_against_schema
 
 logger = logging.getLogger(__name__)
 
@@ -190,8 +191,22 @@ class SilverWriter:
         logger.info("silver_flush_complete")
 
     def _write_single(self, event: ProductObservationEvent) -> None:
-        """Serialize one validated event to Parquet bytes and upload."""
+        """Serialize one validated event to Parquet bytes and upload.
+
+        Validates the row against the explicit Silver schema before writing.
+        Raises ``ValueError`` if the row does not conform to the schema.
+        """
         row = validated_event_to_row(event)
+
+        # Validate row against explicit schema
+        violations = validate_row_against_schema(row, SILVER_SCHEMA)
+        if violations:
+            raise ValueError(
+                f"Silver schema validation failed for event {event.event_id}: "
+                f"{', '.join(violations)}"
+            )
+
+        # Create DataFrame from row dict
         df = pl.DataFrame([row])
 
         buf = io.BytesIO()
