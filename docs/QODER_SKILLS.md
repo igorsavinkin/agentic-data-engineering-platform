@@ -207,11 +207,12 @@ The matching algorithm considers:
 
 ### Manual Invocation
 
-You can explicitly request a skill using slash commands:
+Prefix the skill name with `@` to request a skill explicitly. This repository's skill docs use that form as the convention; Qoder also accepts the `/skill-name` slash form:
 
 ```
-/qoder-task-orchestrator run task 010
-/architecture-communicator explain the system to executives
+@qoder-task-orchestrator implement TASK-010
+@qoder-task-batch-runner TASK-022, TASK-023, TASK-024
+@architecture-communicator explain the system to executives
 ```
 
 ### Context-Based Activation

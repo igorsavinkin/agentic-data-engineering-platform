@@ -1,3 +1,8 @@
+---
+name: qoder-task-orchestrator
+description: Executes one TASK-xxx specification end to end in the current session - prepare worktree, implement, mandatory Qwen review, PR, CI monitoring, and automatic merge to main. Use when the user asks to "run task XXX", "implement TASK-xxx", or automate the task workflow. Invoke with @qoder-task-orchestrator. For several sequential or dependent tasks, use @qoder-task-batch-runner instead.
+---
+
 # Qoder Task Orchestrator
 
 Automates the complete task development lifecycle in a single session. The agent creates a worktree, implements the task, runs review, creates a PR, and monitors CI — all sequentially without spawning child sessions.

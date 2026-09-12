@@ -1,3 +1,8 @@
+---
+name: qoder-task-batch-runner
+description: Runs an ordered list of dependent TASK-xxx specifications sequentially in one session, where each task completes the full orchestrator workflow and passes the merge gate to main before the next one starts. Use when the user asks to "batch run", "run tasks sequentially", "run TASK-020 through TASK-026", or resume an interrupted batch. Invoke with @qoder-task-batch-runner.
+---
+
 # Qoder Task Batch Runner
 
 Runs a list of dependent TASK-xxx specifications **sequentially in one session**: task N+1 starts only after task N is fully merged to `main`. Each task executes the complete single-task workflow defined in the `qoder-task-orchestrator` skill (`.qoder/skills/qoder-task-orchestrator/SKILL.md`).
@@ -18,6 +23,14 @@ Orchestrator Phase 5 merges automatically once all required checks pass — ther
 Automatic merging covers the merge action only. Blocking review findings, scope changes, architecture decisions, and merge conflicts remain escalation points — stop the batch and report per `ai/AGENTS.md`.
 
 ## Input
+
+Invoke the skill with the ordered task list:
+
+```
+@qoder-task-batch-runner TASK-022, TASK-023, TASK-024
+```
+
+Plain-language equivalents ("run TASK-022 through TASK-024 sequentially", "resume the batch") activate the same skill.
 
 The user provides one of:
 
@@ -96,7 +109,7 @@ When stopping: leave the failed task's worktree and branch intact for inspection
 1. Which task failed and at which phase
 2. Exact error / review findings / CI failure summary
 3. What completed successfully before it
-4. Resume command (`/qoder-task-batch-runner resume`)
+4. Resume command (`@qoder-task-batch-runner resume`)
 
 **Never** continue past a failure "to see if later tasks work" — they depend on the failed one.
 
@@ -168,7 +181,7 @@ Batch stopped at TASK-022 (2/4 merged)
   ✘ TASK-022  review BLOCKED — 2 MAJOR findings (see docs/reviews/TASK-022-review.md)
   · TASK-023  not started
 Worktree ../ai-platform-task-022 preserved for inspection.
-Resume with: /qoder-task-batch-runner resume
+Resume with: @qoder-task-batch-runner resume
 ```
 
 ## See Also
