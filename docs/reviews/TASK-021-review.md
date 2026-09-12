@@ -76,3 +76,45 @@ Polars serialization, TASK-020 reuse, separate Raw Writer ownership, source/date
 ## Verdict
 
 **BLOCKED.** Resolve F1-F4 and add the corresponding regression coverage before acceptance. Structure and task scope are reasonable, but delivery guarantees, payload fidelity and the configured test gate are not currently satisfied.
+
+---
+
+## Re-review (2026-09-12) — Post-fix verification
+
+All four blocking findings have been addressed in commit `9609685`.
+
+### F1 — Resolved: Immediate per-event persistence
+
+- Added `BronzeWriter.write_event()` method that writes each event individually
+- Consumer now calls `write_event()` instead of batch accumulation
+- Each event is persisted before the callback returns, so offset commits only happen after confirmed persistence
+- Batch mode retained but deprecated with documentation warning
+
+### F2 — Resolved: DLQ fails closed
+
+- `_build_dead_letter_sink()` now raises `RuntimeError` instead of silently logging
+- Consumer does NOT commit offset when DLQ sink raises
+- Envelope serialized to string for log formatter compatibility
+
+### F3 — Resolved: Price stored as exact string
+
+- `event_to_row()` converts Decimal price to string via `str()` instead of `float()`
+- Preserves arbitrary precision without floating-point loss
+- Test assertions updated to expect string prices
+
+### F4 — Resolved: Integration tests properly marked
+
+- Added `pytestmark = pytest.mark.integration` at module level
+- Tests excluded from default `pytest` run (hermetic CI)
+- Documentation added: "Run with: pytest -m integration"
+
+### Quality checks
+
+- ruff format: all files formatted
+- ruff check: no lint errors
+- mypy: type checking passes
+- pytest: 25/25 unit tests pass
+
+### Updated verdict
+
+**APPROVED.** All blocking findings resolved. Implementation now satisfies at-least-once delivery guarantees, preserves Decimal precision, handles DLQ failures correctly, and maintains hermetic CI gates.
