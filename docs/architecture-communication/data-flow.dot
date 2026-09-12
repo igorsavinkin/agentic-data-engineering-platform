@@ -1,0 +1,101 @@
+// Поток данных — AI Data Platform (Medallion Architecture)
+// Формат: Graphviz DOT | rankdir=LR | линейная топология потока
+//
+// Показывает движение данных от источника до serving-слоя через
+// медальон-озеро (Bronze → Silver → Gold → PostgreSQL).
+
+digraph "AI Data Platform — Поток данных" {
+    rankdir=LR
+    fontname="Helvetica"
+    node [fontname="Helvetica", fontsize=11, style=filled]
+    edge [fontname="Helvetica", fontsize=9]
+    label="AI Data Platform — Поток данных (Medallion)\nОт внешнего источника до serving-слоя"
+    labelloc=t
+    fontsize=14
+
+    // === Источники ===
+    node [shape=ellipse, fillcolor="#E8E8E8", color=grey50]
+    source [label="Внешние источники\n(Fake Store, Best Buy,\neBay, retailer, Amazon)"]
+
+    // === Ingestion ===
+    node [shape=box, fillcolor="#BBDEFB", color="#1565C0"]
+    adapter [label="Source Adapter\n— REST/HTTP/parse\n— emit ProductObservationEvent\n— partition key: source:external_id"]
+
+    // === Kafka (raw) ===
+    node [shape=component, fillcolor="#FFE0B2", color="#E65100"]
+    kafka_raw [label="products.raw.v1"]
+
+    // === Raw Writer + Bronze ===
+    node [shape=box, fillcolor="#F8BBD0", color="#880E4F"]
+    raw_writer [label="Raw Writer\n— batch accumulate\n— Parquet serialize\n— MinIO upload"]
+
+    node [shape=cylinder, fillcolor="#E1BEE7", color="#6A1B9A"]
+    bronze [label="Bronze Layer\nRaw Parquet\n(deterministic object keys\nпо event_id)"]
+
+    // === Processor ===
+    node [shape=box, fillcolor="#C8E6C9", color="#2E7D32"]
+    processor [label="Processor\n— Pydantic validation\n— schema normalization\n— deduplication\n— Polars transform"]
+
+    // === Kafka (validated / DLQ) ===
+    node [shape=component, fillcolor="#FFE0B2", color="#E65100"]
+    kafka_valid [label="products.validated.v1"]
+    kafka_dlq   [label="products.invalid.v1\n(DLQ)"]
+
+    // === Lake Writer + Silver ===
+    node [shape=box, fillcolor="#F48FB1", color="#880E4F"]
+    lake_writer [label="Lake Writer"]
+
+    node [shape=cylinder, fillcolor="#CE93D8", color="#6A1B9A"]
+    silver [label="Silver Layer\nValidated Parquet\n(normalized, deduplicated)"]
+
+    // === Airflow + Gold ===
+    node [shape=box, fillcolor="#B2EBF2", color="#00695C"]
+    airflow [label="Airflow DAGs\n— quality checks\n— compaction\n— Gold construction"]
+
+    node [shape=cylinder, fillcolor="#BA68C8", color="#6A1B9A"]
+    gold [label="Gold Layer\nBusiness Parquet\n(aggregates, rolling avgs,\nwindow functions)"]
+
+    // === Warehouse Loader + PostgreSQL ===
+    node [shape=box, fillcolor="#80DEEA", color="#00695C"]
+    wh_loader [label="Warehouse Loader\n(idempotent UPSERT\nпо event_id)"]
+
+    node [shape=cylinder, fillcolor="#4DD0E1", color="#00695C"]
+    pg [label="PostgreSQL 17\n— product_observations\n— data_quality_results\n— pipeline_runs"]
+
+    // === Serving ===
+    node [shape=box, fillcolor="#FFF59D", color="#F57F17"]
+    api [label="FastAPI"]
+    agent [label="LangGraph Agent\n(read-only SQL)"]
+
+    // === Поток данных ===
+    source    -> adapter     [label="collect"]
+    adapter   -> kafka_raw   [label="publish"]
+    kafka_raw -> raw_writer  [label="consume"]
+    raw_writer -> bronze     [label="write .parquet"]
+
+    kafka_raw -> processor   [label="consume"]
+    processor -> kafka_valid [label="validated"]
+    processor -> kafka_dlq   [label="failed\n+ diagnostic context"]
+
+    kafka_valid -> lake_writer [label="consume"]
+    lake_writer -> silver      [label="write .parquet"]
+
+    silver -> airflow [label="batch read"]
+    airflow -> gold   [label="write .parquet"]
+
+    gold -> wh_loader [label="read"]
+    wh_loader -> pg   [label="UPSERT"]
+
+    pg -> api   [label="SQL"]
+    pg -> agent [label="read-only SQL"]
+
+    // === Ранги для линейного layout ===
+    { rank=same; source }
+    { rank=same; adapter; kafka_raw }
+    { rank=same; raw_writer; processor }
+    { rank=same; bronze; kafka_valid; kafka_dlq }
+    { rank=same; lake_writer; silver }
+    { rank=same; airflow; gold }
+    { rank=same; wh_loader; pg }
+    { rank=same; api; agent }
+}

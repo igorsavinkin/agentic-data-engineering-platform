@@ -1,0 +1,183 @@
+// Контейнерный вид — AI Data Platform
+// Формат: Graphviz DOT | rankdir=TB | Qoder Canvas совместимый
+//
+// Легенда:
+//   [прямоугольник]        — сервис / контейнер
+//   {ромб}                 — Kafka-топик
+//   [(цилиндр)]            — хранилище данных
+//   ((круг))               — внешний источник
+//   Сплошная линия         — подтверждено кодом (high confidence)
+//   Пунктирная линия       — проектное состояние (target, не реализовано)
+
+digraph "AI Data Platform — Контейнерный вид" {
+    rankdir=TB
+    fontname="Helvetica"
+    node [fontname="Helvetica", fontsize=11, style=filled]
+    edge [fontname="Helvetica", fontsize=9]
+    label="AI Data Platform — Контейнерный вид\nРеализовано (сплошные) / Проектное состояние (пунктирные)"
+    labelloc=t
+    fontsize=14
+
+    // === Внешние источники ===
+    subgraph cluster_sources {
+        label="Внешние источники данных"
+        style=dashed
+        color=grey60
+        node [shape=ellipse, fillcolor="#E8E8E8", color=grey50]
+
+        src_fakestore  [label="Fake Store API"]
+        src_bestbuy    [label="Best Buy API"]
+        src_ebay       [label="eBay API", style=dashed, color=grey50]
+        src_retailer   [label="Retailer\n(web scrape)", style=dashed, color=grey50]
+        src_amazon     [label="Amazon\n(сложный источник)", style=dashed, color=grey50]
+    }
+
+    // === Граница платформы ===
+    subgraph cluster_platform {
+        label="AI Data Platform — граница системы"
+        style=bold
+        color=navy
+        fontcolor=navy
+        fontsize=12
+
+        // --- Ingestion ---
+        subgraph cluster_ingestion {
+            label="Ingestion (Source Adapters)"
+            style=rounded
+            fillcolor="#E3F2FD"
+            color="#1565C0"
+
+            ingestion [label="Ingestion Service\n— source adapters\n— canonical event emit", shape=box, fillcolor="#BBDEFB"]
+        }
+
+        // --- Kafka ---
+        subgraph cluster_kafka {
+            label="Apache Kafka (KRaft / Strimzi)"
+            style=rounded
+            fillcolor="#FFF3E0"
+            color="#E65100"
+
+            node [shape=component, fillcolor="#FFE0B2"]
+
+            topic_raw       [label="products.raw.v1\n(3 partitions, 7d)"]
+            topic_validated [label="products.validated.v1\n(3 partitions, 7d)"]
+            topic_invalid   [label="products.invalid.v1\n(DLQ, 3d)"]
+            topic_pipeline  [label="pipeline.events.v1\n(1 partition, 3d)"]
+            topic_dq        [label="data-quality.events.v1\n(1 partition, 3d)"]
+        }
+
+        // --- Processing ---
+        subgraph cluster_processing {
+            label="Processing Pipeline"
+            style=rounded
+            fillcolor="#E8F5E9"
+            color="#2E7D32"
+
+            processor [label="Processor\n— validation (Pydantic)\n— normalization\n— deduplication\n— Polars transforms", shape=box, fillcolor="#C8E6C9"]
+        }
+
+        // --- Data Lake ---
+        subgraph cluster_lake {
+            label="Data Lake (Medallion)"
+            style=rounded
+            fillcolor="#F3E5F5"
+            color="#6A1B9A"
+
+            node [shape=cylinder]
+
+            bronze [label="Bronze\nRaw Parquet\n(MinIO/S3)", fillcolor="#E1BEE7"]
+            silver [label="Silver\nValidated Parquet\n(MinIO/S3)", fillcolor="#CE93D8", style=dashed, color=grey50]
+            gold   [label="Gold\nBusiness Parquet\n(MinIO/S3)", fillcolor="#BA68C8", style=dashed, color=grey50]
+        }
+
+        // --- Storage Services ---
+        subgraph cluster_writers {
+            label="Lake Services"
+            style=rounded
+            fillcolor="#FCE4EC"
+            color="#880E4F"
+
+            raw_writer   [label="Raw Writer\n(Bronze owner)", shape=box, fillcolor="#F8BBD0"]
+            lake_writer  [label="Lake Writer\n(Silver owner)", shape=box, fillcolor="#F48FB1", style=dashed, color=grey50]
+        }
+
+        // --- Orchestration & Warehouse ---
+        subgraph cluster_warehouse {
+            label="Warehouse & Orchestration"
+            style=rounded
+            fillcolor="#E0F7FA"
+            color="#00695C"
+
+            airflow  [label="Apache Airflow\n(Gold construction,\nquality, compaction)", shape=box, fillcolor="#B2EBF2", style=dashed, color=grey50]
+            wh_loader [label="Warehouse Loader\n(Gold → PostgreSQL)", shape=box, fillcolor="#80DEEA", style=dashed, color=grey50]
+            pg       [label="PostgreSQL 17\n(serving / analytical)", shape=cylinder, fillcolor="#4DD0E1", style=dashed, color=grey50]
+        }
+
+        // --- Serving ---
+        subgraph cluster_serving {
+            label="Serving Layer"
+            style=rounded
+            fillcolor="#FFF9C4"
+            color="#F57F17"
+
+            api    [label="FastAPI\n(products, analytics,\npipeline, DQ)", shape=box, fillcolor="#FFF59D", style=dashed, color=grey50]
+            agent  [label="LangGraph Agent\n(read-only SQL,\ncontrolled tools)", shape=box, fillcolor="#FFF176", style=dashed, color=grey50]
+        }
+    }
+
+    // === Observability (отдельный блок) ===
+    subgraph cluster_observability {
+        label="Observability"
+        style=dashed
+        color=grey50
+        node [shape=box, fillcolor="#F5F5F5", color=grey50, style=dashed]
+
+        prometheus [label="Prometheus"]
+        grafana    [label="Grafana"]
+        otel       [label="OpenTelemetry"]
+    }
+
+    // === Рёбра: внешние источники → ingestion ===
+    src_fakestore -> ingestion [label="REST"]
+    src_bestbuy   -> ingestion [label="REST"]
+    src_ebay      -> ingestion [label="REST", style=dashed, color=grey50]
+    src_retailer  -> ingestion [label="HTTP/parse", style=dashed, color=grey50]
+    src_amazon    -> ingestion [label="сложный", style=dashed, color=grey50]
+
+    // === Ingestion → Kafka ===
+    ingestion -> topic_raw [label="publish\nProductObservationEvent"]
+
+    // === Kafka → Processing ===
+    topic_raw -> processor [label="consume"]
+
+    // === Processing → Kafka (validated / invalid) ===
+    processor -> topic_validated [label="publish\nvalidated events"]
+    processor -> topic_invalid   [label="publish\nfailed events (DLQ)"]
+
+    // === Kafka → Writers ===
+    topic_raw -> raw_writer [label="consume\n(own group)"]
+    topic_validated -> lake_writer [label="consume\n(own group)", style=dashed, color=grey50]
+
+    // === Writers → Lake ===
+    raw_writer -> bronze [label="write\nParquet (deterministic keys)"]
+    lake_writer -> silver [label="write\nParquet", style=dashed, color=grey50]
+
+    // === Airflow ===
+    silver -> airflow [label="batch\ntransform", style=dashed, color=grey50]
+    airflow -> gold [label="construct", style=dashed, color=grey50]
+    airflow -> topic_dq [label="quality\nresults", style=dashed, color=grey50]
+
+    // === Warehouse ===
+    gold -> wh_loader [label="read", style=dashed, color=grey50]
+    wh_loader -> pg [label="load\n(UPSERT / idempotent)", style=dashed, color=grey50]
+
+    // === Serving ===
+    pg -> api [label="SQL\nqueries", style=dashed, color=grey50]
+    pg -> agent [label="read-only\nSQL", style=dashed, color=grey50]
+    api -> agent [label="tool\ncall", style=dashed, color=grey50]
+
+    // === Observability (пунктир ко всем) ===
+    processor  -> prometheus [style=dotted, color=grey70, label="metrics"]
+    raw_writer -> prometheus [style=dotted, color=grey70]
+    ingestion  -> otel       [style=dotted, color=grey70, label="traces"]
+}
