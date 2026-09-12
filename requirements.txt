@@ -15,3 +15,6 @@ polars>=1.0,<2
 
 # S3-compatible object-storage client for MinIO / AWS S3 (TASK-020).
 boto3>=1.35,<2
+
+# Apache Arrow for Parquet I/O (TASK-021).
+pyarrow>=14.0,<20
