@@ -193,6 +193,48 @@ class MinIOStorage:
         except BotoCoreError as exc:
             raise StorageError(f"object_exists failed: bucket={bucket!r} key={key!r}") from exc
 
+    def list_objects(self, bucket: str, prefix: str = "") -> list[str]:
+        """List object keys under a prefix (paginated).
+
+        Uses S3 ListObjectsV2 pagination to retrieve all objects matching
+        the given prefix. This is used for partition discovery in the data lake.
+
+        Parameters
+        ----------
+        bucket:
+            Target bucket name.
+        prefix:
+            Optional prefix to filter results. Empty string lists all objects.
+
+        Returns
+        -------
+        list[str]
+            List of object keys matching the prefix.
+
+        Raises
+        ------
+        StorageError
+            If the listing operation fails.
+        """
+        self._assert_open()
+        keys: list[str] = []
+        try:
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                contents = page.get("Contents", [])
+                for obj in contents:
+                    keys.append(obj["Key"])
+        except ClientError as exc:
+            raise StorageError(f"list_objects failed: bucket={bucket!r} prefix={prefix!r}") from exc
+        except BotoCoreError as exc:
+            raise StorageError(f"list_objects failed: bucket={bucket!r} prefix={prefix!r}") from exc
+
+        logger.debug(
+            "objects_listed",
+            extra={"bucket": bucket, "prefix": prefix, "count": len(keys)},
+        )
+        return keys
+
     def check_health(self) -> HealthStatus:
         """Probe whether the object store is reachable and authenticated.
 
