@@ -44,13 +44,13 @@ When inside a Qoder agent conversation, invoke the orchestrator skill directly:
 The skill will:
 1. Read `ai/tasks/TASK-010-kafka-error-handling.md`
 2. Create isolated worktree at `../ai-platform-task-010`
-3. Spawn Qoder chat session for implementation
-4. Wait for completion and read transcript
+3. Implement the task directly in this session, editing files in the worktree
+4. Commit the implementation
 5. Run quality checks (ruff, mypy, pytest)
 6. Invoke Qwen review in plan mode
 7. Push branch and create PR if approved
 8. Monitor CI until checks pass
-9. Merge and cleanup on success
+9. Merge automatically on green CI, then clean up the worktree
 
 ---
 
@@ -90,9 +90,10 @@ Tasks progress through these phases:
 | Phase | Description |
 |-------|-------------|
 | `preparing` | Creating worktree, installing deps |
-| `implement` | Agent writing code in Qoder session |
+| `implement` | Agent writes code directly in the worktree |
+| `implement-complete` | Implementation committed, ready for review |
 | `review` | Qwen reviewing the diff |
-| `approved` | Review passed, ready to publish |
+| `review-complete` | Review APPROVED and report committed, ready to publish |
 | `ci` | PR created, monitoring GitHub Actions |
 | `merged` | PR squashed and merged to main |
 | `done` | Worktree cleaned up, task complete |
@@ -158,5 +159,5 @@ git log --oneline -5
 1. Ensure prerequisites are met (`--check`)
 2. Pick next task: TASK-010 (Kafka Error Handling)
 3. Decide: wrapper script or direct skill invocation?
-4. Run with `--auto-merge` if you trust the automation
+4. Wrapper script: add `--auto-merge` to merge without a manual step. Skill invocation: merging is automatic on green CI
 5. Monitor progress via state.json and session logs

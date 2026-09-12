@@ -1,145 +1,96 @@
 # Task Orchestrator - Usage Examples
 
-## Example 1: Run Single Task
+Two execution paths exist and they differ on merge policy:
 
-```python
-# From within a Qoder agent session, invoke the orchestrator:
+| Path | Command | Merge on green CI |
+|------|---------|-------------------|
+| Wrapper script | `python scripts/run_task.py 010 --auto-merge` | Only with `--auto-merge` |
+| Direct skill invocation (this skill) | `@qoder-task-orchestrator Implement TASK-010` | Always |
 
-orchestrator = TaskOrchestrator(
-    task_id="TASK-010",
-    repo_path="C:\\Users\\igors\\RnD\\agentic-data-platform",
-    auto_merge=True,
-    integration=False,
-)
+## Example 1: One Task From the Wrapper Script
 
-orchestrator.execute()
+```bash
+python scripts/run_task.py --check            # verify prerequisites
+python scripts/run_task.py 010 --auto-merge   # implement → review → PR → CI → merge
 ```
 
-This will:
+Useful flags (see `scripts/qoder_task_workflow.py` for the full list):
+
+```bash
+--depends-on 009          # prerequisite tasks; must already be merged to main
+--max-rounds 3            # implementation/review rounds before the workflow stops
+--ci-timeout 1800         # seconds to wait for GitHub Actions
+--integration             # include integration tests
+--spec path/to/spec.md    # register and run a new task specification
+```
+
+## Example 2: One Task by Invoking the Skill
+
+```
+@qoder-task-orchestrator Implement TASK-010
+```
+
+The agent executes all six phases in the current session:
+
 1. Create worktree at `../ai-platform-task-010`
-2. Spawn Qoder session for implementation
-3. Run automated review with Qwen
-4. Push branch and create PR
-5. Monitor CI until green
-6. Auto-merge and cleanup
+2. Implement directly in the worktree, commit
+3. Quality checks + Qwen review (mandatory; must end APPROVED)
+4. Commit the review report, push, create PR
+5. Monitor CI, then merge — automatic
+6. Pull `main`, remove the worktree, delete the branch
 
-## Example 2: Task with Dependencies
+No child session is spawned; see `SKILL.md` ("DO NOT use `create_chat_session()`").
 
-```python
-orchestrator = TaskOrchestrator(
-    task_id="TASK-011",
-    depends_on=["TASK-009", "TASK-010"],  # Must be merged first
-    auto_merge=True,
-)
+## Example 3: Sequential Dependent Tasks
 
-orchestrator.execute()
+Task N+1 branches from post-merge `main`, so it sees task N's code. Run a batch with:
+
+```
+@qoder-task-batch-runner TASK-020, TASK-021, TASK-022
 ```
 
-The orchestrator validates that prerequisite PRs are merged before starting.
+The batch runner waits for each merge gate (PR `MERGED`, commit contained in `origin/main`,
+worktree gone) before starting the next task, and stops at the first failure. See
+`.qoder/skills/qoder-task-batch-runner/SKILL.md`.
 
-## Example 3: Manual Review Mode
+## Example 4: Hold a PR Back From Merging
 
-```python
-orchestrator = TaskOrchestrator(
-    task_id="TASK-012",
-    auto_merge=False,  # Stop after CI passes
-)
+- **Script path:** omit `--auto-merge`. The run stops after CI with `CI passed. Resume with --auto-merge to merge and clean up.`
+- **Skill path:** there is no manual-merge mode. Stop the session before its checks go green, inspect the PR, then resume the skill to continue from `state.json`.
 
-orchestrator.execute()
-# Output: "CI passed. Resume with --auto-merge to merge."
+## Example 5: Resume After an Interruption
+
+```bash
+cat task-workflow/TASK-010/state.json      # which phase stopped
+cd ../ai-platform-task-010 && git status   # what is uncommitted
 ```
 
-Use this when you want to manually approve the merge.
+Then either re-invoke the skill (it reads the state file and continues from the current
+phase), or for the scripted path re-run with `--review-again` after manually repairing the
+worktree:
 
-## Example 4: Resume After Failure
-
-If a task fails mid-way:
-
-```python
-# Inspect state
-state = json.loads(Path("task-workflow/TASK-010/state.json").read_text())
-print(f"Failed at phase: {state['phase']}")
-
-# Fix issues manually in worktree, then resume
-orchestrator = TaskOrchestrator(task_id="TASK-010")
-orchestrator.resume(review_again=True)  # Re-run review phase
-```
-
-## Example 5: Batch Task Execution
-
-```python
-# Execute multiple tasks sequentially
-tasks = ["TASK-010", "TASK-011", "TASK-012"]
-
-for task_id in tasks:
-    orchestrator = TaskOrchestrator(task_id=task_id, auto_merge=True, max_rounds=3)
-    try:
-        orchestrator.execute()
-        print(f"✅ {task_id} completed")
-    except WorkflowError as e:
-        print(f"❌ {task_id} failed: {e}")
-        break  # Stop on first failure
+```bash
+python scripts/qoder_task_workflow.py 010 --review-again
 ```
 
 ## Monitoring During Execution
 
-While a task is running, you can monitor from another session:
-
 ```bash
-# Check current phase
-cat task-workflow/TASK-010/state.json | jq .phase
-
-# View agent transcript (in real-time)
-tail -f task-workflow/TASK-010/qoder-1.txt
-
-# Check worktree status
+cat task-workflow/TASK-010/state.json | jq '.phase, .rounds, .pr'
+gh pr list --head feature/TASK-010 --json number,state,mergeable
 cd ../ai-platform-task-010 && git log --oneline
 ```
 
-## Integration with Wrapper Script
+Scripted runs also save per-attempt transcripts under `task-workflow/TASK-010/`
+(`qoder-<attempt>.txt`, `qwen-<round>.txt`). Skill runs keep their work in this session,
+so the review report at `docs/reviews/TASK-010-review.md` is the durable record.
 
-Use the wrapper for discovery, then invoke orchestrator:
+## Debugging a Failed Task
 
-```bash
-# Step 1: List available tasks
-python scripts/run_task.py --list
+1. Read the failure text printed by the run, or `state.json`'s `feedback` field
+2. Inspect the review findings: `docs/reviews/TASK-010-review.md`
+3. Inspect CI logs: `gh run view --job <id> --log-failed`
+4. Fix in the worktree, commit, then resume (Example 5)
 
-# Step 2: Check prerequisites
-python scripts/run_task.py --check
-
-# Step 3: From within Qoder, run the task
-# (invoke orchestrator skill with task_id from step 1)
-```
-
-## Debugging Failed Tasks
-
-When a task fails:
-
-1. **Read the error message** from console output
-2. **Check agent transcript**: `task-workflow/TASK-xxx/qoder-N.txt`
-3. **Inspect worktree**: `cd ../ai-platform-task-xxx && git status`
-4. **Review report**: `docs/reviews/TASK-xxx-review.md`
-5. **Fix and resume**: Update code, commit, then call `orchestrator.resume()`
-
-## Common Patterns
-
-### Pattern 1: Quick Implementation Check
-```python
-# Just implement, don't push or create PR
-orchestrator = TaskOrchestrator(task_id="TASK-010")
-orchestrator.implement_only()  # Custom method for testing
-```
-
-### Pattern 2: Review Existing Implementation
-```python
-# Someone else implemented it, just review
-orchestrator = TaskOrchestrator(task_id="TASK-010")
-orchestrator.review_only(worktree_path="../ai-platform-task-010")
-```
-
-### Pattern 3: CI Debugging Session
-```python
-# PR exists but CI is failing
-orchestrator = TaskOrchestrator(task_id="TASK-010")
-orchestrator.debug_ci(pr_number=42)  # Fetch logs, analyze failures
-```
+Leave the failed task's worktree and branch in place until it is understood — they are the
+only copy of the partial work.

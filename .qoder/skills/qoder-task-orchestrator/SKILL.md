@@ -319,13 +319,15 @@ while time.monotonic() < deadline:
         break
 
     if all_required_checks_passed(check_runs, statuses):
-        # Auto-merge enabled by default (auto_merge=True)
+        # Merging is unconditional: running the task is the owner's merge delegation
         gh_pr_merge(pr_number, squash=True, match_head=head)
         state.update(phase="merged")
         break
 
     time.sleep(15)  # Poll interval
 ```
+
+This skill has no manual-merge mode. To hold a PR for your own review, stop the session before its checks go green. The opt-in `--auto-merge` flag on `scripts/run_task.py` belongs to the scripted path only.
 
 ### Phase 6: Cleanup
 
@@ -446,7 +448,7 @@ A task workflow is **only complete** when ALL of these are true:
 6. State file updated with `phase: "review-complete"` and `reviewed` hash
 7. PR created on GitHub
 8. CI checks passing
-9. PR merged (if auto-merge enabled)
+9. PR merged to `main` by Phase 5 (required — a green CI without a merge is incomplete)
 
 **Missing any of these means the workflow is INCOMPLETE.**
 
