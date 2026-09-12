@@ -16,7 +16,8 @@ import pytest
 
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.event_contracts import Availability, ProductObservationEvent, ProductObservationPayload
-from libs.lake_writer import SilverWriter, build_silver_partition_key
+from libs.lake_writer import SilverWriter
+from libs.partitioning import LakeLayer, build_partition_key
 
 pytestmark = pytest.mark.integration
 
@@ -90,7 +91,7 @@ class TestSilverWriterIntegration:
         silver_writer.write_event(sample_event)
 
         # Read back
-        key = build_silver_partition_key(sample_event)
+        key = build_partition_key(sample_event, LakeLayer.SILVER)
         parquet_bytes = storage.get_object(minio_settings.minio_bucket_silver, key)
 
         # Verify content
@@ -112,7 +113,7 @@ class TestSilverWriterIntegration:
         minio_settings: MinIOSettings,
     ) -> None:
         """Writing the same event twice should overwrite, not duplicate."""
-        key = build_silver_partition_key(sample_event)
+        key = build_partition_key(sample_event, LakeLayer.SILVER)
 
         # Write twice
         silver_writer.write_event(sample_event)
@@ -150,7 +151,7 @@ class TestSilverWriterIntegration:
 
         silver_writer.write_event(event)
 
-        key = build_silver_partition_key(event)
+        key = build_partition_key(event, LakeLayer.SILVER)
         parquet_bytes = storage.get_object(minio_settings.minio_bucket_silver, key)
         df = pl.read_parquet(io.BytesIO(parquet_bytes))
         assert df["price"][0] is None
@@ -188,7 +189,7 @@ class TestSilverWriterIntegration:
 
         # Verify each event exists at its own key
         for event in events:
-            key = build_silver_partition_key(event)
+            key = build_partition_key(event, LakeLayer.SILVER)
             assert storage.object_exists(minio_settings.minio_bucket_silver, key)
 
     def test_health_check_passes(self, silver_writer: SilverWriter) -> None:
@@ -206,5 +207,5 @@ class TestSilverWriterIntegration:
         silver_writer.add_event(sample_event)
         silver_writer.flush_batch()
 
-        key = build_silver_partition_key(sample_event)
+        key = build_partition_key(sample_event, LakeLayer.SILVER)
         assert storage.object_exists(minio_settings.minio_bucket_silver, key)

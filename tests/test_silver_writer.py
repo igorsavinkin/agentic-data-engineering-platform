@@ -15,7 +15,8 @@ import polars as pl
 import pytest
 
 from libs.event_contracts import Availability, ProductObservationEvent, ProductObservationPayload
-from libs.lake_writer import SilverWriter, build_silver_partition_key, validated_event_to_row
+from libs.lake_writer import SilverWriter, validated_event_to_row
+from libs.partitioning import LakeLayer, build_partition_key
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -81,7 +82,7 @@ def mock_storage() -> MagicMock:
 
 class TestPartitionKey:
     def test_builds_correct_key(self, sample_event: ProductObservationEvent) -> None:
-        key = build_silver_partition_key(sample_event)
+        key = build_partition_key(sample_event, LakeLayer.SILVER)
         assert key == "silver/source=fake-store/year=2026/month=09/day=03/evt-001.parquet"
 
     def test_uses_collected_at_date(self, sample_event: ProductObservationEvent) -> None:
@@ -94,14 +95,14 @@ class TestPartitionKey:
                 )
             },
         )
-        key = build_silver_partition_key(event)
+        key = build_partition_key(event, LakeLayer.SILVER)
         assert "year=2025" in key
         assert "month=12" in key
         assert "day=25" in key
 
     def test_deterministic_for_same_event(self, sample_event: ProductObservationEvent) -> None:
-        key1 = build_silver_partition_key(sample_event)
-        key2 = build_silver_partition_key(sample_event)
+        key1 = build_partition_key(sample_event, LakeLayer.SILVER)
+        key2 = build_partition_key(sample_event, LakeLayer.SILVER)
         assert key1 == key2
 
     def test_different_events_produce_different_keys(
@@ -109,8 +110,8 @@ class TestPartitionKey:
         sample_event: ProductObservationEvent,
         sample_event_null_price: ProductObservationEvent,
     ) -> None:
-        key1 = build_silver_partition_key(sample_event)
-        key2 = build_silver_partition_key(sample_event_null_price)
+        key1 = build_partition_key(sample_event, LakeLayer.SILVER)
+        key2 = build_partition_key(sample_event_null_price, LakeLayer.SILVER)
         assert key1 != key2
 
 
@@ -254,7 +255,7 @@ class TestEdgeCases:
     def test_special_characters_in_source(self, sample_event: ProductObservationEvent) -> None:
         """Source names with hyphens produce valid partition keys."""
         event = sample_event.model_copy(update={"source": "my-special-source"})
-        key = build_silver_partition_key(event)
+        key = build_partition_key(event, LakeLayer.SILVER)
         assert "source=my-special-source" in key
 
     def test_year_month_day_zero_padding(self, sample_event: ProductObservationEvent) -> None:
@@ -267,5 +268,5 @@ class TestEdgeCases:
                 )
             },
         )
-        key = build_silver_partition_key(event)
+        key = build_partition_key(event, LakeLayer.SILVER)
         assert "year=2026/month=01/day=05" in key
