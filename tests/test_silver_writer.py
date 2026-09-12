@@ -125,7 +125,7 @@ class TestEventToRow:
         row = validated_event_to_row(sample_event)
         assert row["event_id"] == "evt-001"
         assert row["event_type"] == "product.observation"
-        assert row["schema_version"] == 1
+        assert row["schema_version"] == "1"  # Converted to string for Parquet schema
         assert row["source"] == "fake-store"
         assert row["external_id"] == "PROD-123"
         assert row["name"] == "Test Widget"

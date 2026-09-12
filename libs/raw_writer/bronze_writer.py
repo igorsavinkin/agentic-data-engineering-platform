@@ -41,6 +41,7 @@ import polars as pl
 from libs.common.minio_storage import MinIOStorage, StorageError
 from libs.event_contracts import ProductObservationEvent
 from libs.partitioning import LakeLayer, build_partition_key
+from libs.schema import BRONZE_SCHEMA, validate_row_against_schema
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,16 @@ def event_to_row(event: ProductObservationEvent) -> dict[str, Any]:
     Price is stored as a string to preserve exact Decimal precision without
     floating-point loss.  Downstream consumers can convert back to Decimal
     when needed.
+
+    ``schema_version`` is converted to string to match the Parquet schema.
+    Timestamps are serialized as ISO format strings; Polars will parse them
+    when writing Parquet with the explicit timestamp columns.
     """
     return {
         # Envelope
         "event_id": event.event_id,
         "event_type": event.event_type,
-        "schema_version": event.schema_version,
+        "schema_version": str(event.schema_version),
         "source": event.source,
         "produced_at": event.produced_at.isoformat(),
         # Payload
@@ -189,8 +194,22 @@ class BronzeWriter:
         logger.info("bronze_flush_complete")
 
     def _write_single(self, event: ProductObservationEvent) -> None:
-        """Serialize one event to Parquet bytes and upload to object storage."""
+        """Serialize one event to Parquet bytes and upload to object storage.
+
+        Validates the row against the explicit Bronze schema before writing.
+        Raises ``ValueError`` if the row does not conform to the schema.
+        """
         row = event_to_row(event)
+
+        # Validate row against explicit schema
+        violations = validate_row_against_schema(row, BRONZE_SCHEMA)
+        if violations:
+            raise ValueError(
+                f"Bronze schema validation failed for event {event.event_id}: "
+                f"{', '.join(violations)}"
+            )
+
+        # Create DataFrame from row dict
         df = pl.DataFrame([row])
 
         buf = io.BytesIO()
