@@ -19,9 +19,10 @@ Automates the complete task development lifecycle in a single session. The agent
 Before invoking, verify:
 1. Main branch is clean (`git status` shows nothing)
 2. Task specification exists at `ai/tasks/TASK-xxx-specification.md`
-3. Python 3.12+, Git, Qwen Code CLI, GitHub CLI are available
-4. Project hooks (`.githooks/`) are merged into main
-5. At most one other task worktree is active
+3. Python 3.12+, Git, GitHub CLI are available
+4. Qwen Code CLI is installed (auto-detected from common locations if not in PATH)
+5. Project hooks (`.githooks/`) are merged into main
+6. At most one other task worktree is active
 
 ## Architecture
 
@@ -163,6 +164,75 @@ Proceed to Phase 3 now.
 
 ---
 
+### Phase 2.5: Detect Qwen CLI (Auto-discovery)
+
+**Run this BEFORE Phase 3.** The orchestrator must locate the Qwen Code CLI executable, even when it's not in PATH (common on Windows).
+
+```python
+import os
+import platform
+from pathlib import Path
+
+
+def detect_qwen_cli() -> str:
+    """Find Qwen Code CLI executable with cross-platform fallbacks."""
+
+    # Step 1: Try PATH first (works on Linux/macOS and configured Windows)
+    qwen_in_path = shutil.which("qwen")
+    if qwen_in_path:
+        print(f"Qwen found in PATH: {qwen_in_path}")
+        return qwen_in_path
+
+    # Step 2: Platform-specific fallback paths
+    system = platform.system()
+
+    if system == "Windows":
+        # Common Qwen installation locations on Windows
+        candidate_paths = [
+            Path.home() / "AppData" / "Local" / "qwen-code" / "bin" / "qwen.cmd",
+            Path.home() / "AppData" / "Roaming" / "npm" / "qwen.cmd",
+            Path.home() / "AppData" / "Local" / "Programs" / "qwen-code" / "bin" / "qwen.cmd",
+        ]
+    elif system == "Darwin":  # macOS
+        candidate_paths = [
+            Path.home() / ".local" / "bin" / "qwen",
+            Path("/opt/homebrew/bin/qwen"),
+            Path("/usr/local/bin/qwen"),
+        ]
+    else:  # Linux
+        candidate_paths = [
+            Path.home() / ".local" / "bin" / "qwen",
+            Path("/usr/local/bin/qwen"),
+            Path("/usr/bin/qwen"),
+        ]
+
+    # Step 3: Check each candidate
+    for candidate in candidate_paths:
+        if candidate.exists():
+            print(f"Qwen found at fallback path: {candidate}")
+            return str(candidate)
+
+    # Step 4: Not found - raise clear error
+    raise Error(
+        f"Qwen Code CLI not found.\n"
+        f"Expected locations checked:\n"
+        + "\n".join(f"  - {p}" for p in candidate_paths)
+        + f"\n\nInstall Qwen or add it to PATH.\n"
+        f"On Windows: npm install -g @qwen-code/cli\n"
+        f"On macOS/Linux: npm install -g @qwen-code/cli or use your package manager"
+    )
+
+
+# Execute detection before review phase
+print("Locating Qwen Code CLI...")
+QWEN_EXECUTABLE = detect_qwen_cli()
+print(f"Using Qwen at: {QWEN_EXECUTABLE}")
+```
+
+Store `QWEN_EXECUTABLE` for use in Phase 3. If detection fails, STOP and inform the user — do NOT proceed to self-review.
+
+---
+
 ### Phase 3: Automated Review (MANDATORY - DO NOT SKIP)
 
 **THIS PHASE IS REQUIRED.** After implementation completes, you MUST immediately execute the review phase. Never stop after Phase 2.
@@ -198,7 +268,13 @@ spec_content = read_file(spec_path)
 
 # STEP 4: Send to Qwen for review (MANDATORY)
 print("Invoking Qwen review...")
-review_output = run_qwen_review(diff=diff, spec=spec_content, head=head, base=base)
+review_output = run_qwen_review(
+    qwen_executable=QWEN_EXECUTABLE,  # Use detected path from Phase 2.5
+    diff=diff,
+    spec=spec_content,
+    head=head,
+    base=base,
+)
 
 # STEP 5: Parse verdict
 verdict = parse_workflow_review(review_output, head)
