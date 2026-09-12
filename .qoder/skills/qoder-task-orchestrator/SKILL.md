@@ -319,11 +319,9 @@ while time.monotonic() < deadline:
         break
 
     if all_required_checks_passed(check_runs, statuses):
-        if auto_merge:
-            gh_pr_merge(pr_number, squash=True, match_head=head)
-            state.update(phase="merged")
-        else:
-            print(f"CI passed. Resume to merge.")
+        # Auto-merge enabled by default (auto_merge=True)
+        gh_pr_merge(pr_number, squash=True, match_head=head)
+        state.update(phase="merged")
         break
 
     time.sleep(15)  # Poll interval
