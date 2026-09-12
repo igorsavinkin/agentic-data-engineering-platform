@@ -11,16 +11,11 @@ Runs a list of dependent TASK-xxx specifications **sequentially in one session**
 
 `ai/AGENTS.md` forbids an agent from *automatically* continuing to the next task. This skill is different: the human explicitly provides the ordered task list and invokes the batch. That invocation is the human selection of every task in the list and is a valid authorization to chain. The human may interrupt or stop the batch at any time.
 
-## Merge Delegation
+## Merge Behavior
 
-Per `ai/AGENT_WORKFLOW.md`, auto-merge requires explicit owner delegation. In batch mode, **confirm once at batch start** unless already provided:
+Orchestrator Phase 5 merges automatically once all required checks pass — there is no per-task merge prompt. Invoking the batch is the owner's delegation to merge every task in it. To hold a task back, interrupt the batch while its CI is running; the merge gate then never fires and task N+1 does not start.
 
-> "Run this batch with `--auto-merge` for all tasks, or pause for manual merge approval after each task's CI passes?"
-
-- Confirmed auto-merge: every task's orchestrator Phase 5 runs with `auto_merge=True` — CI-green merges the PR, then the merge gate verifies it.
-- Declined: the batch pauses after each task's CI passes and waits for the user's merge command before continuing.
-- The user invoking the batch with an explicit auto-merge instruction counts as the confirmation — no need to re-ask.
-- Delegation covers the merge action only — never architecture changes, blocking review findings, or scope decisions, which remain escalation points.
+Automatic merging covers the merge action only. Blocking review findings, scope changes, architecture decisions, and merge conflicts remain escalation points — stop the batch and report per `ai/AGENTS.md`.
 
 ## Input
 
