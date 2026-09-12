@@ -21,7 +21,8 @@ import pytest
 
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.event_contracts import Availability, ProductObservationEvent, ProductObservationPayload
-from libs.raw_writer import BronzeWriter, build_partition_key
+from libs.partitioning import LakeLayer, build_partition_key
+from libs.raw_writer import BronzeWriter
 
 pytestmark = pytest.mark.integration
 
@@ -101,7 +102,7 @@ class TestBronzeWriterIntegration:
         writer.flush_batch()
 
         # Read back from MinIO
-        key = build_partition_key(event)
+        key = build_partition_key(event, LakeLayer.BRONZE)
         parquet_bytes = storage.get_object(minio_settings.minio_bucket_bronze, key)
         buf = io.BytesIO(parquet_bytes)
         df = pl.read_parquet(buf)
@@ -123,7 +124,7 @@ class TestBronzeWriterIntegration:
         writer.add_event(event)
         writer.flush_batch()
 
-        key = build_partition_key(event)
+        key = build_partition_key(event, LakeLayer.BRONZE)
         parquet_bytes = storage.get_object(minio_settings.minio_bucket_bronze, key)
         buf = io.BytesIO(parquet_bytes)
         df = pl.read_parquet(buf)
@@ -135,7 +136,7 @@ class TestBronzeWriterIntegration:
             storage=storage, bucket=minio_settings.minio_bucket_bronze, batch_size=10
         )
         event = make_test_event("int-idem-1")
-        key = build_partition_key(event)
+        key = build_partition_key(event, LakeLayer.BRONZE)
 
         # First write
         writer.add_event(event)
@@ -159,7 +160,7 @@ class TestBronzeWriterIntegration:
         writer.add_event(event)
         writer.flush_batch()
 
-        key = build_partition_key(event)
+        key = build_partition_key(event, LakeLayer.BRONZE)
         # Expected: bronze/source=partition-test/year=2026/month=09/day=03/int-partition.parquet
         assert key.startswith("bronze/")
         assert "source=partition-test" in key
@@ -191,8 +192,8 @@ class TestBronzeWriterIntegration:
         writer.add_event(evt_b)
         writer.flush_batch()
 
-        key_a = build_partition_key(evt_a)
-        key_b = build_partition_key(evt_b)
+        key_a = build_partition_key(evt_a, LakeLayer.BRONZE)
+        key_b = build_partition_key(evt_b, LakeLayer.BRONZE)
 
         assert storage.object_exists(minio_settings.minio_bucket_bronze, key_a)
         assert storage.object_exists(minio_settings.minio_bucket_bronze, key_b)

@@ -22,7 +22,8 @@ import pytest
 
 from libs.common.minio_storage import MinIOStorage, StorageError
 from libs.event_contracts import Availability, ProductObservationEvent, ProductObservationPayload
-from libs.raw_writer import BronzeBatch, BronzeWriter, build_partition_key, event_to_row
+from libs.partitioning import LakeLayer, build_partition_key
+from libs.raw_writer import BronzeBatch, BronzeWriter, event_to_row
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -74,7 +75,7 @@ class TestPartitionKey:
         event = make_event(
             source="bestbuy", collected_at=datetime(2026, 9, 15, tzinfo=timezone.utc)
         )
-        key = build_partition_key(event)
+        key = build_partition_key(event, LakeLayer.BRONZE)
         assert key.startswith("bronze/")
         assert "source=bestbuy" in key
         assert "year=2026" in key
@@ -84,15 +85,15 @@ class TestPartitionKey:
 
     def test_key_is_deterministic_for_same_event(self) -> None:
         event = make_event()
-        key1 = build_partition_key(event)
-        key2 = build_partition_key(event)
+        key1 = build_partition_key(event, LakeLayer.BRONZE)
+        key2 = build_partition_key(event, LakeLayer.BRONZE)
         assert key1 == key2
 
     def test_different_sources_produce_different_prefixes(self) -> None:
         evt_a = make_event(source="source-a")
         evt_b = make_event(source="source-b")
-        key_a = build_partition_key(evt_a)
-        key_b = build_partition_key(evt_b)
+        key_a = build_partition_key(evt_a, LakeLayer.BRONZE)
+        key_b = build_partition_key(evt_b, LakeLayer.BRONZE)
         assert key_a != key_b
         assert "source=source-a" in key_a
         assert "source=source-b" in key_b
@@ -100,8 +101,8 @@ class TestPartitionKey:
     def test_temporal_partitioning(self) -> None:
         jan = make_event(collected_at=datetime(2026, 1, 5, tzinfo=timezone.utc))
         dec = make_event(collected_at=datetime(2026, 12, 25, tzinfo=timezone.utc))
-        key_jan = build_partition_key(jan)
-        key_dec = build_partition_key(dec)
+        key_jan = build_partition_key(jan, LakeLayer.BRONZE)
+        key_dec = build_partition_key(dec, LakeLayer.BRONZE)
         assert "month=01" in key_jan
         assert "month=12" in key_dec
         assert "day=05" in key_jan
@@ -321,7 +322,7 @@ class TestEdgeCases:
     def test_very_long_event_id(self, mock_storage: MagicMock) -> None:
         long_id = "x" * 500
         event = make_event(event_id=long_id)
-        key = build_partition_key(event)
+        key = build_partition_key(event, LakeLayer.BRONZE)
         assert long_id + ".parquet" in key
 
     def test_availability_values(self, mock_storage: MagicMock) -> None:

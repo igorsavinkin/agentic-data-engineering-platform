@@ -3,7 +3,7 @@
 This module owns the boundary between canonical ``ProductObservationEvent``
 objects and Bronze-layer Parquet files in object storage.  It provides:
 
-* deterministic partition-key generation (source + temporal dimensions);
+* deterministic partition-key generation via shared utility (source + temporal);
 * event-to-row conversion preserving all envelope and payload fields;
 * batch accumulation with configurable flush thresholds;
 * idempotent writes using deterministic object keys so replay does not
@@ -20,7 +20,8 @@ is safe even if a prior attempt partially succeeded.
 
 Partitioning strategy
 ---------------------
-Bronze data is partitioned by source and time:
+Bronze data uses the canonical partition layout defined in
+``libs.partitioning.partition_key``:
 
     bronze/source=<source>/year=<YYYY>/month=<MM>/day=<DD>/<event_id>.parquet
 
@@ -39,31 +40,9 @@ import polars as pl
 
 from libs.common.minio_storage import MinIOStorage, StorageError
 from libs.event_contracts import ProductObservationEvent
+from libs.partitioning import LakeLayer, build_partition_key
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Partition helpers
-# ---------------------------------------------------------------------------
-
-
-def build_partition_key(event: ProductObservationEvent) -> str:
-    """Return the S3/MinIO key for a single-event Bronze file.
-
-    The key encodes source and temporal dimensions so that listing by prefix
-    yields all observations for a given source/date range.  The leaf name is
-    the ``event_id`` to guarantee idempotency across replays.
-    """
-    collected = event.payload.collected_at
-    return (
-        f"bronze/"
-        f"source={event.source}/"
-        f"year={collected.strftime('%Y')}/"
-        f"month={collected.strftime('%m')}/"
-        f"day={collected.strftime('%d')}/"
-        f"{event.event_id}.parquet"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +197,7 @@ class BronzeWriter:
         df.write_parquet(buf)
         parquet_bytes = buf.getvalue()
 
-        key = build_partition_key(event)
+        key = build_partition_key(event, LakeLayer.BRONZE)
         self._storage.put_object(self._bucket, key, parquet_bytes)
         logger.debug(
             "bronze_event_written",
