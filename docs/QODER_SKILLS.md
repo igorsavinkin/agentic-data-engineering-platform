@@ -28,7 +28,7 @@
 
 These skills are specific to this repository and support our task automation system:
 
-#### 1. qoder-task-workflow
+#### qoder-task-workflow
 **Purpose**: Automate task implementation using Qoder chat sessions instead of Codex CLI
 
 **Triggers**:
@@ -49,27 +49,31 @@ These skills are specific to this repository and support our task automation sys
 
 **Documentation**: `.qoder/skills/qoder-task-workflow/SKILL.md`
 
-#### 2. qoder-task-orchestrator
-**Purpose**: Orchestrate the complete task development lifecycle with automated phase management
+#### qoder-task-orchestrator
+**Purpose**: Execute one TASK-xxx specification end to end in the current session
 
 **Triggers**:
 - "run task XXX"
 - "implement TASK-010"
 - "automate task workflow"
-- Managing multiple sequential or dependent tasks
+
+**Invocation**: `@qoder-task-orchestrator Implement TASK-010`
 
 **What it does**:
-- Coordinates multiple independent Qoder sessions per task phase
+- Runs all six phases sequentially in the invoking session — no child sessions are spawned
 - Manages Prepare → Implement → Review → Publish → CI Monitor → Cleanup workflow
 - Handles state persistence and recovery from interruptions
 - Enforces maximum 2 concurrent task worktrees
 
 **Workflow phases**:
 1. **Prepare**: Validate clean main, create worktree, initialize state tracking
-2. **Implement**: Spawn Qoder session with full context (AGENTS.md, ADRs, specs)
-3. **Review**: Run quality checks (ruff, mypy, pytest), invoke Qwen review
-4. **Publish**: Push branch, create PR, monitor GitHub Actions
-5. **Cleanup**: Remove worktree, delete branches after merge
+2. **Implement**: Edit files in the worktree with full context (AGENTS.md, ADRs, specs), commit
+3. **Review**: Run quality checks (ruff, mypy, pytest), then Qwen review — mandatory gate that must end APPROVED, with the report committed
+4. **Publish**: Push branch, create PR
+5. **CI Monitor**: Poll GitHub Actions until required checks pass, then merge to `main` automatically
+6. **Cleanup**: Pull `main`, remove the worktree, delete the branch
+
+Merging is unconditional on green CI — running the task is the merge delegation. To hold a PR back, stop the session before its checks go green. The opt-in `--auto-merge` flag belongs to the scripted path (`scripts/run_task.py`), not this skill.
 
 **Documentation**: `.qoder/skills/qoder-task-orchestrator/SKILL.md`
 
@@ -77,11 +81,31 @@ These skills are specific to this repository and support our task automation sys
 - `QUICKSTART.md` - Quick reference guide
 - `EXAMPLE.md` - Usage patterns for single tasks, dependencies, batch execution
 
+#### qoder-task-batch-runner
+**Purpose**: Run an ordered list of dependent TASK-xxx specifications sequentially in one session
+
+**Triggers**:
+- "batch run", "run tasks sequentially"
+- "run TASK-020 through TASK-026"
+- "resume the batch"
+
+**Invocation**: `@qoder-task-batch-runner TASK-022, TASK-023, TASK-024`
+
+**What it does**:
+- Executes the full orchestrator workflow for each task in the given order
+- Waits for the merge gate on every task (PR `MERGED`, commit contained in `origin/main`, worktree removed) before starting the next, so task N+1 branches from post-merge `main` and sees task N's code
+- Tracks progress in `task-workflow/batch/progress.json` so an interrupted batch can be resumed
+- Stops at the first failure and never reorders or skips a failed task
+
+**Note**: Agent-executed only — there is no CLI equivalent. Invoking the batch is the authorization to merge every task in it; to hold a task back, interrupt the batch while its CI is running.
+
+**Documentation**: `.qoder/skills/qoder-task-batch-runner/SKILL.md`
+
 ### Built-in Qoder Skills
 
 These are provided by the Qoder platform itself:
 
-#### 3. qoder-find-extensions
+#### qoder-find-extensions
 **Purpose**: Discover Qoder Skills, MCP connectors, and Plugins
 
 **Triggers**:
@@ -93,7 +117,7 @@ These are provided by the Qoder platform itself:
 - Browses community-maintained skills at skills.sh
 - Compares available extensions and recommends based on needs
 
-#### 4. qoder-qmind
+#### qoder-qmind
 **Purpose**: Knowledge base management for QMind
 
 **Triggers**:
@@ -104,7 +128,7 @@ These are provided by the Qoder platform itself:
 - Browses Notebooks and Sources
 - Adds text, HTTPS links, or local files to the knowledge base
 
-#### 5. qoder-context
+#### qoder-context
 **Purpose**: Manage pre-flight configuration for wiki and knowledge-card generation
 
 **Triggers**:
@@ -284,6 +308,7 @@ mcp_list()  # via Qoder MCP tools
 | Task | Skill to Use |
 |------|-------------|
 | Implement a new TASK-xxx | `qoder-task-orchestrator` |
+| Run several dependent tasks in sequence | `qoder-task-batch-runner` |
 | Check if task can run | `qoder-task-orchestrator` (validates prerequisites) |
 | Resume interrupted task | `qoder-task-orchestrator` (reads state.json) |
 | Find new skills to install | `qoder-find-extensions` |
@@ -296,11 +321,11 @@ mcp_list()  # via Qoder MCP tools
 **Skill not activating?**
 - Check that `description` contains relevant keywords
 - Verify skill directory exists in `.qoder/skills/`
-- Try explicit invocation with `/skill-name`
+- Try explicit invocation with `@skill-name`
 
 **Need more control over activation?**
 - Add more specific keywords to `description`
-- Use manual invocation with `/skill-name` syntax
+- Use manual invocation with `@skill-name` syntax
 - Adjust conversation context to include trigger terms
 
 **Skill behaving unexpectedly?**
