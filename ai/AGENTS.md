@@ -114,9 +114,9 @@ Every task must include tests appropriate to its scope.
 
 Before declaring a task complete:
 
-1. run relevant unit tests
-2. run relevant integration tests
-3. run lint/format/type checks configured by the repository
+1. run relevant unit tests: `python -m pytest`
+2. run relevant integration tests when Docker prerequisites are available: `python -m pytest -m integration`
+3. run lint/format/type checks configured by the repository: `ruff check .`, `ruff format --check .`, `mypy src/`
 4. inspect the git diff
 5. confirm acceptance criteria
 6. consider failure/retry behavior

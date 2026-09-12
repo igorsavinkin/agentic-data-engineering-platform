@@ -153,7 +153,10 @@ The independent reviewer must inspect:
 - whether they actually exercise the task requirements;
 - whether important edge cases are missing;
 - whether tests appear to have been weakened merely to make the implementation pass;
-- available evidence that the required verification succeeded.
+- available evidence that the required verification succeeded;
+- whether integration tests were executed, not just deselected by the default pytest configuration.
+
+The default pytest configuration excludes tests marked `integration` (`addopts = "-m 'not integration'"`). If the task scope touches Kafka, persistence, MinIO/S3, or infrastructure boundaries, the reviewer must verify that `python -m pytest -m integration` was run and inspect its results. A review report that shows integration tests deselected without explanation is incomplete.
 
 The reviewer does not need to rerun every test automatically.
 

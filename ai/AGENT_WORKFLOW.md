@@ -209,14 +209,16 @@ Prefer small commits/diffs that can be reviewed independently.
 Run the checks relevant to the task:
 
 ```text
-unit tests
-integration tests
-lint
-format
-type checks
+unit tests:                       python -m pytest
+integration tests (when Docker):  python -m pytest -m integration
+lint:                             ruff check .
+format:                           ruff format --check .
+type checks:                      mypy src/
 service startup where relevant
 Docker/Kubernetes validation where relevant
 ```
+
+The default pytest configuration excludes integration tests (`addopts = "-m 'not integration'"`). When the task scope touches Kafka, persistence, or infrastructure boundaries, run `python -m pytest -m integration` explicitly after confirming Docker prerequisites are running.
 
 Do not report success without running available checks unless the environment makes execution impossible; in that case state exactly what was not executed.
 
@@ -317,7 +319,8 @@ pytest and mypy. The Git process must inherit the active Python environment.
 Qwen selectively reruns critical or suspicious tests rather than duplicating CI.
 
 Builders run focused tests during development and `scripts/task_check.ps1` or
-`bash scripts/task_check.sh` before committing, plus relevant integration checks.
+`bash scripts/task_check.sh` before committing, plus `python -m pytest -m integration`
+when Docker prerequisites are running.
 Reviewers inspect test quality and selectively rerun critical or suspicious tests
 according to `ai/REVIEWER.md`. Complete Qwen review and resolve blocking findings
 before pushing to origin, then open the PR to start CI. Follow the commands in
