@@ -45,6 +45,7 @@ class ObservationRecord:
     source_product_id: int
     availability: str
     collected_at: datetime
+    event_id: str
     name: str | None = None
     price: Decimal | None = None
     currency: str | None = None

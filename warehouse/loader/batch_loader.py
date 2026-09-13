@@ -306,6 +306,7 @@ class WarehouseLoader:
         external_id = row.get("external_id")
         availability = row.get("availability")
         collected_at = row.get("collected_at")
+        event_id = row.get("event_id")
 
         # Validate required fields
         if not source_name:
@@ -316,6 +317,8 @@ class WarehouseLoader:
             raise ValueError(f"Missing required field 'availability': {row}")
         if not collected_at:
             raise ValueError(f"Missing required field 'collected_at': {row}")
+        if not event_id:
+            raise ValueError(f"Missing required field 'event_id': {row}")
 
         # Parse price as Decimal if present
         price_str = row.get("price")
@@ -346,6 +349,7 @@ class WarehouseLoader:
                 source_product_id=0,  # Placeholder — resolved during upsert
                 availability=str(availability),
                 collected_at=collected_at,
+                event_id=str(event_id),
                 name=row.get("name"),
                 price=price,
                 currency=row.get("currency"),
@@ -513,14 +517,21 @@ class WarehouseLoader:
         return len(sp_values)
 
     def _insert_observations(self, cur: Any, mapped_rows: list[MappedRow]) -> int:
-        """Insert product observations.
+        """Insert or update product observations using event_id for idempotency.
 
-        Each observation is linked to a source_product via foreign key.
+        Uses INSERT ... ON CONFLICT (event_id) DO UPDATE to handle replay.
+        If the same event_id exists with different payload data, raises an error
+        to escalate the conflict rather than silently overwriting.
 
         Returns
         -------
         int
-            Number of observations inserted.
+            Number of observations inserted or updated.
+
+        Raises
+        ------
+        ValueError
+            If a conflicting observation with the same event_id has different data.
         """
         # Get source_product IDs
         sp_keys = [
@@ -543,7 +554,7 @@ class WarehouseLoader:
         cur.execute(query, flat_params)
         sp_id_map = {(name, ext_id): sp_id for sp_id, name, ext_id in cur.fetchall()}
 
-        # Build observation values
+        # Build observation values with event_id
         obs_values = []
         for mr in mapped_rows:
             if not mr.observation or not mr.source or not mr.source_product:
@@ -562,20 +573,65 @@ class WarehouseLoader:
                     mr.observation.currency,
                     mr.observation.availability,
                     mr.observation.collected_at,
+                    mr.observation.event_id,
                 )
             )
 
         if not obs_values:
             return 0
 
+        # First, check for conflicts with different data
+        # Get existing observations for these event_ids
+        event_ids = [v[6] for v in obs_values]
+        if event_ids:
+            eid_placeholders = ", ".join(["%s"] * len(event_ids))
+            conflict_query = f"""
+                SELECT event_id, source_product_id, name, price, currency, availability, collected_at
+                FROM product_observations
+                WHERE event_id IN ({eid_placeholders})
+            """
+            cur.execute(conflict_query, event_ids)
+            existing_obs = {row[0]: row[1:] for row in cur.fetchall()}
+
+            # Check for data conflicts
+            for obs in obs_values:
+                event_id = obs[6]
+                if event_id in existing_obs:
+                    existing = existing_obs[event_id]
+                    # Compare payloads (skip source_product_id which may differ due to FK resolution)
+                    new_payload = (obs[1], obs[2], obs[3], obs[4], obs[5])
+                    existing_payload = (
+                        existing[1],
+                        existing[2],
+                        existing[3],
+                        existing[4],
+                        existing[5],
+                    )
+                    if new_payload != existing_payload:
+                        raise ValueError(
+                            f"Conflicting observation for event_id '{event_id}': "
+                            f"existing={existing_payload}, new={new_payload}"
+                        )
+
+        # Count observations before insert
+        cur.execute("SELECT COUNT(*) FROM product_observations")
+        count_before = cur.fetchone()[0]
+
+        # Upsert using ON CONFLICT (event_id) DO NOTHING
         execute_batch(
             cur,
             """
             INSERT INTO product_observations
-                (source_product_id, name, price, currency, availability, collected_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (source_product_id, name, price, currency, availability, collected_at, event_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id) DO NOTHING
             """,
             obs_values,
         )
 
-        return len(obs_values)
+        # Count observations after insert to determine actual inserts
+        cur.execute("SELECT COUNT(*) FROM product_observations")
+        count_after = cur.fetchone()[0]
+        actual_inserts = count_after - count_before
+
+        return actual_inserts
