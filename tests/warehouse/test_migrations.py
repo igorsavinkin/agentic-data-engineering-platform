@@ -43,16 +43,36 @@ def db_url():
 
 @pytest.fixture(scope="module")
 def db_connection(db_url):
-    """Create a connection to the test database."""
-    # Parse URL to extract components
+    """Create a connection to the test database, creating it if needed."""
     from urllib.parse import urlparse
 
     parsed = urlparse(db_url.replace("postgresql+psycopg2://", "postgresql://"))
 
+    # First connect to the default 'postgres' database to create our test DB
+    conn_admin = psycopg2.connect(
+        host=parsed.hostname or "localhost",
+        port=parsed.port or 5432,
+        dbname="postgres",  # Connect to default database
+        user=parsed.username or "postgres",
+        password=parsed.password or "",
+    )
+    conn_admin.autocommit = True
+    cur_admin = conn_admin.cursor()
+
+    # Create test database if it doesn't exist
+    test_dbname = parsed.path.lstrip("/")
+    cur_admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", (test_dbname,))
+    if not cur_admin.fetchone():
+        cur_admin.execute(f"CREATE DATABASE {test_dbname}")
+
+    cur_admin.close()
+    conn_admin.close()
+
+    # Now connect to the test database
     conn = psycopg2.connect(
         host=parsed.hostname or "localhost",
         port=parsed.port or 5432,
-        dbname=parsed.path.lstrip("/"),
+        dbname=test_dbname,
         user=parsed.username or "postgres",
         password=parsed.password or "",
     )

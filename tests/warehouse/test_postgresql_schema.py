@@ -35,7 +35,7 @@ def db_connection():
         port=int(os.getenv("WAREHOUSE_DB_PORT", "5432")),
         dbname=os.getenv("WAREHOUSE_DB_NAME", "warehouse_test"),
         user=os.getenv("WAREHOUSE_DB_USER", "postgres"),
-        password=os.getenv("WAREHOUSE_DB_PASSWORD", "postgres"),
+        password=os.getenv("WAREHOUSE_DB_PASSWORD"),
     )
     conn.autocommit = True
     yield conn
