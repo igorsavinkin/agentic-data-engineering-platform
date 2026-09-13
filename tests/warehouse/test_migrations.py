@@ -297,24 +297,20 @@ def test_misconfiguration_fails_clearly(monkeypatch):
         command.upgrade(cfg, "head")
 
 
-def test_migration_history(db_connection, alembic_cfg):
+def test_migration_history(alembic_cfg):
     """Test that migration history is accessible."""
-    # Get history before any migrations
-    import sys
-    from io import StringIO
+    from alembic.script import ScriptDirectory
 
-    # Capture stdout
-    old_stdout = sys.stdout
-    sys.stdout = StringIO()
+    # Use ScriptDirectory to inspect available migrations directly
+    script = ScriptDirectory.from_config(alembic_cfg)
 
-    try:
-        command.history(alembic_cfg)
-        output = sys.stdout.getvalue()
-    finally:
-        sys.stdout = old_stdout
+    # Get all revisions
+    revisions = list(script.walk_revisions())
+    assert len(revisions) >= 1, "No migrations found in history"
 
-    # Should show our initial migration
-    assert "001" in output or "initial" in output.lower()
+    # Check our initial migration exists
+    revision_ids = [rev.revision for rev in revisions]
+    assert "001" in revision_ids, f"Expected '001' revision not found in {revision_ids}"
 
 
 def test_stamp_version(db_connection, alembic_cfg):
