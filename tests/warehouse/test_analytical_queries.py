@@ -31,6 +31,9 @@ from warehouse.analytics.queries import (
     source_statistics_summary,
 )
 
+# Mark all tests in this module as integration tests (require PostgreSQL)
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(autouse=True)
 def setup_warehouse_data(db_session):
