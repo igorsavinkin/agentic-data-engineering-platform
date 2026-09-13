@@ -4,6 +4,7 @@ Verifies that strategic indexes exist after migration upgrade,
 are dropped after downgrade, and are used by representative queries.
 """
 
+# mypy: disable-error-code="no-untyped-def"
 import pytest
 
 
