@@ -10,22 +10,13 @@ Uses deterministic fixtures to verify:
 - Filters and empty results handling
 
 All tests use a real PostgreSQL database via pytest fixtures.
-
-NOTE: These tests require the db_session fixture from TASK-033.
-They will be skipped until that infrastructure is in place.
 """
 
 # mypy: disable-error-code="no-untyped-def"
-# ruff: noqa: E402  # Imports after pytestmark skip declaration
-import pytest
-
-pytestmark = pytest.mark.skip(
-    reason="Requires db_session fixture from TASK-033 (warehouse integration tests)"
-)
-
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import text
 
 # Import query functions
@@ -39,6 +30,9 @@ from warehouse.analytics.queries import (
     rolling_average_query,
     source_statistics_summary,
 )
+
+# Mark all tests in this module as integration tests (require PostgreSQL)
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(autouse=True)
