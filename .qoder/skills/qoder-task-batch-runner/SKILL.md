@@ -91,14 +91,27 @@ If the merge gate fails, task N is **not done**. Do not start task N+1. Fix the 
 
 Because every task branches from post-merge `main`, task N+1 automatically sees task N's code and interfaces.
 
+### Per-Task Review Retry Budget
+
+Each task in the batch gets up to 3 total review rounds (1 initial + 2 fix attempts). The orchestrator skill's Phase 3 implements this loop:
+
+1. Initial implementation → Qwen review
+2. If CHANGES REQUIRED: fix findings → commit → re-review (round 2)
+3. If still CHANGES REQUIRED: fix again → commit → re-review (round 3)
+4. If still not APPROVED after round 3: stop batch, escalate to owner
+
+If any round returns BLOCKED, stop immediately without consuming remaining rounds.
+
+This budget is tracked in `task-workflow/TASK-xxx/state.json` under the `rounds` key and is independent of the CI retry budget.
+
 ## Failure Policy — Stop, Never Skip
 
 The batch STOPS at the first task that cannot complete. Specifically:
 
 | Failure | Action |
 |---------|--------|
-| Review returns BLOCKED/CHANGES with unfixable findings | Stop batch, report findings |
-| Review fix loop exceeds 3 rounds | Stop batch, report round history |
+| Review returns BLOCKED | Stop batch immediately (hard stop, no retry) |
+| Review fix loop exhausts 3 rounds | Stop batch, report final review findings |
 | CI fails and fix+re-push exceeds 3 attempts | Stop batch, report `gh run view` summary |
 | Escalation criteria hit (AGENTS.md §13) | Stop batch immediately, per normal escalation |
 | Merge conflict with main | Stop batch, report; human decides |

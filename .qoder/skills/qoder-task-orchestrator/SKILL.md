@@ -276,27 +276,137 @@ review_output = run_qwen_review(
     base=base,
 )
 
-# STEP 5: Parse verdict
-verdict = parse_workflow_review(review_output, head)
-# Must be exactly "APPROVED" with blocking_findings=0
+# STEP 5: Parse verdict and handle non-APPROVED cases
 
-if verdict != "APPROVED":
-    print(f"Review verdict: {verdict}")
-    print("Implementation needs fixes - cannot proceed to PR creation")
-    # Fix blocking findings in the worktree, commit, and re-review
-    raise Error(f"Review not approved: {verdict}")
+verdict = parse_workflow_review(review_output, head)
+
+if verdict == "APPROVED":
+    print("Review APPROVED")
+    # Continue to save report and proceed to Phase 4
+elif verdict == "BLOCKED":
+    print(f"Review BLOCKED: {verdict}")
+    # Save report first so owner can inspect
+    write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", review_output)
+    git_add("docs/reviews/TASK-xxx-review.md")
+    git_commit("-m", f"docs: Record TASK-xxx Qwen review (BLOCKED)")
+    raise Error(
+        f"Qwen marked the task BLOCKED; owner intervention required. "
+        f"See docs/reviews/TASK-xxx-review.md"
+    )
+else:  # CHANGES REQUIRED - enter fix-and-re-review loop
+    print(f"Review requires changes: {verdict}")
+    # Save initial review report
+    write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", review_output)
+    git_add("docs/reviews/TASK-xxx-review.md")
+    git_commit("-m", f"docs: Record TASK-xxx Qwen review (CHANGES REQUIRED)")
+
+    # Enter fix loop (up to max_rounds total attempts including initial implementation)
+    max_fix_rounds = 3
+    current_round = state.get("rounds", 1)  # Already counted initial implementation
+    final_verdict = verdict
+    final_review_output = review_output
+    final_head = head
+
+    while current_round < max_fix_rounds:
+        current_round += 1
+        state.update(rounds=current_round)
+
+        print(f"Fix attempt {current_round}/{max_fix_rounds}: addressing review findings...")
+
+        # Read review report for specific issues
+        review_content = read_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md")
+
+        # Fix blocking findings in worktree based on review feedback
+        # Edit files in worktree as needed
+        # Run quality checks to verify fixes
+        run_in_worktree(
+            worktree_path,
+            [
+                ["python", "-m", "ruff", "format", "--check", "."],
+                ["python", "-m", "ruff", "check", "."],
+                ["python", "-m", "mypy"],
+                ["python", "-m", "pytest"],
+            ],
+        )
+
+        # Commit fixes
+        changed_files = get_changed_files()  # From your git status/diff logic
+        if changed_files:
+            git_add(*changed_files)
+            git_commit("-m", f"fix(TASK-xxx): Address review findings (round {current_round})")
+
+        # Re-run review with updated code
+        new_head = git_rev_parse("HEAD")
+        new_diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{new_head}")
+        new_review_output = run_qwen_review(
+            qwen_executable=QWEN_EXECUTABLE,
+            diff=new_diff,
+            spec=spec_content,
+            head=new_head,
+            base=base,
+        )
+
+        # Parse new verdict
+        new_verdict = parse_workflow_review(new_review_output, new_head)
+        final_verdict = new_verdict
+        final_review_output = new_review_output
+        final_head = new_head
+
+        if new_verdict == "APPROVED":
+            print(f"Re-review APPROVED on round {current_round}")
+            # Update review report with latest version
+            write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", new_review_output)
+            git_add("docs/reviews/TASK-xxx-review.md")
+            git_commit("-m", f"docs: Update TASK-xxx Qwen review (APPROVED)")
+            break
+        elif new_verdict == "BLOCKED":
+            print(f"Re-review BLOCKED on round {current_round}")
+            write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", new_review_output)
+            git_add("docs/reviews/TASK-xxx-review.md")
+            git_commit("-m", f"docs: Update TASK-xxx Qwen review (BLOCKED)")
+            raise Error(
+                f"Re-review on round {current_round} returned BLOCKED; "
+                f"owner intervention required. See docs/reviews/TASK-xxx-review.md"
+            )
+        else:  # Still CHANGES REQUIRED
+            print(f"Re-review still requires changes (round {current_round})")
+            write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", new_review_output)
+            git_add("docs/reviews/TASK-xxx-review.md")
+            git_commit("-m", f"docs: Update TASK-xxx Qwen review (still CHANGES REQUIRED)")
+            # Continue loop for another fix attempt
+
+    # Check if we exhausted rounds without approval
+    if current_round >= max_fix_rounds and final_verdict != "APPROVED":
+        raise Error(
+            f"Review fix loop exhausted after {max_fix_rounds} rounds. "
+            f"Final verdict: {final_verdict}. Owner must intervene. "
+            f"See docs/reviews/TASK-xxx-review.md"
+        )
+
+    # Final validation: must be APPROVED to proceed
+    if final_verdict != "APPROVED":
+        raise Error(
+            f"Final review verdict is {final_verdict}, cannot proceed to PR creation. "
+            f"See docs/reviews/TASK-xxx-review.md"
+        )
+
+    # Use the final approved head for state tracking
+    head = final_head
+    review_output = final_review_output
 
 print("Review APPROVED")
 
 # STEP 6: Update state to mark review complete
-state.update(phase="review-complete", reviewed=head, approved_head=head)
+state.update(phase="review-complete", reviewed=head, approved_head=head, rounds=current_round)
 write_json(f"task-workflow/TASK-xxx/state.json", state)
-print(f"State updated: phase='review-complete', reviewed='{head}'")
+print(f"State updated: phase='review-complete', reviewed='{head}', rounds={current_round}")
 
-# STEP 7: Save review report
-write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", review_output)
-git_add("docs/reviews/TASK-xxx-review.md")
-git_commit("-m", f"docs: Record TASK-xxx Qwen review")
+# STEP 7: Save review report (if not already saved during fix loop)
+review_report_path = f"{worktree_path}/docs/reviews/TASK-xxx-review.md"
+if not os.path.exists(review_report_path):
+    write_file(review_report_path, review_output)
+    git_add("docs/reviews/TASK-xxx-review.md")
+    git_commit("-m", f"docs: Record TASK-xxx Qwen review")
 
 print("Review phase complete. Proceeding to Phase 4...")
 ```
@@ -441,7 +551,7 @@ Persist progress in `task-workflow/TASK-xxx/state.json`:
   "task": "TASK-010",
   "branch": "feature/TASK-010",
   "worktree": "C:\\Users\\igors\\RnD\\ai-platform-task-010",
-  "rounds": 1,
+  "rounds": 1,  // Total implement-review cycles attempted (max 3)
   "base": "abc123...",
   "integration": false,
   "origin": "git@github.com:user/repo.git",
@@ -451,6 +561,8 @@ Persist progress in `task-workflow/TASK-xxx/state.json`:
   "pr": 42
 }
 ```
+
+The `rounds` field tracks total implement-review cycles across both initial implementation and fix attempts. When `rounds >= 3` and review is still not APPROVED, the workflow stops and requires owner intervention.
 
 ## Recovery & Resumption
 
@@ -466,6 +578,14 @@ If interrupted mid-phase:
 3. **Resume orchestration:**
    Read the state file and continue from the current phase.
 
+**Mid-Fix-Loop Interruption:**
+If interrupted during a fix round (phase is "implement" with rounds > 1):
+1. Check `state.json` for current `rounds` count
+2. Inspect the latest review report: `docs/reviews/TASK-xxx-review.md`
+3. Manually address remaining findings in worktree
+4. Commit fixes and resume orchestration
+5. The next review will count as the next round (enforcing the 3-round limit)
+
 ## Error Handling
 
 ### Common Failure Modes
@@ -477,13 +597,20 @@ Error: No commits made — implementation failed
 → Check what went wrong (missing dependencies, wrong paths, etc.)
 → Fix and retry implementation
 
+**Review Requires Changes:**
+```
+Error: Review requires changes (CHANGES REQUIRED)
+```
+→ Read `docs/reviews/TASK-xxx-review.md` for specific findings
+→ The orchestrator automatically enters a fix-and-re-review loop (up to 3 rounds total)
+→ If the loop exhausts all rounds without approval, owner intervention is required
+
 **Review Blocked:**
 ```
 Error: Qwen marked the task BLOCKED
 ```
-→ Read `docs/reviews/TASK-xxx-review.md`
-→ Fix blocking issues in worktree
-→ Re-run review phase
+→ Read `docs/reviews/TASK-xxx-review.md` immediately — this is a hard stop with no automatic retry
+→ Owner must manually assess and decide whether to proceed or abandon the task
 
 **CI Failures:**
 ```
