@@ -133,7 +133,7 @@ def upgrade() -> None:
         sa.Column("finished_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("records_loaded", sa.BigInteger(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
-        sa.Column("metadata", sa.JSON(), nullable=True),
+        sa.Column("metadata", sa.dialects.postgresql.JSONB(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_table_comment(

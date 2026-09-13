@@ -278,15 +278,20 @@ def test_rerun_is_safe(db_connection, alembic_cfg):
     cur.close()
 
 
-def test_misconfiguration_fails_clearly():
+def test_misconfiguration_fails_clearly(monkeypatch):
     """Test that bad database configuration fails with clear error."""
-    # Use invalid database URL
+    # Monkeypatch env vars to point to unreachable DB (bypasses env.py's URL building)
+    monkeypatch.setenv("WAREHOUSE_DB_HOST", "localhost")
+    monkeypatch.setenv("WAREHOUSE_DB_PORT", "9999")
+    monkeypatch.setenv("WAREHOUSE_DB_NAME", "nonexistent_db_12345")
+    monkeypatch.setenv("WAREHOUSE_DB_USER", "baduser_xyz")
+    monkeypatch.setenv("WAREHOUSE_DB_PASSWORD", "badpass_xyz")
+
+    # Use placeholder URL so env.py will build from our bad env vars
     migrations_dir = Path(__file__).parent.parent.parent / "warehouse" / "migrations"
     cfg = Config(str(migrations_dir / "alembic.ini"))
     cfg.set_main_option("script_location", str(migrations_dir))
-    cfg.set_main_option(
-        "sqlalchemy.url", "postgresql+psycopg2://baduser:badpass@localhost:9999/nonexistent"
-    )
+    cfg.set_main_option("sqlalchemy.url", "driver://user:pass@localhost/dbname")  # placeholder
 
     with pytest.raises(Exception):
         command.upgrade(cfg, "head")

@@ -32,7 +32,10 @@ def _build_database_url() -> str:
     return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}"
 
 
-config.set_main_option("sqlalchemy.url", _build_database_url())
+# Only set URL from env vars if not already provided (e.g., by test fixtures)
+current_url = config.get_main_option("sqlalchemy.url")
+if current_url == "driver://user:pass@localhost/dbname":
+    config.set_main_option("sqlalchemy.url", _build_database_url())
 
 
 def run_migrations_offline() -> None:

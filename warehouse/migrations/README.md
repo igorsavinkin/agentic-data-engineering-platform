@@ -35,37 +35,37 @@ export WAREHOUSE_DB_NAME_MIGRATION=warehouse_migration_test
 ### Upgrade to latest version
 
 ```bash
-python -m warehouse.migrations run upgrade head
+python -m warehouse.migrations upgrade head
 ```
 
 ### Downgrade by one version
 
 ```bash
-python -m warehouse.migrations run downgrade -1
+python -m warehouse.migrations downgrade -1
 ```
 
 ### Downgrade to base (remove all tables)
 
 ```bash
-python -m warehouse.migrations run downgrade base
+python -m warehouse.migrations downgrade base
 ```
 
 ### Show current version
 
 ```bash
-python -m warehouse.migrations run current
+python -m warehouse.migrations current
 ```
 
 ### Show migration history
 
 ```bash
-python -m warehouse.migrations run history
+python -m warehouse.migrations history
 ```
 
 ### Stamp database to specific version (without running migrations)
 
 ```bash
-python -m warehouse.migrations run stamp 001
+python -m warehouse.migrations stamp 001
 ```
 
 ## Creating New Migrations

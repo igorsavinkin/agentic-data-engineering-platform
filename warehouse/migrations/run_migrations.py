@@ -3,16 +3,16 @@
 
 Usage:
     # Upgrade to latest version
-    python -m warehouse.migrations run upgrade head
+    python -m warehouse.migrations upgrade head
 
     # Downgrade by one version
-    python -m warehouse.migrations run downgrade -1
+    python -m warehouse.migrations downgrade -1
 
     # Show current version
-    python -m warehouse.migrations run current
+    python -m warehouse.migrations current
 
     # Show migration history
-    python -m warehouse.migrations run history
+    python -m warehouse.migrations history
 """
 
 # mypy: disable-error-code="import-untyped,no-untyped-def,import-not-found"
