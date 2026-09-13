@@ -12,6 +12,7 @@ Uses deterministic fixtures to verify:
 All tests use a real PostgreSQL database via pytest fixtures.
 """
 
+# mypy: disable-error-code="no-untyped-def"
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
