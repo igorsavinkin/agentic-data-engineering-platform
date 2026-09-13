@@ -12,6 +12,7 @@ Run with:
     python -m pytest tests/warehouse/test_postgresql_schema.py -v -m integration
 """
 
+# mypy: disable-error-code="import-untyped,no-untyped-def"
 import os
 from pathlib import Path
 
