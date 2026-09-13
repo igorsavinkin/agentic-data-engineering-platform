@@ -9,7 +9,7 @@ Prerequisites:
 - User must have CREATE/DROP privileges on the test database
 
 Run with:
-    python -m pytest tests/warehouse/test_postgresql_schema.py -v
+    python -m pytest tests/warehouse/test_postgresql_schema.py -v -m integration
 """
 
 import os
@@ -17,6 +17,9 @@ from pathlib import Path
 
 import psycopg2
 import pytest
+
+# Mark all tests in this module as integration tests (require PostgreSQL)
+pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
 # Fixtures
