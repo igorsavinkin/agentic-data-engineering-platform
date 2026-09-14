@@ -171,17 +171,38 @@ Proceed to Phase 3 now.
 ```python
 import os
 import platform
+import shutil
+import subprocess
 from pathlib import Path
 
 
-def detect_qwen_cli() -> str:
-    """Find Qwen Code CLI executable with cross-platform fallbacks."""
+def detect_qwen_cli() -> tuple[str, bool]:
+    """Find Qwen Code CLI executable with cross-platform fallbacks.
 
-    # Step 1: Try PATH first (works on Linux/macOS and configured Windows)
+    Returns:
+        Tuple of (executable_path, needs_cmd_wrapper)
+        - executable_path: Full path to qwen executable
+        - needs_cmd_wrapper: True if .cmd/.bat file that needs 'cmd /c' on Windows
+    """
+
+    def check_executable(path: Path) -> tuple[Path | None, bool]:
+        """Check if path exists and determine if it needs cmd wrapper."""
+        if not path.exists():
+            return None, False
+
+        # On Windows, .cmd and .bat files need special handling
+        needs_wrapper = path.suffix.lower() in (".cmd", ".bat")
+        return path, needs_wrapper
+
+    # Step 1: Try PATH first
     qwen_in_path = shutil.which("qwen")
     if qwen_in_path:
+        path_obj = Path(qwen_in_path)
+        needs_wrapper = path_obj.suffix.lower() in (".cmd", ".bat")
         print(f"Qwen found in PATH: {qwen_in_path}")
-        return qwen_in_path
+        if needs_wrapper:
+            print(f"  Note: Windows batch file detected, will use 'cmd /c' wrapper")
+        return qwen_in_path, needs_wrapper
 
     # Step 2: Platform-specific fallback paths
     system = platform.system()
@@ -192,6 +213,7 @@ def detect_qwen_cli() -> str:
             Path.home() / "AppData" / "Local" / "qwen-code" / "bin" / "qwen.cmd",
             Path.home() / "AppData" / "Roaming" / "npm" / "qwen.cmd",
             Path.home() / "AppData" / "Local" / "Programs" / "qwen-code" / "bin" / "qwen.cmd",
+            Path.home() / "AppData" / "Local" / "qwen-code" / "qwen-code" / "bin" / "qwen.cmd",
         ]
     elif system == "Darwin":  # macOS
         candidate_paths = [
@@ -208,12 +230,15 @@ def detect_qwen_cli() -> str:
 
     # Step 3: Check each candidate
     for candidate in candidate_paths:
-        if candidate.exists():
-            print(f"Qwen found at fallback path: {candidate}")
-            return str(candidate)
+        path, needs_wrapper = check_executable(candidate)
+        if path:
+            print(f"Qwen found at fallback path: {path}")
+            if needs_wrapper:
+                print(f"  Note: Windows batch file detected, will use 'cmd /c' wrapper")
+            return str(path), needs_wrapper
 
     # Step 4: Not found - raise clear error
-    raise Error(
+    raise RuntimeError(
         f"Qwen Code CLI not found.\n"
         f"Expected locations checked:\n"
         + "\n".join(f"  - {p}" for p in candidate_paths)
@@ -223,13 +248,29 @@ def detect_qwen_cli() -> str:
     )
 
 
+def run_qwen_command(qwen_executable: str, needs_cmd_wrapper: bool, args: list[str]) -> str:
+    """Execute Qwen CLI command with proper Windows handling."""
+    if needs_cmd_wrapper:
+        # Windows batch files need cmd /c wrapper
+        cmd = ["cmd", "/c", qwen_executable] + args
+    else:
+        cmd = [qwen_executable] + args
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"Qwen command failed:\n{result.stderr}")
+    return result.stdout
+
+
 # Execute detection before review phase
 print("Locating Qwen Code CLI...")
-QWEN_EXECUTABLE = detect_qwen_cli()
+QWEN_EXECUTABLE, QWEN_NEEDS_CMD_WRAPPER = detect_qwen_cli()
 print(f"Using Qwen at: {QWEN_EXECUTABLE}")
+if QWEN_NEEDS_CMD_WRAPPER:
+    print("Will wrap commands with 'cmd /c' for Windows compatibility")
 ```
 
-Store `QWEN_EXECUTABLE` for use in Phase 3. If detection fails, STOP and inform the user — do NOT proceed to self-review.
+Store `QWEN_EXECUTABLE` and `QWEN_NEEDS_CMD_WRAPPER` for use in Phase 3. If detection fails, STOP and inform the user — do NOT proceed to self-review.
 
 ---
 
@@ -268,12 +309,10 @@ spec_content = read_file(spec_path)
 
 # STEP 4: Send to Qwen for review (MANDATORY)
 print("Invoking Qwen review...")
-review_output = run_qwen_review(
-    qwen_executable=QWEN_EXECUTABLE,  # Use detected path from Phase 2.5
-    diff=diff,
-    spec=spec_content,
-    head=head,
-    base=base,
+review_output = run_qwen_command(
+    qwen_executable=QWEN_EXECUTABLE,
+    needs_cmd_wrapper=QWEN_NEEDS_CMD_WRAPPER,
+    args=["--review", "--diff", diff, "--spec", spec_content],
 )
 
 # STEP 5: Parse verdict and handle non-APPROVED cases
@@ -338,12 +377,10 @@ else:  # CHANGES REQUIRED - enter fix-and-re-review loop
         # Re-run review with updated code
         new_head = git_rev_parse("HEAD")
         new_diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{new_head}")
-        new_review_output = run_qwen_review(
+        new_review_output = run_qwen_command(
             qwen_executable=QWEN_EXECUTABLE,
-            diff=new_diff,
-            spec=spec_content,
-            head=new_head,
-            base=base,
+            needs_cmd_wrapper=QWEN_NEEDS_CMD_WRAPPER,
+            args=["--review", "--diff", new_diff, "--spec", spec_content],
         )
 
         # Parse new verdict
