@@ -35,14 +35,17 @@ class FakeStoreClient:
             )
         return self._client
 
-    async def fetch_products(self, limit: Optional[int] = None) -> list[FakeStoreProduct]:
+    async def fetch_products(
+        self, limit: Optional[int] = None
+    ) -> tuple[list[FakeStoreProduct], list[dict[str, Any]]]:
         """Fetch products from Fake Store API /products endpoint.
 
         Args:
             limit: Maximum number of products to fetch. None means all.
 
         Returns:
-            List of typed FakeStoreProduct objects.
+            Tuple of (valid products, malformed records). Malformed records include
+            the original raw dict plus a 'reason' field describing the validation failure.
 
         Raises:
             SourceFetchError: On HTTP errors, timeouts, or malformed responses.
@@ -86,15 +89,21 @@ class FakeStoreClient:
             )
 
         products: list[FakeStoreProduct] = []
+        malformed: list[dict[str, Any]] = []
         for idx, item in enumerate(data):
             try:
                 product = FakeStoreProduct.model_validate(item)
                 products.append(product)
-            except Exception:
-                # Log but continue — individual record failures are handled upstream
-                pass
+            except Exception as exc:
+                # Capture malformed record with diagnostic reason for DLQ routing
+                malformed.append(
+                    {
+                        "raw_record": item,
+                        "reason": f"Validation failed at index {idx}: {exc}",
+                    }
+                )
 
-        return products
+        return products, malformed
 
     async def close(self) -> None:
         """Close the underlying HTTP client if we own it."""
