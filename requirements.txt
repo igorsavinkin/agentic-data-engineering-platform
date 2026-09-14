@@ -18,3 +18,6 @@ boto3>=1.35,<2
 
 # Apache Arrow for Parquet I/O (TASK-021).
 pyarrow>=14.0,<20
+
+# HTTP client for source adapters (TASK-035).
+httpx>=0.27,<1
