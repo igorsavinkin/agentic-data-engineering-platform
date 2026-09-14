@@ -21,9 +21,13 @@ class BestBuyProduct(BaseModel):
 
     Maps the key fields needed for canonical ProductObservationPayload while
     preserving source-specific details inside this boundary.
+
+    Uses extra="ignore" because the real Best Buy API returns many additional
+    fields beyond those modeled here (description, onSale, department, etc.).
+    We only extract the fields we need for canonical mapping.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     sku: int = Field(..., description="Best Buy SKU / product identifier")
     name: str = Field(..., description="Product name/title")

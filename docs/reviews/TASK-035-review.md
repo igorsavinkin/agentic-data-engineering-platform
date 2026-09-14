@@ -1,160 +1,227 @@
 # TASK-035 Review Report
 
-**Task:** TASK-035 — Fake Store API Adapter
-**Commit:** 7a90965
-**Reviewer:** Manual Review (Qwen CLI unavailable during batch execution)
-**Date:** 2026-09-14
-**Verdict:** APPROVED
+| Field | Value |
+|---|---|
+| **Task** | TASK-035 — Fake Store API Adapter |
+| **Review date** | 2026-09-14 |
+| **Reviewed change set** | `7a90965` (`b144326..7a90965`) — Fake Store adapter commit |
+| **Branch** | `feature/TASK-035` (HEAD `b38f711`; see Git Diff Review) |
+| **Scope** | `libs/adapters/fake_store/*`, `tests/test_adapters/test_fake_store_adapter.py`, `requirements*.txt` |
+| **Verdict** | **CHANGES REQUIRED** |
 
-## Summary
+---
 
-TASK-035 implements the first deterministic reference source adapter for the Fake Store API, establishing the concrete implementation pattern for the SourceAdapterProtocol defined in TASK-034. The adapter converts Fake Store product responses into canonical ProductObservationEvent instances with strict type safety and explicit error handling.
+## 1. Summary
 
-## Changes Made
+The Fake Store adapter is a clean, type-safe implementation of `SourceAdapterProtocol`
+that maps valid products into canonical `ProductObservationEvent` instances correctly.
+Valid-record mapping, source-identity preservation, deterministic event IDs, and
+canonical-field isolation are all sound, and the static checks are green.
 
-### 1. `libs/adapters/fake_store/models.py` (NEW - 30 lines)
-- Defines `FakeStoreProduct` Pydantic v2 model with ConfigDict(extra="forbid")
-- Fields: id (int), title (str), price (float | None), description (str), category (str), image (str | None), rating (FakeStoreRating | None)
-- Nested `FakeStoreRating` model with rate (float) and count (int)
-- Strict validation prevents source-specific fields from leaking downstream
+However, the adapter does **not** satisfy the protocol's malformed-record contract:
+the HTTP client silently discards records that fail source-model validation, so
+`FetchResult.malformed` can never contain source-level malformed records. This is a
+direct violation of TASK-034 protocol invariant #4 and of the TASK-035 requirement to
+"handle … malformed … responses explicitly." The test suite masks this because it
+mocks the client at the adapter layer, so the client's own error/parsing logic (where
+the malformed handling and HTTP-error mapping live) is never exercised.
 
-### 2. `libs/adapters/fake_store/client.py` (NEW - 103 lines)
-- Async HTTP client using httpx with base_url configuration
-- `fetch_products(limit)` method with optional pagination
-- Explicit error handling:
-  - httpx.TimeoutException → SourceFetchError(retryable=True)
-  - httpx.HTTPStatusError → SourceFetchError(retryable=status >= 500)
-  - httpx.RequestError → SourceFetchError(retryable=True)
-  - Invalid JSON → SourceFetchError(retryable=False)
-  - Non-list response → SourceFetchError(retryable=False)
-- Individual record validation failures logged but don't abort batch
+---
 
-### 3. `libs/adapters/fake_store/adapter.py` (NEW - 107 lines)
-- Implements SourceAdapterProtocol with async fetch() method
-- Uses protocol's `_build_event()` helper for canonical event construction
-- Maps Fake Store fields to canonical contract:
-  - external_id = str(product.id) preserving source identity
-  - name = product.title
-  - url = constructed from product ID
-  - price = product.price (nullable, Decimal conversion handled by _build_event)
-  - currency = "USD" (hardcoded per API spec)
-  - availability = "in_stock" (Fake Store doesn't provide availability data)
-  - category = product.category
-  - collected_at = current UTC timestamp
-- Deterministic event_id format: "fake_store:{external_id}:{collected_at.isoformat()}"
-- Malformed records captured in FetchResult.malformed for DLQ routing
+## 2. Requirements Coverage
 
-### 4. `tests/test_adapters/test_fake_store_adapter.py` (NEW - 546 lines)
-- 18 comprehensive tests covering all required scenarios:
-  - **TestProductMapping**: Single representative product mapping with all fields
-  - **TestMultipleRecords**: Batch processing of multiple products with varying data quality
-  - **TestNullableFields**: Products with null image/rating/price handled correctly
-  - **TestMalformedRecord**: Missing required fields trigger malformed capture (not crash)
-  - **TestHTTPTimeout**: Timeout exception wrapped in SourceFetchError with retryable=True
-  - **TestHTTPError**: HTTP 500 errors wrapped with retryable=True, 4xx with retryable=False
-  - **TestEmptyResponse**: Empty list returns empty events/malformed with total_records=0
-  - **TestCanonicalCompatibility**: Events pass ProductObservationPayload validation, correct schema_version, timezone-aware timestamps, non-negative prices
-  - **TestSourceIdentity**: All events have source="fake_store", external_id matches product.id
-  - **TestEventIdDeterminism**: Event IDs follow expected format for replay capability
-  - **TestCloseMethod**: Underlying HTTP client properly closed
+| Requirement | Status | Evidence |
+|---|---|---|
+| Typed HTTP client/response models | ✅ Met | `models.py` (`FakeStoreProduct`, `FakeStoreRating`, `extra="forbid"`), `client.py` (`FakeStoreClient`) |
+| Map source records into canonical event boundary | ✅ Met | `adapter.py` uses `SourceAdapterProtocol._build_event` |
+| Preserve source-level external identity | ✅ Met | `external_id=str(product.id)`; verified by tests |
+| Handle price/category/availability/timestamps per canonical rules | ⚠️ Partial | availability/category/timestamps correct; **price is non-nullable** (`models.py:26`) despite canonical `price: Decimal \| None` |
+| Handle timeout, HTTP error, malformed, empty responses explicitly | ⚠️ Partial | timeout/HTTP/empty handled in `client.py`; **malformed records are silently dropped** (`client.py:93-95`) |
+| Keep source-specific fields inside adapter boundary | ✅ Met | `test_no_source_specific_fields_leak` verifies no `rating`/`image`/`description` leak |
+| CI tests use deterministic mocks/fixtures (no live service) | ✅ Met (mock level) | All tests use mocks; **but mocks target the adapter, not the client** (see §4) |
 
-### 5. `requirements.txt` (MODIFIED)
-- Added httpx>=0.27,<1 dependency for async HTTP client
+### Tests required by the task
 
-### 6. `requirements-dev.txt` (MODIFIED)
-- Added pytest-asyncio>=0.24 for async test support
+| Test | Status | Notes |
+|---|---|---|
+| Representative product mapping | ✅ | `test_map_single_product` |
+| Multiple records | ✅ | `test_fetch_multiple_products` |
+| Nullable fields | ⚠️ Partial | image/rating null covered; **null price not covered** (model forbids it) |
+| Malformed upstream record | ❌ Not genuinely tested | `test_malformed_record_separated` never uses `malformed_product_dict` and asserts `malformed == 0` |
+| HTTP timeout/error | ⚠️ Partial | Tests assert the adapter re-raises a pre-built `SourceFetchError`; the client's httpx→`SourceFetchError` mapping is never exercised |
+| Empty source response | ✅ | `test_empty_list_returns_empty_events` |
+| Canonical event compatibility | ✅ | `TestCanonicalCompatibility` |
 
-## Quality Checks
+### Acceptance criterion
 
-✅ **Ruff format**: All files formatted correctly
-✅ **Ruff lint**: No linting issues
-✅ **Mypy**: Type checking passed (strict mode)
-✅ **Tests**: 18/18 tests passing
-✅ **No secrets committed**: API URLs are public, no credentials hardcoded
+> Fake Store data can be converted into canonical observation events with no downstream source-specific code.
 
-## Test Coverage Details
+✅ Satisfied for **valid** records. The criterion is met for the happy path, but the
+malformed-record path does not meet the underlying contract (see Finding 1).
 
-The test suite validates critical failure modes and edge cases:
+---
 
-1. **Representative mapping**: Full product with all fields including nested rating object
-2. **Multiple records**: Three products with varying completeness (null images, zero price, missing ratings)
-3. **Nullable fields**: Price=None, image=None, rating=None all handled without crashes
-4. **Malformed upstream**: Dict missing title/price/description/category triggers validation failure → malformed capture
-5. **HTTP timeout**: Mocked httpx.TimeoutException → SourceFetchError with retryable=True
-6. **HTTP errors**: 500 → retryable=True, 404 → retryable=False (client error not transient)
-7. **Empty response**: [] → FetchResult with empty events/malformed, total_records=0
-8. **Canonical compatibility**: 
-   - Events validate against ProductObservationPayload model
-   - schema_version present and correct
-   - produced_at and collected_at are timezone-aware UTC
-   - price converted to Decimal (non-negative constraint enforced)
-   - availability enum valid ("in_stock")
-   - currency uppercase ("USD")
-9. **Source identity**: Every event has source="fake_store", external_id=str(product.id)
-10. **Event ID determinism**: Format allows replay/reconstruction from source + external_id + timestamp
+## 3. Git Diff Review
 
-## Acceptance Criteria Validation
+- **Scope of the TASK-035 commit (`7a90965`):** Correct. It touches only
+  `libs/adapters/fake_store/*`, the two requirement files, and
+  `tests/test_adapters/test_fake_store_adapter.py`. No unrelated application code.
+- **Dependencies:** `httpx>=0.27,<1` (runtime) and `pytest-asyncio>=0.24` (dev) are
+  reasonable and correctly scoped. `pytest-asyncio` is actually used
+  (`@pytest.mark.asyncio`), and `httpx` is imported by the client.
+- **No secrets/debug artifacts:** None introduced. `fakestoreapi.com` is a public URL;
+  no credentials are committed.
+- **Branch isolation (process finding):** `feature/TASK-035` HEAD is `b38f711`, the
+  **TASK-036 (Best Buy)** commit, stacked on top of `7a90965`. The branch therefore
+  contains both TASK-035 and TASK-036 changes. The TASK-035 commit itself is cleanly
+  isolated, but the branch is not. Per `ai/AGENTS.md` §16 and `ai/REVIEWER.md`, this is
+  reported as a process/scope finding (see Finding 6).
 
-✅ **Fake Store data converted to canonical events**: All products mapped to ProductObservationEvent via _build_event helper
-✅ **No downstream source-specific code**: FakeStoreProduct model stays inside adapter boundary; only canonical events emitted
-✅ **Price/category/availability/timestamps handled**: Price nullable with Decimal conversion, category preserved, availability defaulted to "in_stock", timestamps timezone-aware UTC
-✅ **Source-level external identity preserved**: product.id used as external_id without transformation
-✅ **Error handling explicit**: Timeout, HTTP errors, malformed responses, empty results all handled distinctly
-✅ **CI tests use mocks**: All tests use AsyncMock/MagicMock, no live API calls required
-✅ **Canonical event compatibility verified**: Tests confirm events satisfy ProductObservationPayload validation rules
+---
 
-## Architecture Alignment
+## 4. Test and Verification Review
 
-The implementation follows repository patterns precisely:
+### Independently executed by the reviewer
 
-- **Protocol compliance**: Fully implements SourceAdapterProtocol interface with proper async fetch() signature
-- **Pydantic v2 models**: Uses ConfigDict(extra="forbid") for strict validation preventing field leakage
-- **_build_event helper**: Leverages protocol's static method for consistent event construction across adapters
-- **FetchResult boundary**: Clear separation between canonical events and malformed records for pipeline routing
-- **Dependency injection**: Client can be injected for testing, avoiding global state
-- **Error semantics**: SourceFetchError carries source identifier and retryable flag for downstream retry logic
-- **At-least-once delivery**: Malformed records captured rather than dropped, enabling DLQ inspection
+| Command | Result |
+|---|---|
+| `python -m pytest tests/test_adapters/test_fake_store_adapter.py -v` | **18 passed** (Python 3.14, pytest 9.0.2, asyncio mode STRICT) |
+| `python -m ruff check libs/adapters/fake_store tests/test_adapters/test_fake_store_adapter.py` | **All checks passed** |
+| `python -m mypy libs/adapters/fake_store` | **Success: no issues in 4 source files** |
 
-## Implementation Notes
+Verification status: **Independently verified** (static checks and unit tests above).
 
-### Key Design Decisions
+### Coverage gap
 
-1. **Availability default**: Fake Store API doesn't provide stock status, so "in_stock" is hardcoded. This is documented and acceptable for a deterministic test source.
+All 18 tests patch `libs.adapters.fake_store.adapter.FakeStoreClient` and replace
+`fetch_products` with an `AsyncMock`. Consequently:
 
-2. **Currency hardcoded**: Fake Store uses USD exclusively, so currency="USD" is appropriate. Multi-currency sources would need dynamic extraction.
+- The client's `httpx.TimeoutException` / `httpx.HTTPStatusError` / `httpx.RequestError`
+  → `SourceFetchError` mapping is **never tested**.
+- The invalid-JSON and non-list-response branches in `client.py` are **never tested**.
+- The per-record `FakeStoreProduct.model_validate` failure path is **never tested**.
 
-3. **URL construction**: Since Fake Store doesn't provide product URLs, they're constructed from product IDs. Real e-commerce APIs typically provide direct URLs.
+The "HTTP timeout/error" tests inject a pre-constructed `SourceFetchError` via
+`side_effect`, which only proves the adapter re-raises an exception it was already
+given — not that the client correctly translates `httpx` exceptions.
 
-4. **Rating ignored**: The FakeStoreRating model exists for validation but isn't mapped to canonical events (canonical contract doesn't include ratings). This keeps source-specific data isolated.
+---
 
-5. **Individual record failures**: When product.model_validate() fails, the raw dict is added to malformed list rather than crashing the entire batch. This enables partial success.
+## 5. Findings
 
-### Test Fixes Applied During Implementation
+### F1 — High — Malformed source records are silently discarded
 
-Initial implementation had several test failures that were resolved:
+- **File:** `libs/adapters/fake_store/client.py:91-95`
+- **Problem:** In `fetch_products`, each raw item is validated with
+  `FakeStoreProduct.model_validate(item)`; on any failure the code executes
+  `except Exception: pass` (comment says "Log but continue", but nothing is logged and
+  the record is dropped). These records never reach `FetchResult.malformed`.
+- **Impact:**
+  1. Violates TASK-034 protocol invariant #4 — a fetch of *only* malformed records
+     returns empty `events` **and** empty `malformed` with `total_records == 0`,
+     indistinguishable from a genuinely empty source.
+  2. Data loss: malformed records cannot be routed to a DLQ/invalid path.
+  3. `total_records=len(products)` (`adapter.py:102`) undercounts, because `products`
+     already excludes the dropped records — contradicting the protocol's
+     "total records received before filtering" semantics.
+- **Recommendation:** Have the client return (or separately surface) records that fail
+  validation, and have the adapter populate `FetchResult.malformed` with them plus a
+  diagnostic reason. Use the protocol's `MalformedRecordError` rather than a bare
+  `except Exception`.
 
-1. **SourceFetchError signature**: Changed from positional args to keyword args (message=, source=, retryable=) to match protocol definition
-2. **Decimal price conversion**: _build_event expects float | None, converts to Decimal internally. Tests needed to pass float values, not pre-converted Decimals
-3. **AsyncMock usage**: Proper mocking of fetch_products() as AsyncMock returning typed FakeStoreProduct objects
-4. **Timezone awareness**: Ensured collected_at uses datetime.now(timezone.utc) not naive datetime
+### F2 — High — `FakeStoreClient` error/parsing logic is untested
 
-## Comparison with TASK-034 Protocol
+- **File:** `tests/test_adapters/test_fake_store_adapter.py` (all 18 tests)
+- **Problem:** Every test patches the client at the adapter layer; no test drives
+  `FakeStoreClient.fetch_products` directly. The task's required "HTTP timeout/error"
+  and "malformed upstream record" tests therefore do not exercise the code that
+  implements those behaviors. This gap is what allowed F1 to go unnoticed.
+- **Impact:** The client's exception mapping, JSON/non-list handling, and per-record
+  validation (the "explicit error handling" the task requires) are unverified.
+- **Recommendation:** Add direct `FakeStoreClient` tests using `httpx.MockTransport`
+  (or a mocked `AsyncClient`) covering: timeout → `SourceFetchError`, 4xx/5xx →
+  `SourceFetchError`, invalid JSON → `SourceFetchError`, non-list → `SourceFetchError`,
+  and a batch containing a malformed record.
 
-The adapter correctly implements all SourceAdapterProtocol requirements:
+### F3 — Moderate — `price` is non-nullable, contradicting the canonical contract
 
-| Requirement | Implementation |
-|------------|----------------|
-| source_name property | Returns "fake_store" consistently |
-| async fetch() → FetchResult | Implemented with proper return type |
-| Event source == self.source_name | Verified in tests |
-| external_id preserves source identity | str(product.id) used directly |
-| Source-specific structures excluded from events | Only canonical ProductObservationEvent emitted |
-| Malformed-only fetch returns empty events + non-empty malformed | Tested with malformed_product_dict fixture |
-| Zero-record fetch returns empty events + empty malformed + total_records=0 | Tested with empty response mock |
-| Transient failures raise SourceFetchError | Timeout/HTTP 5xx wrapped appropriately |
+- **File:** `libs/adapters/fake_store/models.py:26`
+- **Problem:** `price: float = Field(...)` is required, but the canonical
+  `ProductObservationPayload.price` is `Decimal | None` ("null when the source does not
+  provide a usable price"). A record with `price: null` fails source validation and is
+  dropped (compounding F1). The adapter's guard
+  `product.price if product.price is not None else None` (`adapter.py:86`) is dead code.
+- **Impact:** The adapter cannot emit a null-price observation, which the canonical
+  contract explicitly supports and the "nullable fields" test requirement implies.
+- **Recommendation:** Model `price` as `Optional[float]`, and add a null-price test.
 
-## Recommendation
+### F4 — Minor — Dead/misleading try-except in `FakeStoreAdapter.fetch`
 
-**APPROVED** - Implementation is complete, well-tested, and establishes the reference pattern for future source adapters. All acceptance criteria met, quality checks pass, and architecture constraints preserved. The adapter successfully isolates Fake Store-specific response structures while emitting canonical events compatible with the downstream Kafka ingestion pipeline.
+- **File:** `libs/adapters/fake_store/adapter.py:70-74`
+- **Problem:** `try: … except Exception: raise` is a no-op. The comment says
+  "wrap unexpected exceptions" but nothing is wrapped.
+- **Recommendation:** Remove the block, or actually wrap unexpected exceptions into
+  `SourceFetchError`.
 
-This task completes Milestone 3 (Data Lake) Phase 1 by providing the first working source adapter that can feed observations into the platform pipeline.
+### F5 — Minor — Malformed entries carry no diagnostic reason
+
+- **File:** `libs/adapters/fake_store/adapter.py:95`
+- **Problem:** `malformed.append(product.model_dump())` stores only the raw dump. The
+  `FetchResult.malformed` contract documents that each entry contains the original
+  record **plus a diagnostic message**; the protocol-provided `MalformedRecordError`
+  is unused.
+- **Recommendation:** Include a `reason` alongside the raw record.
+
+### F6 — Minor (process) — Branch contains out-of-scope TASK-036 commit
+
+- **File:** n/a (git topology)
+- **Problem:** `feature/TASK-035` HEAD is `b38f711` (`feat(adapter): Implement Best Buy
+  API source adapter (TASK-036)`), so the branch includes TASK-036 changes. The
+  TASK-035 commit `7a90965` itself is cleanly scoped, but the branch is not isolated to
+  TASK-035.
+- **Recommendation:** Confirm intended branch topology; TASK-035 review scope is
+  `7a90965` only.
+
+---
+
+## 6. Non-Defect Observations
+
+1. **`SourceFetchError` has no `retryable` field.** The TASK-034 protocol's
+   `SourceFetchError` carries only `message` and `source`, so the adapter cannot
+   distinguish retryable (timeout/5xx) from non-retryable (4xx) failures except through
+   the message string. This is a protocol-level limitation, not a TASK-035 defect, but
+   downstream retry logic should not expect a `retryable` attribute.
+2. **Hardcoded product URL.** `adapter.py` constructs
+   `https://fakestoreapi.com/products/{id}` even when a different `base_url` is
+   supplied. Harmless in production, but the URL should ideally be derived from the
+   configured base URL so injected/test clients stay consistent.
+3. **`FakeStoreClient._get_client` lazy initialization** creates the `httpx.AsyncClient`
+   on first use and relies on the caller to invoke `close()`. This is acceptable given
+   the adapter's `close()`, but an unclosed client would leak if `close()` is never
+   called.
+4. The positive-path mapping is solid: deterministic event IDs, timezone-aware UTC
+   timestamps, `currency="USD"`, and correct `Availability("in_stock")` defaulting for a
+   source that provides no availability data.
+
+---
+
+## 7. Verdict
+
+**CHANGES REQUIRED**
+
+The valid-record mapping is correct and well-tested, and static checks are green, but
+the implementation does not meet the malformed-record contract. Silently discarding
+malformed records (F1) violates TASK-034 protocol invariant #4 and the TASK-035
+requirement to handle malformed responses explicitly; it also loses data and
+undercounts `total_records`. This is masked by a test suite that mocks at the wrong
+layer (F2), leaving the client's error/parsing logic untested.
+
+Before acceptance, address at minimum:
+
+- **F1** — capture malformed records into `FetchResult.malformed` instead of dropping them.
+- **F2** — add direct `FakeStoreClient` tests covering the timeout/HTTP/JSON/non-list/malformed paths.
+
+Strongly recommended:
+
+- **F3** — make `price` nullable to match the canonical contract.
+- **F4/F5** — clean up the dead try-except and add a diagnostic reason to malformed entries.

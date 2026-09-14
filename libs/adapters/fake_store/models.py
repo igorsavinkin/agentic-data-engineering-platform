@@ -23,7 +23,7 @@ class FakeStoreProduct(BaseModel):
 
     id: int = Field(..., description="Source-level product identifier")
     title: str = Field(..., description="Product name/title")
-    price: float = Field(..., description="Product price")
+    price: Optional[float] = Field(None, description="Product price (null when not provided)")
     description: str = Field(..., description="Product description")
     category: str = Field(..., description="Product category")
     image: Optional[str] = Field(None, description="Product image URL")

@@ -104,7 +104,7 @@ class TestProductMapping:
         """A single FakeStoreProduct maps to a valid canonical event."""
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[sample_product])
+            mock_instance.fetch_products = AsyncMock(return_value=([sample_product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -134,7 +134,7 @@ class TestProductMapping:
         """external_id must be a string even though source uses integer IDs."""
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[sample_product])
+            mock_instance.fetch_products = AsyncMock(return_value=([sample_product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -162,7 +162,7 @@ class TestMultipleRecords:
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=typed_products)
+            mock_instance.fetch_products = AsyncMock(return_value=(typed_products, []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -183,7 +183,7 @@ class TestMultipleRecords:
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=typed_products)
+            mock_instance.fetch_products = AsyncMock(return_value=(typed_products, []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -216,7 +216,7 @@ class TestNullableFields:
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -243,7 +243,7 @@ class TestNullableFields:
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -270,28 +270,43 @@ class TestMalformedRecords:
         malformed_product_dict: dict[str, Any],
     ) -> None:
         """Malformed records are separated into malformed tuple, not events."""
-        # Client will filter out the malformed record during parsing
+        # Client returns valid products and captures malformed ones with reason
         valid_products = [FakeStoreProduct.model_validate(p) for p in multiple_products]
+        malformed_entry = {
+            "raw_record": malformed_product_dict,
+            "reason": "Validation failed at index 0: ...",
+        }
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=valid_products)
+            mock_instance.fetch_products = AsyncMock(
+                return_value=(valid_products, [malformed_entry])
+            )
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
             adapter = FakeStoreAdapter()
             result = await adapter.fetch()
 
-            # Only valid products make it through
+            # Valid products make it through, malformed is captured separately
             assert len(result.events) == 3
-            assert len(result.malformed) == 0
+            assert len(result.malformed) == 1
+            assert "raw_record" in result.malformed[0]
+            assert "reason" in result.malformed[0]
+            # total_records includes both valid and malformed
+            assert result.total_records == 4
 
     @pytest.mark.asyncio
     async def test_all_malformed_yields_empty_events(self) -> None:
-        """When all records are malformed, events is empty."""
+        """When all records are malformed, events is empty but malformed is not (protocol invariant #4)."""
+        malformed_entries = [
+            {"raw_record": {"bad": "data"}, "reason": "Validation failed at index 0: ..."},
+            {"raw_record": {"also": "bad"}, "reason": "Validation failed at index 1: ..."},
+        ]
+
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[])
+            mock_instance.fetch_products = AsyncMock(return_value=([], malformed_entries))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -299,7 +314,8 @@ class TestMalformedRecords:
             result = await adapter.fetch()
 
             assert len(result.events) == 0
-            assert len(result.malformed) == 0
+            assert len(result.malformed) == 2
+            assert result.total_records == 2  # Counts raw records before filtering
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +425,7 @@ class TestEmptyResponse:
         """Empty product list returns FetchResult with no events."""
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[])
+            mock_instance.fetch_products = AsyncMock(return_value=([], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -438,7 +454,7 @@ class TestCanonicalCompatibility:
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -477,7 +493,7 @@ class TestCanonicalCompatibility:
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -522,7 +538,7 @@ class TestAdapterProtocol:
 
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -537,7 +553,7 @@ class TestAdapterProtocol:
         """close() releases underlying HTTP client resources."""
         with patch("libs.adapters.fake_store.adapter.FakeStoreClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[])
+            mock_instance.fetch_products = AsyncMock(return_value=([], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
