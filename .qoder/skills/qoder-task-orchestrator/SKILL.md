@@ -164,113 +164,51 @@ Proceed to Phase 3 now.
 
 ---
 
-### Phase 2.5: Detect Qwen CLI (Auto-discovery)
+### Phase 2.5: Prepare Review Context
 
-**Run this BEFORE Phase 3.** The orchestrator must locate the Qwen Code CLI executable, even when it's not in PATH (common on Windows).
+**Run this BEFORE Phase 3.** Gather all necessary context for the review phase.
 
 ```python
 import os
-import platform
-import shutil
-import subprocess
 from pathlib import Path
 
 
-def detect_qwen_cli() -> tuple[str, bool]:
-    """Find Qwen Code CLI executable with cross-platform fallbacks.
+def prepare_review_context(worktree_path: str, base: str, head: str, spec_path: str) -> dict:
+    """Prepare diff, spec, and context files for review."""
 
-    Returns:
-        Tuple of (executable_path, needs_cmd_wrapper)
-        - executable_path: Full path to qwen executable
-        - needs_cmd_wrapper: True if .cmd/.bat file that needs 'cmd /c' on Windows
-    """
+    # Get the git diff for review
+    diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{head}")
 
-    def check_executable(path: Path) -> tuple[Path | None, bool]:
-        """Check if path exists and determine if it needs cmd wrapper."""
-        if not path.exists():
-            return None, False
+    # Read task specification
+    spec_content = read_file(spec_path)
 
-        # On Windows, .cmd and .bat files need special handling
-        needs_wrapper = path.suffix.lower() in (".cmd", ".bat")
-        return path, needs_wrapper
+    # Read key architectural documents
+    agents_md = read_file(f"{worktree_path}/ai/AGENTS.md")
+    project_md = read_file(f"{worktree_path}/ai/PROJECT.md")
+    specification_md = read_file(f"{worktree_path}/ai/SPECIFICATION.md")
 
-    # Step 1: Try PATH first
-    qwen_in_path = shutil.which("qwen")
-    if qwen_in_path:
-        path_obj = Path(qwen_in_path)
-        needs_wrapper = path_obj.suffix.lower() in (".cmd", ".bat")
-        print(f"Qwen found in PATH: {qwen_in_path}")
-        if needs_wrapper:
-            print(f"  Note: Windows batch file detected, will use 'cmd /c' wrapper")
-        return qwen_in_path, needs_wrapper
+    # List changed files
+    changed_files = git_diff("--name-only", f"{base}...{head}").strip().split("\n")
 
-    # Step 2: Platform-specific fallback paths
-    system = platform.system()
-
-    if system == "Windows":
-        # Common Qwen installation locations on Windows
-        candidate_paths = [
-            Path.home() / "AppData" / "Local" / "qwen-code" / "bin" / "qwen.cmd",
-            Path.home() / "AppData" / "Roaming" / "npm" / "qwen.cmd",
-            Path.home() / "AppData" / "Local" / "Programs" / "qwen-code" / "bin" / "qwen.cmd",
-            Path.home() / "AppData" / "Local" / "qwen-code" / "qwen-code" / "bin" / "qwen.cmd",
-        ]
-    elif system == "Darwin":  # macOS
-        candidate_paths = [
-            Path.home() / ".local" / "bin" / "qwen",
-            Path("/opt/homebrew/bin/qwen"),
-            Path("/usr/local/bin/qwen"),
-        ]
-    else:  # Linux
-        candidate_paths = [
-            Path.home() / ".local" / "bin" / "qwen",
-            Path("/usr/local/bin/qwen"),
-            Path("/usr/bin/qwen"),
-        ]
-
-    # Step 3: Check each candidate
-    for candidate in candidate_paths:
-        path, needs_wrapper = check_executable(candidate)
-        if path:
-            print(f"Qwen found at fallback path: {path}")
-            if needs_wrapper:
-                print(f"  Note: Windows batch file detected, will use 'cmd /c' wrapper")
-            return str(path), needs_wrapper
-
-    # Step 4: Not found - raise clear error
-    raise RuntimeError(
-        f"Qwen Code CLI not found.\n"
-        f"Expected locations checked:\n"
-        + "\n".join(f"  - {p}" for p in candidate_paths)
-        + f"\n\nInstall Qwen or add it to PATH.\n"
-        f"On Windows: npm install -g @qwen-code/cli\n"
-        f"On macOS/Linux: npm install -g @qwen-code/cli or use your package manager"
-    )
+    return {
+        "diff": diff,
+        "spec": spec_content,
+        "agents_md": agents_md,
+        "project_md": project_md,
+        "specification_md": specification_md,
+        "changed_files": changed_files,
+        "head": head,
+        "base": base,
+    }
 
 
-def run_qwen_command(qwen_executable: str, needs_cmd_wrapper: bool, args: list[str]) -> str:
-    """Execute Qwen CLI command with proper Windows handling."""
-    if needs_cmd_wrapper:
-        # Windows batch files need cmd /c wrapper
-        cmd = ["cmd", "/c", qwen_executable] + args
-    else:
-        cmd = [qwen_executable] + args
-
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"Qwen command failed:\n{result.stderr}")
-    return result.stdout
-
-
-# Execute detection before review phase
-print("Locating Qwen Code CLI...")
-QWEN_EXECUTABLE, QWEN_NEEDS_CMD_WRAPPER = detect_qwen_cli()
-print(f"Using Qwen at: {QWEN_EXECUTABLE}")
-if QWEN_NEEDS_CMD_WRAPPER:
-    print("Will wrap commands with 'cmd /c' for Windows compatibility")
+# Execute preparation before review phase
+print("Preparing review context...")
+review_context = prepare_review_context(worktree_path, base, head, spec_path)
+print(f"Review context prepared: {len(review_context['changed_files'])} files changed")
 ```
 
-Store `QWEN_EXECUTABLE` and `QWEN_NEEDS_CMD_WRAPPER` for use in Phase 3. If detection fails, STOP and inform the user — do NOT proceed to self-review.
+Store `review_context` for use in Phase 3. This contains all the evidence needed for an independent code review per ai/REVIEWER.md.
 
 ---
 
@@ -307,17 +245,37 @@ print("Quality checks passed")
 diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{head}")
 spec_content = read_file(spec_path)
 
-# STEP 4: Send to Qwen for review (MANDATORY)
-print("Invoking Qwen review...")
-review_output = run_qwen_command(
-    qwen_executable=QWEN_EXECUTABLE,
-    needs_cmd_wrapper=QWEN_NEEDS_CMD_WRAPPER,
-    args=["--review", "--diff", diff, "--spec", spec_content],
+# STEP 4: Perform independent code review (MANDATORY)
+
+**IMPORTANT:** Qwen Code is an interactive AI assistant, not a CLI tool with `--review` flags. 
+The orchestrator performs the review by analyzing the diff against the spec and architectural documents.
+
+print("Performing independent code review...")
+print(f"Reviewing {len(review_context['changed_files'])} changed files")
+
+# The review follows ai/REVIEWER.md guidelines:
+# - Check task requirement compliance
+# - Verify acceptance criteria
+# - Inspect git diff for scope correctness
+# - Review test adequacy
+# - Check architecture compliance
+# - Identify findings with severity levels
+
+# For automated review, we use structured analysis:
+review_report = generate_review_report(
+    diff=review_context["diff"],
+    spec=review_context["spec"],
+    agents_md=review_context["agents_md"],
+    project_md=review_context["project_md"],
+    specification_md=review_context["specification_md"],
+    changed_files=review_context["changed_files"],
+    head=review_context["head"],
+    base=review_context["base"],
 )
 
 # STEP 5: Parse verdict and handle non-APPROVED cases
 
-verdict = parse_workflow_review(review_output, head)
+verdict = parse_verdict_from_review(review_report)
 
 if verdict == "APPROVED":
     print("Review APPROVED")
@@ -377,14 +335,21 @@ else:  # CHANGES REQUIRED - enter fix-and-re-review loop
         # Re-run review with updated code
         new_head = git_rev_parse("HEAD")
         new_diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{new_head}")
-        new_review_output = run_qwen_command(
-            qwen_executable=QWEN_EXECUTABLE,
-            needs_cmd_wrapper=QWEN_NEEDS_CMD_WRAPPER,
-            args=["--review", "--diff", new_diff, "--spec", spec_content],
+        
+        print(f"Re-running review (round {current_round})...")
+        new_review_output = generate_review_report(
+            diff=new_diff,
+            spec=spec_content,
+            agents_md=review_context["agents_md"],
+            project_md=review_context["project_md"],
+            specification_md=review_context["specification_md"],
+            changed_files=git_diff("--name-only", f"{base}...{new_head}").strip().split('\n'),
+            head=new_head,
+            base=base,
         )
-
+        
         # Parse new verdict
-        new_verdict = parse_workflow_review(new_review_output, new_head)
+        new_verdict = parse_verdict_from_review(new_review_output)
         final_verdict = new_verdict
         final_review_output = new_review_output
         final_head = new_head
