@@ -24,5 +24,20 @@ Implement Fake Store API as the first deterministic reference source using the s
 ## Acceptance Criteria
 Fake Store data can be converted into canonical observation events with no downstream source-specific code.
 
+## Status
+**COMPLETED** — Merged to main via PR #48 (fix commit b899cf5)
+
+### Implementation Summary
+- `libs/adapters/fake_store/` — Client, models, and adapter implementing SourceAdapterProtocol
+- Canonical event mapping with proper handling of nullable prices, categories, availability
+- Malformed record capture with DLQ routing (tuple return pattern)
+- 18 tests covering mapping, malformed records, HTTP errors, empty responses
+- Qwen review approved (docs/reviews/TASK-035-fix-review.md)
+
+### Commits
+- Initial implementation: merged via PR #46/#47
+- Fix commit: b899cf5 (resolved F1/F2/F3 blocking issues)
+- Review report: 9ee345d (committed Qwen approval)
+
 ## Agent Instructions
 Implement TASK-035 only.
