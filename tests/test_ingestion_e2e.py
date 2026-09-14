@@ -16,7 +16,6 @@ from libs.adapters.best_buy.adapter import BestBuyAdapter
 from libs.adapters.fake_store.adapter import FakeStoreAdapter
 from libs.common.kafka_producer import (
     DeliveryReceipt,
-    KafkaEventProducer,
 )
 from libs.event_contracts import ProductObservationEvent
 from services.ingestion.runner import IngestionRunner
@@ -26,25 +25,23 @@ from services.ingestion.runner import IngestionRunner
 # ---------------------------------------------------------------------------
 
 
+class MockProducer:
+    """Test helper that mimics KafkaEventProducer while tracking published events."""
+
+    def __init__(self) -> None:
+        self.published: list[ProductObservationEvent] = []
+        self.metrics = MagicMock()
+        self.metrics.increment = MagicMock()
+
+    def publish(self, event: ProductObservationEvent) -> DeliveryReceipt:
+        self.published.append(event)
+        return DeliveryReceipt(topic="products.raw.v1", partition=0, offset=len(self.published) - 1)
+
+
 @pytest.fixture
-def mock_producer() -> MagicMock:
+def mock_producer() -> MockProducer:
     """Create a mock Kafka producer that tracks published events."""
-    producer = MagicMock(spec=KafkaEventProducer)
-    producer.metrics = MagicMock()
-    producer.metrics.increment = MagicMock()
-
-    # Track published events
-    published_events: list[ProductObservationEvent] = []
-
-    def capture_publish(event: ProductObservationEvent) -> DeliveryReceipt:
-        published_events.append(event)
-        return DeliveryReceipt(
-            topic="products.raw.v1", partition=0, offset=len(published_events) - 1
-        )
-
-    producer.publish.side_effect = capture_publish
-    producer._published = published_events  # type: ignore[attr-defined]
-    return producer
+    return MockProducer()
 
 
 @pytest.fixture
@@ -135,7 +132,7 @@ class TestFakeStoreIngestion:
 
         runner = IngestionRunner(
             adapters=[fake_store_adapter],
-            producer=mock_producer,  # type: ignore[arg-type]
+            producer=mock_producer,
             interval_seconds=60,
         )
 
@@ -143,15 +140,15 @@ class TestFakeStoreIngestion:
         await runner.run_once()
 
         # Assert: exactly one event was published
-        assert len(mock_producer._published) == 1  # type: ignore[attr-defined]
-        published = mock_producer._published[0]  # type: ignore[attr-defined]
+        assert len(mock_producer.published) == 1
+        published = mock_producer.published[0]
         assert published.source == "fake_store"
         assert published.payload.external_id == "1"
         assert published.payload.name == "Test Product"
 
     @pytest.mark.asyncio
     async def test_fake_store_source_identity_preserved(
-        self, mock_producer: MagicMock, fake_store_adapter: FakeStoreAdapter
+        self, mock_producer: MockProducer, fake_store_adapter: FakeStoreAdapter
     ) -> None:
         """Published events carry the correct source identifier."""
         fake_store_adapter._mock_client.fetch_products.return_value = (  # type: ignore[attr-defined]
@@ -165,7 +162,7 @@ class TestFakeStoreIngestion:
         )
         await runner.run_once()
 
-        published = mock_producer._published[0]  # type: ignore[attr-defined]
+        published = mock_producer.published[0]
         assert published.source == "fake_store"
         assert published.partition_key.startswith("fake_store:")
 
@@ -180,7 +177,7 @@ class TestBestBuyIngestion:
 
     @pytest.mark.asyncio
     async def test_best_buy_event_published_to_kafka(
-        self, mock_producer: MagicMock, best_buy_adapter: BestBuyAdapter
+        self, mock_producer: MockProducer, best_buy_adapter: BestBuyAdapter
     ) -> None:
         """A Best Buy fetch cycle publishes events to Kafka."""
         # Arrange: configure mock to return one valid product
@@ -211,14 +208,14 @@ class TestBestBuyIngestion:
         await runner.run_once()
 
         # Assert: exactly one event was published
-        assert len(mock_producer._published) == 1  # type: ignore[attr-defined]
-        published = mock_producer._published[0]  # type: ignore[attr-defined]
+        assert len(mock_producer.published) == 1
+        published = mock_producer.published[0]
         assert published.source == "best_buy"
         assert published.payload.external_id == "12345"
 
     @pytest.mark.asyncio
     async def test_best_buy_source_identity_preserved(
-        self, mock_producer: MagicMock, best_buy_adapter: BestBuyAdapter
+        self, mock_producer: MockProducer, best_buy_adapter: BestBuyAdapter
     ) -> None:
         """Published events carry the correct source identifier."""
         from libs.adapters.best_buy.models import BestBuyProduct
@@ -245,7 +242,7 @@ class TestBestBuyIngestion:
         )
         await runner.run_once()
 
-        published = mock_producer._published[0]  # type: ignore[attr-defined]
+        published = mock_producer.published[0]
         assert published.source == "best_buy"
         assert published.partition_key.startswith("best_buy:")
 
@@ -261,7 +258,7 @@ class TestUnifiedDownstream:
     @pytest.mark.asyncio
     async def test_both_sources_use_same_pipeline(
         self,
-        mock_producer: MagicMock,
+        mock_producer: MockProducer,
         fake_store_adapter: FakeStoreAdapter,
         best_buy_adapter: BestBuyAdapter,
     ) -> None:
@@ -297,13 +294,12 @@ class TestUnifiedDownstream:
         await runner.run_once()
 
         # Assert: both events published, same topic, no source-specific routing
-        assert len(mock_producer._published) == 2  # type: ignore[attr-defined]
-        sources = {e.source for e in mock_producer._published}  # type: ignore[attr-defined]
+        assert len(mock_producer.published) == 2
+        sources = {e.source for e in mock_producer.published}
         assert sources == {"fake_store", "best_buy"}
 
         # Verify all events target the same topic (checked via mock call args)
-        for call in mock_producer.publish.call_args_list:
-            event = call[0][0]
+        for event in mock_producer.published:
             assert isinstance(event, ProductObservationEvent)
 
 
@@ -318,7 +314,7 @@ class TestErrorIsolation:
     @pytest.mark.asyncio
     async def test_failing_adapter_does_not_block_others(
         self,
-        mock_producer: MagicMock,
+        mock_producer: MockProducer,
         fake_store_adapter: FakeStoreAdapter,
         best_buy_adapter: BestBuyAdapter,
     ) -> None:
@@ -332,7 +328,7 @@ class TestErrorIsolation:
         )
 
         # Best Buy fails
-        best_buy_adapter._mock_client.fetch_products.side_effect = SourceFetchError(
+        best_buy_adapter._mock_client.fetch_products.side_effect = SourceFetchError(  # type: ignore[attr-defined]
             "API timeout", source="best_buy"
         )
 
@@ -344,8 +340,8 @@ class TestErrorIsolation:
         await runner.run_once()
 
         # Assert: Fake Store event was published despite Best Buy failure
-        assert len(mock_producer._published) == 1  # type: ignore[attr-defined]
-        assert mock_producer._published[0].source == "fake_store"  # type: ignore[attr-defined]
+        assert len(mock_producer.published) == 1
+        assert mock_producer.published[0].source == "fake_store"
 
         # Assert: error was tracked
         stats = runner.stats
@@ -363,7 +359,7 @@ class TestMalformedHandling:
 
     @pytest.mark.asyncio
     async def test_malformed_records_tracked(
-        self, mock_producer: MagicMock, fake_store_adapter: FakeStoreAdapter
+        self, mock_producer: MockProducer, fake_store_adapter: FakeStoreAdapter
     ) -> None:
         """Malformed records increment counters but don't stop valid events."""
         fake_store_adapter._mock_client.fetch_products.return_value = (  # type: ignore[attr-defined]
@@ -381,7 +377,7 @@ class TestMalformedHandling:
         assert stats.total_malformed == 1
         assert stats.sources["fake_store"].malformed_count == 1
         # Valid event still published
-        assert len(mock_producer._published) == 1  # type: ignore[attr-defined]
+        assert len(mock_producer.published) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +391,7 @@ class TestIngestionStats:
     @pytest.mark.asyncio
     async def test_stats_aggregate_across_sources(
         self,
-        mock_producer: MagicMock,
+        mock_producer: MockProducer,
         fake_store_adapter: FakeStoreAdapter,
         best_buy_adapter: BestBuyAdapter,
     ) -> None:
