@@ -67,14 +67,11 @@ class FakeStoreAdapter(SourceAdapterProtocol):
         """
         collected_at = datetime.now(timezone.utc)
 
-        try:
-            products = await self._client.fetch_products(limit=self._limit)
-        except Exception:
-            # Re-raise SourceFetchError as-is; wrap unexpected exceptions
-            raise
+        # Client returns (valid_products, malformed_records) - both count toward total
+        products, client_malformed = await self._client.fetch_products(limit=self._limit)
 
         events: list[ProductObservationEvent] = []
-        malformed: list[dict[str, Any]] = []
+        adapter_malformed: list[dict[str, Any]] = []
 
         for product in products:
             try:
@@ -91,15 +88,23 @@ class FakeStoreAdapter(SourceAdapterProtocol):
                 )
                 events.append(event)
             except Exception:
-                # Record the raw data as malformed
-                malformed.append(product.model_dump())
+                # Canonical validation failure - record with reason
+                adapter_malformed.append(
+                    {
+                        "raw_record": product.model_dump(),
+                        "reason": "Failed canonical event construction",
+                    }
+                )
+
+        # Combine client-level and adapter-level malformed records
+        all_malformed = client_malformed + adapter_malformed
 
         return FetchResult(
             events=tuple(events),
-            malformed=tuple(malformed),
+            malformed=tuple(all_malformed),
             source=self.source_name,
             fetched_at=datetime.now(timezone.utc),
-            total_records=len(products),
+            total_records=len(products) + len(client_malformed),
         )
 
     async def close(self) -> None:
