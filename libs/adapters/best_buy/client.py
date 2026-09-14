@@ -50,7 +50,7 @@ class BestBuyClient:
         page_size: int = 10,
         page: int = 1,
         sort: Optional[str] = None,
-    ) -> list[BestBuyProduct]:
+    ) -> tuple[list[BestBuyProduct], list[dict[str, Any]]]:
         """Fetch products from Best Buy Products API /products endpoint.
 
         Args:
@@ -61,7 +61,8 @@ class BestBuyClient:
             sort: Sort order, e.g. "sku.asc" or "salePrice.desc".
 
         Returns:
-            List of typed BestBuyProduct objects.
+            Tuple of (valid products, malformed records). Malformed records include
+            the original raw dict plus a 'reason' field describing the validation failure.
 
         Raises:
             SourceFetchError: On auth failures, rate limits, timeouts, or malformed responses.
@@ -132,15 +133,21 @@ class BestBuyClient:
             )
 
         products: list[BestBuyProduct] = []
-        for item in products_data:
+        malformed: list[dict[str, Any]] = []
+        for idx, item in enumerate(products_data):
             try:
                 product = BestBuyProduct.model_validate(item)
                 products.append(product)
-            except Exception:
-                # Skip unparseable records silently — upstream handles malformed separation
-                pass
+            except Exception as exc:
+                # Capture malformed record with diagnostic reason for DLQ routing
+                malformed.append(
+                    {
+                        "raw_record": item,
+                        "reason": f"Validation failed at index {idx}: {exc}",
+                    }
+                )
 
-        return products
+        return products, malformed
 
     async def close(self) -> None:
         """Close the underlying HTTP client if we own it."""

@@ -104,7 +104,7 @@ class TestProductMapping:
         """A single BestBuyProduct maps to a valid canonical event."""
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[sample_product])
+            mock_instance.fetch_products = AsyncMock(return_value=([sample_product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -150,7 +150,7 @@ class TestMultipleRecords:
 
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=typed_products)
+            mock_instance.fetch_products = AsyncMock(return_value=(typed_products, []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -178,7 +178,7 @@ class TestMultipleRecords:
 
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -201,7 +201,7 @@ class TestMultipleRecords:
 
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[p1, p2, p3])
+            mock_instance.fetch_products = AsyncMock(return_value=([p1, p2, p3], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -399,7 +399,7 @@ class TestEmptyResults:
         """Empty products list returns FetchResult with no events."""
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[])
+            mock_instance.fetch_products = AsyncMock(return_value=([], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -428,7 +428,7 @@ class TestCanonicalCompatibility:
 
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -467,7 +467,7 @@ class TestCanonicalCompatibility:
 
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -514,7 +514,7 @@ class TestAdapterProtocol:
 
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[product])
+            mock_instance.fetch_products = AsyncMock(return_value=([product], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
@@ -529,7 +529,7 @@ class TestAdapterProtocol:
         """close() releases underlying HTTP client resources."""
         with patch("libs.adapters.best_buy.adapter.BestBuyClient") as MockClient:
             mock_instance = MagicMock()
-            mock_instance.fetch_products = AsyncMock(return_value=[])
+            mock_instance.fetch_products = AsyncMock(return_value=([], []))
             mock_instance.close = AsyncMock()
             MockClient.return_value = mock_instance
 
