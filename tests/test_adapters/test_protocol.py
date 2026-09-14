@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -307,7 +308,7 @@ class TestFetchResultSemantics:
 
     def test_frozen_dataclass(self, sample_event: ProductObservationEvent) -> None:
         """FetchResult is immutable after construction."""
-        result = FetchResult(
+        result: FetchResult[Any] = FetchResult(
             events=(sample_event,),
             malformed=(),
             source="test",
@@ -318,8 +319,10 @@ class TestFetchResultSemantics:
 
     def test_has_events_property(self, sample_events: list[ProductObservationEvent]) -> None:
         """has_events reflects whether events tuple is non-empty."""
-        empty = FetchResult(events=(), malformed=(), source="x", fetched_at=utc_now())
-        full = FetchResult(
+        empty: FetchResult[Any] = FetchResult(
+            events=(), malformed=(), source="x", fetched_at=utc_now()
+        )
+        full: FetchResult[Any] = FetchResult(
             events=tuple(sample_events), malformed=(), source="x", fetched_at=utc_now()
         )
         assert not empty.has_events
@@ -327,8 +330,10 @@ class TestFetchResultSemantics:
 
     def test_has_malformed_property(self) -> None:
         """has_malformed reflects whether malformed tuple is non-empty."""
-        clean = FetchResult(events=(), malformed=(), source="x", fetched_at=utc_now())
-        dirty = FetchResult(
+        clean: FetchResult[Any] = FetchResult(
+            events=(), malformed=(), source="x", fetched_at=utc_now()
+        )
+        dirty: FetchResult[Any] = FetchResult(
             events=(),
             malformed=({"reason": "bad"},),
             source="x",
@@ -339,7 +344,9 @@ class TestFetchResultSemantics:
 
     def test_fetched_at_is_timezone_aware(self) -> None:
         """fetched_at must carry timezone information."""
-        result = FetchResult(events=(), malformed=(), source="x", fetched_at=utc_now())
+        result: FetchResult[Any] = FetchResult(
+            events=(), malformed=(), source="x", fetched_at=utc_now()
+        )
         assert result.fetched_at.tzinfo is not None
 
 
