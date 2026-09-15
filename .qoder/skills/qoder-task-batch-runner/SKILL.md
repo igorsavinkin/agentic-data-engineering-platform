@@ -197,6 +197,18 @@ Worktree ../ai-platform-task-022 preserved for inspection.
 Resume with: @qoder-task-batch-runner resume
 ```
 
+## Remote Alerts
+
+Send one Telegram alert when the batch itself ends — `success` if every task merged, `blocked` if it stopped partway — using the same counts as the summary above:
+
+```bash
+python .qoder/notify/notify.py --level blocked \
+  --subject "Batch stopped at TASK-022 (2/4 merged)" \
+  --detail "Review BLOCKED - 2 MAJOR findings; worktree preserved for inspection"
+```
+
+The orchestrator already alerts on per-task blockers, so do not send a second message for a blocker it reported — alert on batch-level completion only. See `.qoder/skills/qoder-task-orchestrator/SKILL.md` (Remote Alerts) for levels and setup.
+
 ## See Also
 
 - `.qoder/skills/qoder-task-orchestrator/SKILL.md` — the single-task workflow this batch loop executes per task (phases, review gate, state schema, recovery)
