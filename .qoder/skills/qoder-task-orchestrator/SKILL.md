@@ -259,6 +259,11 @@ def run_qwen_review_interactive(
 
     Qwen Code is an interactive AI assistant that uses tools to read files,
     inspect git diffs, and write review reports. It must be launched with -i flag.
+
+    CRITICAL: In Git Bash on Windows, .cmd files require special handling:
+    - stdin MUST be inherited from parent (not piped) for tool approval prompts
+    - Use subprocess.DEVNULL for stdin only if running non-interactively
+    - For interactive mode, use stdin=None to inherit parent's stdin
     """
 
     # Build the review instruction prompt
@@ -271,7 +276,7 @@ def run_qwen_review_interactive(
         f"include the reviewed commit and verdict, and verify it exists."
     )
 
-    # On Windows, .cmd files need cmd /c wrapper
+    # On Windows, .cmd/.bat files need cmd /c wrapper for proper execution
     needs_cmd_wrapper = qwen_executable.lower().endswith((".cmd", ".bat"))
 
     if needs_cmd_wrapper:
@@ -281,11 +286,15 @@ def run_qwen_review_interactive(
 
     print(f"Launching Qwen Code CLI interactively...")
     print(f"Command: {' '.join(cmd)}")
+    print("Qwen will ask for tool approvals interactively. After it writes the report, exit Qwen.")
 
-    # Run Qwen with stdin/stdout connected to terminal for tool approvals
+    # CRITICAL: stdin=None inherits parent's stdin (required for interactive tool approvals)
+    # Do NOT use stdin=subprocess.PIPE or stdin=subprocess.DEVNULL here - that breaks
+    # interactive prompts in Git Bash on Windows.
     result = subprocess.run(
         cmd,
         cwd=worktree_path,
+        stdin=None,  # Inherit stdin from parent for interactive mode
         timeout=600,  # 10 minute timeout for review
     )
 
