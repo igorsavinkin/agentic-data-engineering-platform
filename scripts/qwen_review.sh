@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Wrapper script to invoke Qwen Code CLI with proper stdin handling in Git Bash.
 #
-# Problem: Git Bash pipes stdin to commands, which causes Qwen to reject
-# interactive mode. This script ensures stdin comes from /dev/tty (the terminal).
+# Problem: Git Bash pipes stdin to commands when invoked from subprocesses,
+# which causes Qwen to reject interactive mode with --prompt-interactive flag.
+#
+# Solution: Detect if stdin is a terminal or piped, and use appropriate Qwen mode:
+# - Interactive (terminal): Use -i flag for interactive mode with tool approvals
+# - Non-interactive (piped): Use --prompt with -y (YOLO) for auto-approval
 #
 # Usage: ./scripts/qwen_review.sh <task-id> [base-commit]
 # Example: ./scripts/qwen_review.sh TASK-025 main
@@ -56,12 +60,15 @@ echo "Using Qwen at: $QWEN_CMD"
 BRANCH="$(git branch --show-current)"
 HEAD_COMMIT="$(git rev-parse HEAD)"
 BASE_HASH="$(git rev-parse "$BASE_COMMIT^{commit}")"
-SPEC_FILE="ai/tasks/${TASK_ID}-specification.md"
 
-if [[ ! -f "$SPEC_FILE" ]]; then
-    echo "ERROR: Specification not found: $SPEC_FILE" >&2
+# Find spec file using glob pattern (handles kebab-case naming like TASK-023-partitioning-strategy.md)
+SPEC_FILE=$(ls "ai/tasks/${TASK_ID}-"*.md 2>/dev/null | head -1)
+if [[ -z "$SPEC_FILE" ]]; then
+    echo "ERROR: No specification found for $TASK_ID in ai/tasks/" >&2
+    echo "Expected pattern: ai/tasks/${TASK_ID}-*.md" >&2
     exit 1
 fi
+echo "Using specification: $SPEC_FILE"
 
 # Build review prompt
 RANGE="${BASE_HASH}...${HEAD_COMMIT}"
@@ -73,17 +80,16 @@ echo "Branch: $BRANCH"
 echo "Range: $RANGE"
 echo ""
 
-# CRITICAL: Redirect stdin from /dev/tty to bypass Git Bash's stdin piping.
-# This ensures Qwen sees a real terminal and enables interactive mode.
-if [[ -e /dev/tty ]]; then
-    # Unix/Linux/macOS/Git Bash with tty support
-    "$QWEN_CMD" -i "$PROMPT" </dev/tty
-else
-    # Fallback: no tty available (shouldn't happen in normal usage)
-    echo "WARNING: No /dev/tty found, attempting direct invocation" >&2
+# Detect if stdin is a terminal (interactive) or piped (automated)
+if [[ -t 0 ]]; then
+    # Interactive terminal: use -i flag for interactive mode with tool approvals
+    echo "Interactive mode detected (stdin is a terminal)"
     "$QWEN_CMD" -i "$PROMPT"
+else
+    # Piped/non-interactive: use regular prompt mode with auto-approval (-y flag)
+    echo "Non-interactive mode detected (stdin is piped), using automated review with auto-approval"
+    "$QWEN_CMD" --prompt "$PROMPT" -y
 fi
-
 EXIT_CODE=$?
 
 # Verify report was created

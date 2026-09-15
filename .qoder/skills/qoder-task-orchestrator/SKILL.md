@@ -192,9 +192,9 @@ Proceed to Phase 3 now.
 
 ### Phase 2.5: Detect and Configure Qwen Code CLI
 
-**Run this BEFORE Phase 3.** The orchestrator must locate the Qwen Code CLI executable and prepare it for interactive review.
+**Run this BEFORE Phase 3.** The orchestrator must locate the Qwen Code CLI executable and prepare it for review.
 
-The repository provides a wrapper script `scripts/qwen_review.sh` that handles Git Bash stdin issues automatically by redirecting stdin from `/dev/tty`.
+The repository provides a wrapper script `scripts/qwen_review.sh` that handles Git Bash stdin issues automatically by detecting whether stdin is a terminal or piped, and using the appropriate Qwen invocation mode.
 
 ```python
 import os
@@ -210,11 +210,13 @@ print("This script handles Git Bash stdin piping issues automatically.")
 ```
 
 Store this path for use in Phase 3. The wrapper script will:
-1. Auto-detect Qwen using the same fallback logic as documented below
-2. Redirect stdin from `/dev/tty` to bypass Git Bash's stdin piping
-3. Build the review prompt with git diff and commit information
-4. Invoke Qwen in interactive mode
-5. Verify the review report was created
+1. Auto-detect Qwen using cross-platform fallback paths (Windows %LOCALAPPDATA%, %APPDATA%, etc.)
+2. Find spec files using glob pattern matching (handles kebab-case naming like TASK-023-partitioning-strategy.md)
+3. Detect if stdin is a terminal or piped:
+   - Interactive (terminal): Uses `-i` flag for interactive mode with tool approvals
+   - Non-interactive (piped): Uses `--prompt` with `-y` (YOLO) for auto-approval
+4. Build the review prompt with git diff and commit information
+5. Invoke Qwen appropriately and verify the review report was created
 
 ---
 
