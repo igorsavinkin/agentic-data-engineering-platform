@@ -24,7 +24,7 @@ from libs.observability.source_metrics import (
 class TestSourceMetrics:
     """Test source metrics counter operations."""
 
-    def test_initial_state(self):
+    def test_initial_state(self) -> None:
         """Metrics start at zero."""
         metrics = SourceMetrics(source_name="test_source")
         snapshot = metrics.snapshot()
@@ -37,7 +37,7 @@ class TestSourceMetrics:
         assert snapshot[SourceMetric.RECORDS_EMITTED] == 0
         assert snapshot[SourceMetric.ZERO_RECORD_FETCHES] == 0
 
-    def test_increment_fetch_attempts(self):
+    def test_increment_fetch_attempts(self) -> None:
         """Fetch attempts counter increments correctly."""
         metrics = SourceMetrics(source_name="test_source")
 
@@ -47,7 +47,7 @@ class TestSourceMetrics:
 
         assert metrics.snapshot()[SourceMetric.FETCH_ATTEMPTS] == 3
 
-    def test_record_success_with_records(self):
+    def test_record_success_with_records(self) -> None:
         """Successful fetch with records updates all relevant counters."""
         metrics = SourceMetrics(source_name="fake_store")
 
@@ -60,7 +60,7 @@ class TestSourceMetrics:
         # Should NOT increment zero-record fetches
         assert snapshot[SourceMetric.ZERO_RECORD_FETCHES] == 0
 
-    def test_record_success_zero_records(self):
+    def test_record_success_zero_records(self) -> None:
         """Zero-record success is tracked separately."""
         metrics = SourceMetrics(source_name="best_buy")
 
@@ -73,7 +73,7 @@ class TestSourceMetrics:
         # SHOULD increment zero-record fetches
         assert snapshot[SourceMetric.ZERO_RECORD_FETCHES] == 1
 
-    def test_record_failure(self):
+    def test_record_failure(self) -> None:
         """Failed fetch increments failure counter."""
         metrics = SourceMetrics(source_name="test_source")
 
@@ -83,7 +83,7 @@ class TestSourceMetrics:
         snapshot = metrics.snapshot()
         assert snapshot[SourceMetric.FETCH_FAILURE] == 2
 
-    def test_latency_observation(self):
+    def test_latency_observation(self) -> None:
         """Latency tracker records observations correctly."""
         metrics = SourceMetrics(source_name="test_source")
 
@@ -92,12 +92,16 @@ class TestSourceMetrics:
         metrics.observe_latency(0.3)
 
         snapshot = metrics.snapshot()
-        assert snapshot["source_fetch_latency_seconds_count"] == 3
-        assert abs(snapshot["source_fetch_latency_seconds_sum"] - 1.8) < 0.01
-        assert snapshot["source_fetch_latency_seconds_min"] == 0.3
-        assert snapshot["source_fetch_latency_seconds_max"] == 1.0
+        count = snapshot["source_fetch_latency_seconds_count"]
+        total = snapshot["source_fetch_latency_seconds_sum"]
+        min_val = snapshot["source_fetch_latency_seconds_min"]
+        max_val = snapshot["source_fetch_latency_seconds_max"]
+        assert isinstance(count, int) and count == 3
+        assert isinstance(total, (int, float)) and abs(total - 1.8) < 0.01
+        assert isinstance(min_val, (int, float)) and min_val == 0.3
+        assert isinstance(max_val, (int, float)) and max_val == 1.0
 
-    def test_time_fetch_context_manager(self):
+    def test_time_fetch_context_manager(self) -> None:
         """Context manager records latency even on exception."""
         metrics = SourceMetrics(source_name="test_source")
 
@@ -107,10 +111,12 @@ class TestSourceMetrics:
                 raise ValueError("test error")
 
         snapshot = metrics.snapshot()
-        assert snapshot["source_fetch_latency_seconds_count"] == 1
-        assert snapshot["source_fetch_latency_seconds_sum"] > 0
+        count = snapshot["source_fetch_latency_seconds_count"]
+        total = snapshot["source_fetch_latency_seconds_sum"]
+        assert isinstance(count, int) and count == 1
+        assert isinstance(total, (int, float)) and total > 0
 
-    def test_multiple_operations_accumulate(self):
+    def test_multiple_operations_accumulate(self) -> None:
         """Multiple fetch cycles accumulate correctly."""
         metrics = SourceMetrics(source_name="fake_store")
 
@@ -134,7 +140,7 @@ class TestSourceMetrics:
         assert snapshot[SourceMetric.RECORDS_EMITTED] == 9
         assert snapshot[SourceMetric.ZERO_RECORD_FETCHES] == 1
 
-    def test_snapshot_is_detached(self):
+    def test_snapshot_is_detached(self) -> None:
         """Snapshot returns a copy, not a live reference."""
         metrics = SourceMetrics(source_name="test_source")
         snapshot1 = metrics.snapshot()
@@ -145,7 +151,7 @@ class TestSourceMetrics:
         assert snapshot1[SourceMetric.FETCH_ATTEMPTS] == 0
         assert snapshot2[SourceMetric.FETCH_ATTEMPTS] == 1
 
-    def test_metrics_exception_isolation(self):
+    def test_metrics_exception_isolation(self) -> None:
         """Internal exceptions in metrics do not propagate."""
         metrics = SourceMetrics(source_name="test_source")
 
@@ -162,14 +168,14 @@ class TestSourceMetrics:
 class TestSourceFreshness:
     """Test freshness tracking."""
 
-    def test_initial_state_no_fetch(self):
+    def test_initial_state_no_fetch(self) -> None:
         """Freshness starts with no successful fetch."""
         freshness = SourceFreshness()
 
         assert freshness.get_last_successful_fetch() is None
         assert freshness.calculate_freshness_age_seconds() is None
 
-    def test_record_success_updates_timestamp(self):
+    def test_record_success_updates_timestamp(self) -> None:
         """Recording success updates the timestamp."""
         freshness = SourceFreshness()
         now = datetime.now(timezone.utc)
@@ -180,7 +186,7 @@ class TestSourceFreshness:
         assert last is not None
         assert abs((last - now).total_seconds()) < 1
 
-    def test_record_success_defaults_to_now(self):
+    def test_record_success_defaults_to_now(self) -> None:
         """Recording without timestamp uses current time."""
         freshness = SourceFreshness()
         before = datetime.now(timezone.utc)
@@ -192,7 +198,7 @@ class TestSourceFreshness:
         assert last is not None
         assert before <= last <= after
 
-    def test_freshness_age_calculation(self):
+    def test_freshness_age_calculation(self) -> None:
         """Age is calculated correctly from reference time."""
         freshness = SourceFreshness()
         past = datetime.now(timezone.utc) - timedelta(minutes=5)
@@ -203,7 +209,7 @@ class TestSourceFreshness:
         assert age is not None
         assert 290 <= age <= 310  # ~5 minutes with tolerance
 
-    def test_multiple_successes_keep_latest(self):
+    def test_multiple_successes_keep_latest(self) -> None:
         """Multiple successes keep the most recent timestamp."""
         freshness = SourceFreshness()
         old = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -216,7 +222,7 @@ class TestSourceFreshness:
         assert last is not None
         assert abs((last - new).total_seconds()) < 1
 
-    def test_freshness_exception_isolation(self):
+    def test_freshness_exception_isolation(self) -> None:
         """Freshness operations catch internal exceptions."""
         freshness = SourceFreshness()
 
@@ -227,7 +233,7 @@ class TestSourceFreshness:
         except Exception as e:
             pytest.fail(f"Freshness should not raise: {e}")
 
-    def test_snapshot_format(self):
+    def test_snapshot_format(self) -> None:
         """Snapshot returns ISO-formatted timestamp or None."""
         freshness = SourceFreshness()
 
@@ -246,7 +252,7 @@ class TestSourceFreshness:
 class TestSourceMetricsIntegration:
     """Integration tests for complete fetch cycle metrics."""
 
-    def test_complete_fetch_cycle_success(self):
+    def test_complete_fetch_cycle_success(self) -> None:
         """Simulate a complete successful fetch cycle."""
         metrics = SourceMetrics(source_name="fake_store")
 
@@ -265,7 +271,7 @@ class TestSourceMetricsIntegration:
         assert snapshot["source_fetch_latency_seconds_count"] == 1
         assert snapshot["source_last_successful_fetch"] is not None
 
-    def test_complete_fetch_cycle_failure(self):
+    def test_complete_fetch_cycle_failure(self) -> None:
         """Simulate a complete failed fetch cycle."""
         metrics = SourceMetrics(source_name="best_buy")
 
@@ -283,7 +289,7 @@ class TestSourceMetricsIntegration:
         assert snapshot["source_fetch_latency_seconds_count"] == 1
         assert snapshot["source_last_successful_fetch"] is None
 
-    def test_distinguish_zero_records_vs_failure(self):
+    def test_distinguish_zero_records_vs_failure(self) -> None:
         """Zero-record success is distinct from failure."""
         metrics = SourceMetrics(source_name="test_source")
 
@@ -300,7 +306,7 @@ class TestSourceMetricsIntegration:
         assert snapshot[SourceMetric.FETCH_FAILURE] == 1
         assert snapshot[SourceMetric.ZERO_RECORD_FETCHES] == 1
 
-    def test_stale_detection_via_freshness(self):
+    def test_stale_detection_via_freshness(self) -> None:
         """Staleness can be detected by checking freshness age."""
         metrics = SourceMetrics(source_name="fake_store")
 

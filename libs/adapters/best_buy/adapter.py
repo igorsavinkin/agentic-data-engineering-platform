@@ -137,7 +137,7 @@ class BestBuyAdapter(SourceAdapterProtocol):
                 all_malformed = client_malformed + adapter_malformed
                 total_collected = len(products) + len(client_malformed)
 
-                result = FetchResult(
+                result: FetchResult[ProductObservationEvent] = FetchResult(
                     events=tuple(events),
                     malformed=tuple(all_malformed),
                     source=self.source_name,
