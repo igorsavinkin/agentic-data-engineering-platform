@@ -24,6 +24,7 @@ from libs.common.kafka_producer import (
 )
 from libs.event_contracts import ProductObservationEvent
 from libs.observability.kafka_metrics import KafkaMetric
+from libs.observability.source_metrics import SourceMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +83,42 @@ class IngestionRunner:
         self._stats = IngestionStats()
         self._running = False
 
-        # Initialize per-source status tracking
+        # Initialize per-source status tracking and metrics
+        self._source_metrics: dict[str, SourceMetrics] = {}
         for adapter in self._adapters:
             self._stats.sources[adapter.source_name] = SourceStatus(source_name=adapter.source_name)
+            # Create metrics for this source (reuse if adapter already has one)
+            if hasattr(adapter, "_metrics") and isinstance(adapter._metrics, SourceMetrics):
+                self._source_metrics[adapter.source_name] = adapter._metrics
+            else:
+                self._source_metrics[adapter.source_name] = SourceMetrics(
+                    source_name=adapter.source_name
+                )
 
     @property
     def stats(self) -> IngestionStats:
         """Return current ingestion statistics."""
         return self._stats
+
+    @property
+    def source_metrics(self) -> dict[str, SourceMetrics]:
+        """Return source-level metrics for all configured adapters."""
+        return dict(self._source_metrics)
+
+    def get_source_freshness(self) -> dict[str, dict[str, Any]]:
+        """Get freshness information for all sources.
+
+        Returns a dict mapping source name to freshness data including:
+        - last_successful_fetch: ISO timestamp or None
+        - freshness_age_seconds: age in seconds or None
+        """
+        result = {}
+        for source_name, metrics in self._source_metrics.items():
+            result[source_name] = {
+                "last_successful_fetch": metrics.get_last_successful_fetch(),
+                "freshness_age_seconds": metrics.get_freshness_age_seconds(),
+            }
+        return result
 
     async def run_once(self) -> IngestionStats:
         """Execute one fetch-publish cycle across all adapters.

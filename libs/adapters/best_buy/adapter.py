@@ -9,6 +9,7 @@ from libs.adapters import FetchResult, SourceAdapterProtocol
 from libs.adapters.best_buy.client import BestBuyClient
 from libs.adapters.best_buy.models import BestBuyProduct
 from libs.event_contracts.product_observation import ProductObservationEvent
+from libs.observability.source_metrics import SourceMetric, SourceMetrics
 
 
 # Availability mapping: derive from inStoreAvailability/onlineAvailability
@@ -54,6 +55,7 @@ class BestBuyAdapter(SourceAdapterProtocol):
         sort: Optional[str] = None,
         timeout: float = 30.0,
         client: Optional[BestBuyClient] = None,
+        metrics: Optional[SourceMetrics] = None,
     ) -> None:
         """Initialize the Best Buy adapter.
 
@@ -63,6 +65,7 @@ class BestBuyAdapter(SourceAdapterProtocol):
             sort: Sort order for results, e.g. "sku.asc".
             timeout: HTTP request timeout in seconds.
             client: Pre-configured BestBuyClient (for testing/injection).
+            metrics: Optional SourceMetrics instance for observability.
         """
         self._page_size = page_size
         self._sort = sort
@@ -73,6 +76,7 @@ class BestBuyAdapter(SourceAdapterProtocol):
                 api_key=api_key,
                 timeout=timeout,
             )
+        self._metrics = metrics or SourceMetrics(source_name=self.source_name)
 
     @property
     def source_name(self) -> str:
@@ -89,52 +93,70 @@ class BestBuyAdapter(SourceAdapterProtocol):
         Raises:
             SourceFetchError: On auth failures, rate limits, timeouts, or response parsing failures.
         """
-        collected_at = datetime.now(timezone.utc)
+        self._metrics.increment(SourceMetric.FETCH_ATTEMPTS)
 
-        # Client returns (valid_products, malformed_records) - both count toward total
-        products, client_malformed = await self._client.fetch_products(
-            page_size=self._page_size,
-            sort=self._sort,
-        )
-
-        events: list[ProductObservationEvent] = []
-        adapter_malformed: list[dict[str, Any]] = []
-
-        for product in products:
+        with self._metrics.time_fetch():
             try:
-                event = SourceAdapterProtocol._build_event(
+                collected_at = datetime.now(timezone.utc)
+
+                # Client returns (valid_products, malformed_records) - both count toward total
+                products, client_malformed = await self._client.fetch_products(
+                    page_size=self._page_size,
+                    sort=self._sort,
+                )
+
+                events: list[ProductObservationEvent] = []
+                adapter_malformed: list[dict[str, Any]] = []
+
+                for product in products:
+                    try:
+                        event = SourceAdapterProtocol._build_event(
+                            source=self.source_name,
+                            external_id=str(product.sku),
+                            name=product.name,
+                            url=product.url or f"https://www.bestbuy.com/site/-/{product.sku}.p",
+                            price=product.salePrice
+                            if product.salePrice is not None
+                            else product.regularPrice,
+                            currency="USD",
+                            availability=_map_availability(product),
+                            category=_extract_category(product),
+                            collected_at=collected_at,
+                        )
+                        events.append(event)
+                    except Exception:
+                        # Canonical validation failure - record with reason
+                        adapter_malformed.append(
+                            {
+                                "raw_record": product.model_dump(),
+                                "reason": "Failed canonical event construction",
+                            }
+                        )
+
+                # Combine client-level and adapter-level malformed records
+                all_malformed = client_malformed + adapter_malformed
+                total_collected = len(products) + len(client_malformed)
+
+                result = FetchResult(
+                    events=tuple(events),
+                    malformed=tuple(all_malformed),
                     source=self.source_name,
-                    external_id=str(product.sku),
-                    name=product.name,
-                    url=product.url or f"https://www.bestbuy.com/site/-/{product.sku}.p",
-                    price=product.salePrice
-                    if product.salePrice is not None
-                    else product.regularPrice,
-                    currency="USD",
-                    availability=_map_availability(product),
-                    category=_extract_category(product),
-                    collected_at=collected_at,
+                    fetched_at=datetime.now(timezone.utc),
+                    total_records=total_collected,
                 )
-                events.append(event)
+
+                # Record success metrics
+                self._metrics.record_fetch_success(
+                    records_collected=total_collected,
+                    records_emitted=len(events),
+                )
+
+                return result
+
             except Exception:
-                # Canonical validation failure - record with reason
-                adapter_malformed.append(
-                    {
-                        "raw_record": product.model_dump(),
-                        "reason": "Failed canonical event construction",
-                    }
-                )
-
-        # Combine client-level and adapter-level malformed records
-        all_malformed = client_malformed + adapter_malformed
-
-        return FetchResult(
-            events=tuple(events),
-            malformed=tuple(all_malformed),
-            source=self.source_name,
-            fetched_at=datetime.now(timezone.utc),
-            total_records=len(products) + len(client_malformed),
-        )
+                # Record failure metrics before re-raising
+                self._metrics.record_fetch_failure()
+                raise
 
     async def close(self) -> None:
         """Close underlying HTTP resources."""

@@ -10,6 +10,7 @@ from libs.adapters.fake_store.client import FakeStoreClient
 from libs.event_contracts.product_observation import (
     ProductObservationEvent,
 )
+from libs.observability.source_metrics import SourceMetric, SourceMetrics
 
 # Availability mapping: Fake Store doesn't provide availability, so we default to in_stock.
 DEFAULT_AVAILABILITY = "in_stock"
@@ -32,6 +33,7 @@ class FakeStoreAdapter(SourceAdapterProtocol):
         base_url: Optional[str] = None,
         timeout: float = 30.0,
         client: Optional[FakeStoreClient] = None,
+        metrics: Optional[SourceMetrics] = None,
     ) -> None:
         """Initialize the Fake Store adapter.
 
@@ -40,6 +42,7 @@ class FakeStoreAdapter(SourceAdapterProtocol):
             base_url: Override the Fake Store API base URL (for testing).
             timeout: HTTP request timeout in seconds.
             client: Pre-configured FakeStoreClient (for testing/injection).
+            metrics: Optional SourceMetrics instance for observability.
         """
         self._limit = limit
         if client is not None:
@@ -49,6 +52,7 @@ class FakeStoreAdapter(SourceAdapterProtocol):
                 base_url=base_url or "https://fakestoreapi.com",
                 timeout=timeout,
             )
+        self._metrics = metrics or SourceMetrics(source_name=self.source_name)
 
     @property
     def source_name(self) -> str:
@@ -65,47 +69,65 @@ class FakeStoreAdapter(SourceAdapterProtocol):
         Raises:
             SourceFetchError: On HTTP errors, timeouts, or response parsing failures.
         """
-        collected_at = datetime.now(timezone.utc)
+        self._metrics.increment(SourceMetric.FETCH_ATTEMPTS)
 
-        # Client returns (valid_products, malformed_records) - both count toward total
-        products, client_malformed = await self._client.fetch_products(limit=self._limit)
-
-        events: list[ProductObservationEvent] = []
-        adapter_malformed: list[dict[str, Any]] = []
-
-        for product in products:
+        with self._metrics.time_fetch():
             try:
-                event = SourceAdapterProtocol._build_event(
+                collected_at = datetime.now(timezone.utc)
+
+                # Client returns (valid_products, malformed_records) - both count toward total
+                products, client_malformed = await self._client.fetch_products(limit=self._limit)
+
+                events: list[ProductObservationEvent] = []
+                adapter_malformed: list[dict[str, Any]] = []
+
+                for product in products:
+                    try:
+                        event = SourceAdapterProtocol._build_event(
+                            source=self.source_name,
+                            external_id=str(product.id),
+                            name=product.title,
+                            url=f"https://fakestoreapi.com/products/{product.id}",
+                            price=product.price if product.price is not None else None,
+                            currency="USD",
+                            availability=DEFAULT_AVAILABILITY,
+                            category=product.category,
+                            collected_at=collected_at,
+                        )
+                        events.append(event)
+                    except Exception:
+                        # Canonical validation failure - record with reason
+                        adapter_malformed.append(
+                            {
+                                "raw_record": product.model_dump(),
+                                "reason": "Failed canonical event construction",
+                            }
+                        )
+
+                # Combine client-level and adapter-level malformed records
+                all_malformed = client_malformed + adapter_malformed
+                total_collected = len(products) + len(client_malformed)
+
+                result = FetchResult(
+                    events=tuple(events),
+                    malformed=tuple(all_malformed),
                     source=self.source_name,
-                    external_id=str(product.id),
-                    name=product.title,
-                    url=f"https://fakestoreapi.com/products/{product.id}",
-                    price=product.price if product.price is not None else None,
-                    currency="USD",
-                    availability=DEFAULT_AVAILABILITY,
-                    category=product.category,
-                    collected_at=collected_at,
+                    fetched_at=datetime.now(timezone.utc),
+                    total_records=total_collected,
                 )
-                events.append(event)
+
+                # Record success metrics
+                self._metrics.record_fetch_success(
+                    records_collected=total_collected,
+                    records_emitted=len(events),
+                )
+
+                return result
+
             except Exception:
-                # Canonical validation failure - record with reason
-                adapter_malformed.append(
-                    {
-                        "raw_record": product.model_dump(),
-                        "reason": "Failed canonical event construction",
-                    }
-                )
-
-        # Combine client-level and adapter-level malformed records
-        all_malformed = client_malformed + adapter_malformed
-
-        return FetchResult(
-            events=tuple(events),
-            malformed=tuple(all_malformed),
-            source=self.source_name,
-            fetched_at=datetime.now(timezone.utc),
-            total_records=len(products) + len(client_malformed),
-        )
+                # Record failure metrics before re-raising
+                self._metrics.record_fetch_failure()
+                raise
 
     async def close(self) -> None:
         """Close underlying HTTP resources."""
