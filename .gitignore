@@ -19,6 +19,9 @@ task-workflow/
 .env.*
 !.env.example
 
+# Local agent tooling — not part of the data platform, holds a bot token
+.qoder/notify/
+
 # Editors / OS
 .idea/
 .vscode/
