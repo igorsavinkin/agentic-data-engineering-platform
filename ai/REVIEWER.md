@@ -215,6 +215,7 @@ The report should contain:
 
 - task ID;
 - review date;
+- reviewer identity and role (e.g. `Reviewer: Qwen Code (independent review, no code modified)`);
 - reviewed change set / Git range;
 - scope;
 - verdict.
