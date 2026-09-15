@@ -40,6 +40,32 @@ One Agent Session
 
 **DO NOT use `create_chat_session()` or `fork_chat_session()`.** All work happens in this session.
 
+## Remote Alerts (Telegram)
+
+A full run takes a long time and should not require watching the terminal. When the workflow reaches a point where it cannot continue without you, send a Telegram alert **before** reporting the stop in chat:
+
+```bash
+python .qoder/notify/notify.py --level blocked \
+  --subject "TASK-040 review BLOCKED" \
+  --detail "Qwen verdict BLOCKED on round 3; owner decision needed" \
+  --ref "https://github.com/<owner>/<repo>/pull/53"
+```
+
+**Send an alert at exactly these six points:**
+
+| When | `--level` |
+|---|---|
+| Qwen CLI not detectable (Phase 2.5) | `blocked` |
+| Qwen verdict `BLOCKED` (Phase 3) | `blocked` |
+| `rounds >= 3` without approval (Phase 3) | `blocked` |
+| Any Phase 4 review-gate guard fails | `blocked` |
+| CI checks fail (Phase 5) | `failed` |
+| PR merged to `main` (Phase 5) | `success` |
+
+Do not alert on routine phase transitions. The value of this channel is that every message means either "come decide something" or "it is done" — noise destroys that.
+
+**Alerting is best-effort and must never change a task's outcome.** If the script exits non-zero (unconfigured, no network) log the reason and continue exactly as you would have. If `.qoder/notify/` does not exist, skip alerting silently. Setup and troubleshooting: `.qoder/notify/README.md`.
+
 ## CRITICAL: Review Phase is MANDATORY
 
 **DO NOT STOP AFTER IMPLEMENTATION.** The Qwen review phase (Phase 3) is a mandatory gate that must complete before proceeding to PR creation. Skipping review is a critical failure.
@@ -280,7 +306,7 @@ QWEN_EXECUTABLE = detect_qwen_cli()
 print(f"Using Qwen at: {QWEN_EXECUTABLE}")
 ```
 
-Store `QWEN_EXECUTABLE` for use in Phase 3. If detection fails, STOP and inform the user — do NOT proceed to self-review.
+Store `QWEN_EXECUTABLE` for use in Phase 3. If detection fails, STOP and inform the user — do NOT proceed to self-review. Send a `--level blocked` alert first: this stop needs the owner to install or locate the CLI, and they may be away from the terminal.
 
 ---
 
@@ -565,6 +591,7 @@ while time.monotonic() < deadline:
     # Evaluate results
     if any(check["conclusion"] == "failure" for check in check_runs):
         state.update(phase="fix", feedback=f"CI failed for PR #{pr_number}. Fix and resume.")
+        telegram_alert("failed", f"{task_id} CI failed", f"PR #{pr_number} checks failed", pr_url)
         # Fix in worktree, commit, push, and re-enter this phase
         break
 
@@ -572,6 +599,9 @@ while time.monotonic() < deadline:
         # Merging is unconditional: running the task is the owner's merge delegation
         gh_pr_merge(pr_number, squash=True, match_head=head)
         state.update(phase="merged")
+        telegram_alert(
+            "success", f"{task_id} merged to main", f"PR #{pr_number} squashed and merged", pr_url
+        )
         break
 
     time.sleep(15)  # Poll interval
@@ -662,19 +692,20 @@ Error: Review requires changes (CHANGES REQUIRED)
 ```
 → Read `docs/reviews/TASK-xxx-review.md` for specific findings
 → The orchestrator automatically enters a fix-and-re-review loop (up to 3 rounds total)
-→ If the loop exhausts all rounds without approval, owner intervention is required
+→ If the loop exhausts all rounds without approval, owner intervention is required — send a `blocked` alert
 
 **Review Blocked:**
 ```
 Error: Qwen marked the task BLOCKED
 ```
 → Read `docs/reviews/TASK-xxx-review.md` immediately — this is a hard stop with no automatic retry
-→ Owner must manually assess and decide whether to proceed or abandon the task
+→ Send a `blocked` alert before reporting it; the owner must manually assess and decide whether to proceed or abandon the task
 
 **CI Failures:**
 ```
 Error: CI checks failed for PR #42
 ```
+→ Send a `failed` alert with the PR URL as `--ref`
 → Inspect GitHub Actions logs via `gh run view`
 → Fix code in worktree, commit, push
 → Re-enter CI monitor phase
