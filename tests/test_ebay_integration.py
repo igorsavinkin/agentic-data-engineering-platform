@@ -2,10 +2,15 @@
 
 Verifies that eBay listings flow through the complete ingestion pipeline:
 adapter -> canonical event -> mock Kafka producer -> processor pipeline.
-Covers multiple sellers, multiple listings for one logical product, replay
-idempotency with deduplication, malformed input, error isolation, ambiguity,
-marketplace identity (listing_id/seller_id), and regression smoke tests
-alongside existing sources.
+Covers multiple sellers, marketplace identity (listing_id/seller_id),
+replay determinism with deduplication, malformed input, error isolation,
+ambiguity, and regression smoke tests alongside existing sources.
+
+NOTE: The eBay Browse API item_summary/search endpoint does not expose
+product-level identifiers (UPC/GTIN/EAN/ASIN), so end-to-end product
+grouping is not testable at this layer.  The marketplace identity
+primitives for product grouping exist in libs.marketplace.identity and
+are tested in TASK-044.
 """
 
 from __future__ import annotations
@@ -28,11 +33,6 @@ from libs.adapters.ebay.models import (
 from libs.common.kafka_consumer import ConsumerMessage
 from libs.common.kafka_producer import DeliveryReceipt
 from libs.event_contracts import ProductObservationEvent
-from libs.marketplace.identity import (
-    ListingProductMapper,
-    build_listing_id,
-    derive_product_key_from_listing,
-)
 from services.ingestion.runner import IngestionRunner
 from services.processor.deduplication import DeduplicationState
 from services.processor.pipeline import ProcessorPipeline
@@ -334,23 +334,38 @@ class TestMarketplaceIdentity:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Multiple listings for one logical product (Milestone 5A)
+# Tests: Multiple listings from different sellers (Milestone 5A prerequisite)
 # ---------------------------------------------------------------------------
 
 
 class TestMultipleListingsSameProduct:
-    """Verify multiple marketplace listings for one logical product."""
+    """Verify multiple eBay listings flow through the pipeline without breaking.
+
+    NOTE: The eBay Browse API ``item_summary/search`` endpoint does not expose
+    product-level identifiers (UPC, GTIN, EAN, ASIN).  Therefore, end-to-end
+    grouping of multiple listings into one logical product is not possible
+    with the current data source.  The marketplace identity primitives
+    (``ListingProductMapper``, ``derive_product_key_from_listing``) exist in
+    ``libs.marketplace.identity`` and are tested in TASK-044 — they will
+    activate when a richer data source provides product identifiers.
+
+    These tests verify that multiple listings from different sellers coexist
+    in the canonical pipeline with distinct ``listing_id``/``seller_id``,
+    which is the prerequisite for future product-level grouping.
+    """
 
     @pytest.mark.asyncio
-    async def test_two_sellers_same_product(
+    async def test_two_sellers_similar_listings(
         self,
         mock_producer: MockProducer,
         ebay_adapter: EbayAdapter,
         mock_ebay_client: AsyncMock,
     ) -> None:
-        """Two listings from different sellers for the same product produce
-        distinct events with separate listing_id/seller_id but same external
-        product attributes."""
+        """Two listings with the same title from different sellers produce
+        distinct events with separate listing_id/seller_id.  The eBay
+        item_summary endpoint does not expose product identifiers (UPC/GTIN),
+        so these listings share only a title — they remain separate items
+        in the canonical pipeline."""
         listings = [
             _make_listing(
                 "SAMEPROD-A",
@@ -434,41 +449,70 @@ class TestMultipleListingsSameProduct:
         seller_ids = {e.payload.seller_id for e in sinks.validated_events}
         assert seller_ids == {"ebay:shop_a", "ebay:shop_b", "ebay:shop_c"}
 
-    def test_listings_grouped_by_product_key_via_upc(self) -> None:
-        """Two listings from different sellers sharing a UPC are grouped
-        under one product key by ListingProductMapper, demonstrating the
-        Milestone 5A scenario: multiple marketplace listings for one
-        logical product."""
-        mapper = ListingProductMapper()
-
-        listing_a_id = build_listing_id("ebay", "SELLER-A-ITEM-1")
-        listing_b_id = build_listing_id("ebay", "SELLER-B-ITEM-2")
-        shared_upc = "012345678905"
-
-        product_key_a = derive_product_key_from_listing(
-            "ebay",
-            listing_a_id,
-            {"upc": shared_upc},
+    @pytest.mark.asyncio
+    async def test_listings_without_product_id_remain_distinct(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """eBay item_summary listings lack product identifiers (UPC/GTIN),
+        so two listings for the same-titled item from different sellers
+        remain distinct in the pipeline.  Product-level grouping requires
+        a richer data source and is deferred (see class docstring)."""
+        listings = [
+            _make_listing(
+                "DIST-A", "Bluetooth Speaker", price_value=29.99, seller_username="audio_shop"
+            ),
+            _make_listing(
+                "DIST-B", "Bluetooth Speaker", price_value=34.50, seller_username="sound_store"
+            ),
+        ]
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response(listings),
+            [],
         )
-        product_key_b = derive_product_key_from_listing(
-            "ebay",
-            listing_b_id,
-            {"upc": shared_upc},
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        assert len(mock_producer.published) == 2
+        event_a, event_b = mock_producer.published
+
+        assert event_a.payload.listing_id == "ebay:DIST-A"
+        assert event_b.payload.listing_id == "ebay:DIST-B"
+        assert event_a.payload.seller_id == "ebay:audio_shop"
+        assert event_b.payload.seller_id == "ebay:sound_store"
+        assert event_a.payload.external_id != event_b.payload.external_id
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_seller_username_produces_null_seller_id(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """A whitespace-only seller username yields seller_id=None, matching
+        the normalizer's strip-and-reject behavior."""
+        listing = _make_listing("WS1", "Whitespace Seller", seller_username="   ")
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
         )
 
-        assert product_key_a is not None
-        assert product_key_b is not None
-        assert product_key_a == product_key_b == f"ebay:{shared_upc}"
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
 
-        mapper.assign(listing_a_id, product_key_a)
-        mapper.assign(listing_b_id, product_key_b)
-
-        assert mapper.get_product_key(listing_a_id) == product_key_a
-        assert mapper.get_product_key(listing_b_id) == product_key_b
-        grouped_listings = mapper.get_listing_ids(product_key_a)
-        assert grouped_listings == {listing_a_id, listing_b_id}
-        assert mapper.product_count == 1
-        assert mapper.listing_count == 2
+        assert len(mock_producer.published) == 1
+        event = mock_producer.published[0]
+        assert event.payload.seller_id is None
+        assert event.payload.listing_id == "ebay:WS1"
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +610,17 @@ class TestProcessorPipeline:
 
 
 class TestReplayIdempotency:
-    """Verify replay determinism and deduplication via ProcessorPipeline."""
+    """Verify replay determinism and deduplication via ProcessorPipeline.
+
+    NOTE: ``event_id`` is derived from ``collected_at = datetime.now(utc)``
+    per fetch cycle, so two real fetch cycles of the same listing produce
+    *different* ``event_id`` values and are NOT deduplicated.  This is by
+    design: each observation is a distinct temporal event.  The dedup test
+    below demonstrates that replaying the *same* Kafka message (same
+    ``event_id``) is correctly handled by ``DeduplicationState``.
+    Cross-cycle deduplication would require a separate identity layer
+    (e.g. warehouse ``UNIQUE(source, external_id)`` constraint).
+    """
 
     @pytest.mark.asyncio
     async def test_same_input_produces_same_external_ids(

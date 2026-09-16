@@ -165,9 +165,11 @@ class EbayAdapter(SourceAdapterProtocol):
         url = summary.item_web_url or f"https://www.ebay.com/itm/{summary.item_id}"
 
         listing_id = build_listing_id(self.source_name, summary.item_id)
-        seller_id = (
-            build_seller_id(self.source_name, summary.seller.username) if summary.seller else None
-        )
+        seller_id = None
+        if summary.seller:
+            stripped_username = summary.seller.username.strip()
+            if stripped_username:
+                seller_id = build_seller_id(self.source_name, stripped_username)
 
         return self._build_event(
             source=self.source_name,
