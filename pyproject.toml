@@ -3,6 +3,9 @@ name = "ai-data-platform"
 version = "0.1.0"
 description = "AI Data Platform - distributed data engineering and agentic AI platform"
 requires-python = ">=3.12"
+dependencies = [
+    "tenacity>=8.0.0",
+]
 
 [tool.ruff]
 line-length = 100
