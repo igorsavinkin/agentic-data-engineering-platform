@@ -170,10 +170,6 @@ class WebRetailerAdapter(SourceAdapterProtocol):
             return resolved_path
         return urljoin(self._client.base_url + "/", (resolved_path or "").lstrip("/"))
 
-    def _build_page_url(self) -> str:
-        """Build the full page URL for the configured catalog path."""
-        return self._build_page_url_for_path(self._catalog_path)
-
     def _to_canonical_event(
         self, product: ParsedProduct, collected_at: datetime
     ) -> ProductObservationEvent:

@@ -227,7 +227,12 @@ class WebRetailerClient:
 
         if response.status_code == 429:
             retry_after_text = response.headers.get("Retry-After")
-            retry_after = float(retry_after_text) if retry_after_text else None
+            retry_after: float | None = None
+            if retry_after_text is not None:
+                try:
+                    retry_after = float(retry_after_text)
+                except ValueError:
+                    retry_after = None
             if retry_after is not None:
                 logger.info("Rate limited (429), waiting %.1fs per Retry-After", retry_after)
                 await asyncio.sleep(retry_after)
