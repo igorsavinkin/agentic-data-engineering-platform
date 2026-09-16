@@ -1,20 +1,23 @@
-"""Wayfair source adapter implementing SourceAdapterProtocol."""
+"""Web retailer source adapter implementing SourceAdapterProtocol."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from libs.adapters import FetchResult, SourceAdapterProtocol, SourceFetchError
-from libs.adapters.wayfair.client import WayfairClient
+from libs.adapters.web_retailer.client import WebRetailerClient
 from libs.observability.source_metrics import SourceMetric, SourceMetrics
 
 
-class WayfairAdapter(SourceAdapterProtocol):
-    """Source adapter for Wayfair product listing pages.
+class WebRetailerAdapter(SourceAdapterProtocol):
+    """Source adapter for a web retailer product listing pages.
 
-    TASK-046: Fetches HTML from Wayfair but does not parse it into product
-    records. HTML parsing will be implemented in TASK-047.
+    Targets books.toscrape.com — a realistic bookstore with standard
+    e-commerce product pages served as plain HTML.
+
+    TASK-046: Fetches HTML from the retailer but does not parse it into
+    product records. HTML parsing will be implemented in TASK-047.
 
     The adapter returns an empty FetchResult to confirm the HTTP client,
     error handling, and protocol wiring work correctly.
@@ -23,28 +26,31 @@ class WayfairAdapter(SourceAdapterProtocol):
     def __init__(
         self,
         *,
-        search_path: str = "/search/products?keyword=electronics",
-        timeout: float = 30.0,
-        user_agent: Optional[str] = None,
-        client: Optional[WayfairClient] = None,
-        metrics: Optional[SourceMetrics] = None,
+        catalog_path: str | None = None,
+        timeout: float | None = None,
+        base_url: str | None = None,
+        user_agent: str | None = None,
+        client: WebRetailerClient | None = None,
+        metrics: SourceMetrics | None = None,
     ) -> None:
-        self._search_path = search_path
+        self._catalog_path = catalog_path
         if client is not None:
             self._client = client
         else:
-            kwargs: dict[str, Any] = {"timeout": timeout, "search_path": search_path}
-            if user_agent is not None:
-                kwargs["user_agent"] = user_agent
-            self._client = WayfairClient(**kwargs)
+            self._client = WebRetailerClient(
+                base_url=base_url,
+                timeout=timeout,
+                user_agent=user_agent,
+                catalog_path=catalog_path,
+            )
         self._metrics = metrics or SourceMetrics(source_name=self.source_name)
 
     @property
     def source_name(self) -> str:
-        return "wayfair"
+        return "web_retailer"
 
     async def fetch(self) -> FetchResult[Any]:
-        """Fetch a Wayfair product listing page.
+        """Fetch a web retailer product listing page.
 
         TASK-046: Returns an empty FetchResult after successfully fetching HTML.
         HTML parsing into canonical events will be implemented in TASK-047.
@@ -56,14 +62,12 @@ class WayfairAdapter(SourceAdapterProtocol):
 
         with self._metrics.time_fetch():
             try:
-                html = await self._client.fetch_listing_page(self._search_path)
+                html = await self._client.fetch_listing_page(self._catalog_path)
 
-                # TASK-046: HTML parsing not yet implemented.
-                # Confirm we received non-empty HTML as a sanity check.
                 if not html or not html.strip():
                     raise SourceFetchError(
-                        "Wayfair returned empty HTML body",
-                        source="wayfair",
+                        "Web retailer returned empty HTML body",
+                        source="web_retailer",
                     )
 
                 collected_at = datetime.now(timezone.utc)
