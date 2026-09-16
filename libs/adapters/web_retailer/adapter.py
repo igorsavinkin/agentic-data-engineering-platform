@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from libs.adapters import FetchResult, SourceAdapterProtocol, SourceFetchError
 from libs.adapters.web_retailer.client import WebRetailerClient
+from libs.adapters.web_retailer.parser import ParsedProduct, parse_listing_page
+from libs.event_contracts.product_observation import ProductObservationEvent
 from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+logger = logging.getLogger(__name__)
 
 
 class WebRetailerAdapter(SourceAdapterProtocol):
@@ -15,12 +20,6 @@ class WebRetailerAdapter(SourceAdapterProtocol):
 
     Targets books.toscrape.com — a realistic bookstore with standard
     e-commerce product pages served as plain HTML.
-
-    TASK-046: Fetches HTML from the retailer but does not parse it into
-    product records. HTML parsing will be implemented in TASK-047.
-
-    The adapter returns an empty FetchResult to confirm the HTTP client,
-    error handling, and protocol wiring work correctly.
     """
 
     def __init__(
@@ -50,10 +49,10 @@ class WebRetailerAdapter(SourceAdapterProtocol):
         return "web_retailer"
 
     async def fetch(self) -> FetchResult[Any]:
-        """Fetch a web retailer product listing page.
+        """Fetch and parse a web retailer product listing page.
 
-        TASK-046: Returns an empty FetchResult after successfully fetching HTML.
-        HTML parsing into canonical events will be implemented in TASK-047.
+        Fetches HTML from the retailer, parses product records, and maps
+        them to canonical ProductObservationEvent instances.
 
         Raises:
             SourceFetchError: On HTTP errors, timeouts, or connection failures.
@@ -71,18 +70,43 @@ class WebRetailerAdapter(SourceAdapterProtocol):
                     )
 
                 collected_at = datetime.now(timezone.utc)
+                base_url = self._client._base_url
 
-                result: FetchResult[Any] = FetchResult(
-                    events=(),
-                    malformed=(),
+                parsed = parse_listing_page(html, base_url=base_url)
+
+                events: list[ProductObservationEvent] = []
+                malformed: list[dict[str, Any]] = []
+
+                for product in parsed:
+                    try:
+                        event = self._to_canonical_event(product, collected_at)
+                        events.append(event)
+                    except Exception:
+                        malformed.append(
+                            {
+                                "raw_record": {
+                                    "product_id": product.product_id,
+                                    "name": product.name,
+                                    "price": str(product.price) if product.price else None,
+                                    "url": product.url,
+                                },
+                                "reason": "Failed canonical event construction",
+                            }
+                        )
+
+                total_collected = len(parsed)
+
+                result: FetchResult[ProductObservationEvent] = FetchResult(
+                    events=tuple(events),
+                    malformed=tuple(malformed),
                     source=self.source_name,
                     fetched_at=collected_at,
-                    total_records=0,
+                    total_records=total_collected,
                 )
 
                 self._metrics.record_fetch_success(
-                    records_collected=0,
-                    records_emitted=0,
+                    records_collected=total_collected,
+                    records_emitted=len(events),
                 )
 
                 return result
@@ -93,6 +117,22 @@ class WebRetailerAdapter(SourceAdapterProtocol):
             except Exception:
                 self._metrics.record_fetch_failure()
                 raise
+
+    def _to_canonical_event(
+        self, product: ParsedProduct, collected_at: datetime
+    ) -> ProductObservationEvent:
+        """Map a ParsedProduct to a canonical ProductObservationEvent."""
+        return SourceAdapterProtocol._build_event(
+            source=self.source_name,
+            external_id=product.product_id,
+            name=product.name,
+            url=product.url,
+            price=float(product.price) if product.price is not None else None,
+            currency=product.currency,
+            availability=product.availability,
+            category=product.category,
+            collected_at=collected_at,
+        )
 
     async def close(self) -> None:
         """Close underlying HTTP resources."""
