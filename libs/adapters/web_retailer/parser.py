@@ -70,6 +70,38 @@ def parse_listing_page(
     return products, malformed
 
 
+def extract_next_page_url(html: str, current_page_url: str) -> str | None:
+    """Extract the next-page URL from a listing page's pager element.
+
+    Looks for ``<li class="next"><a href="...">`` and resolves the href
+    against the current page URL. Returns None when no next link exists.
+    """
+    if not html or not html.strip():
+        return None
+
+    tree = HTMLParser(html)
+    next_li = tree.css_first("li.next")
+    if next_li is None:
+        return None
+
+    next_link = next_li.css_first("a")
+    if next_link is None:
+        return None
+
+    href = next_link.attributes.get("href") or ""
+    href = href.strip()
+    if not href:
+        return None
+
+    if href.startswith(("http://", "https://")):
+        return href
+
+    if not current_page_url:
+        return None
+
+    return urljoin(current_page_url, href)
+
+
 def _extract_category(tree: HTMLParser) -> str:
     """Extract the page-level category from the breadcrumb."""
     items = tree.css("ul.breadcrumb > li")

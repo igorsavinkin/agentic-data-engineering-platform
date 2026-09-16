@@ -1,13 +1,27 @@
-"""HTTP client for fetching web retailer product listing pages."""
+"""HTTP client for fetching web retailer product listing pages.
+
+Includes bounded retry with exponential backoff for transient HTTP failures
+(5xx, timeouts, connection errors) following the eBay adapter pattern.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from urllib.parse import urlparse
 
 import httpx
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from libs.adapters import SourceFetchError
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://books.toscrape.com"
 DEFAULT_TIMEOUT = 30.0
@@ -16,11 +30,23 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 DEFAULT_CATALOG_PATH = "/catalogue/category/books_1/index.html"
+DEFAULT_MAX_RETRIES = 3
+
+
+class _TransientHttpError(Exception):
+    """Retryable HTTP error (5xx or 429)."""
+
+    def __init__(
+        self, message: str, *, status_code: int = 0, retry_after: float | None = None
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
 
 
 def _resolve_config(
-    env_var: str, constructor_value: str | float | None, default: str | float
-) -> str | float:
+    env_var: str, constructor_value: str | float | int | None, default: str | float | int
+) -> str | float | int:
     """Resolve configuration: constructor arg > env var > default."""
     if constructor_value is not None:
         return constructor_value
@@ -55,11 +81,21 @@ def _validate_timeout(timeout: float) -> None:
         raise SourceFetchError("timeout must be a finite number", source="web_retailer")
 
 
+def _validate_max_retries(max_retries: int) -> None:
+    """Validate that max_retries is a positive integer."""
+    if max_retries < 1:
+        raise SourceFetchError(
+            f"max_retries must be >= 1, got {max_retries}",
+            source="web_retailer",
+        )
+
+
 class WebRetailerClient:
     """Typed HTTP client for fetching web retailer HTML product listing pages.
 
-    Returns raw HTML body. HTML parsing into product records is out of scope
-    for TASK-046 and will be implemented in TASK-047.
+    Returns raw HTML body. Retries transient failures (5xx, timeouts, connection
+    errors) with bounded exponential backoff. 429 responses respect the
+    Retry-After header when present.
 
     Configuration is resolved in priority order: constructor argument,
     environment variable, default value.
@@ -72,6 +108,7 @@ class WebRetailerClient:
         timeout: float | None = None,
         user_agent: str | None = None,
         catalog_path: str | None = None,
+        max_retries: int | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         resolved_base_url = str(
@@ -84,14 +121,19 @@ class WebRetailerClient:
         resolved_path = str(
             _resolve_config("WEB_RETAILER_CATALOG_PATH", catalog_path, DEFAULT_CATALOG_PATH)
         )
+        resolved_retries = int(
+            _resolve_config("WEB_RETAILER_MAX_RETRIES", max_retries, DEFAULT_MAX_RETRIES)
+        )
 
         _validate_base_url(resolved_base_url)
         _validate_timeout(resolved_timeout)
+        _validate_max_retries(resolved_retries)
 
         self._base_url = resolved_base_url.rstrip("/")
         self._timeout = resolved_timeout
         self._user_agent = resolved_user_agent
         self._catalog_path = resolved_path
+        self._max_retries = resolved_retries
         self._client = http_client
 
     @property
@@ -101,6 +143,10 @@ class WebRetailerClient:
     @property
     def catalog_path(self) -> str:
         return self._catalog_path
+
+    @property
+    def max_retries(self) -> int:
+        return self._max_retries
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -116,40 +162,47 @@ class WebRetailerClient:
         return self._client
 
     async def fetch_listing_page(self, path: str | None = None) -> str:
-        """Fetch a product listing page and return the raw HTML body.
+        """Fetch a product listing page with retry and return the raw HTML body.
+
+        Retries transient failures (5xx, timeouts, connection errors) with
+        bounded exponential backoff. 429 responses respect Retry-After.
 
         Args:
-            path: URL path to fetch. Defaults to the configured catalog_path.
+            path: URL path or absolute URL to fetch. Defaults to catalog_path.
 
         Returns:
             Raw HTML body as a string.
 
         Raises:
-            SourceFetchError: On HTTP errors, timeouts, or connection failures.
+            SourceFetchError: On non-retryable HTTP errors or retry exhaustion.
         """
         client = await self._get_client()
         fetch_path = path or self._catalog_path
 
+        retryer = AsyncRetrying(
+            stop=stop_after_attempt(self._max_retries),
+            wait=wait_exponential(multiplier=1, min=2, max=30),
+            retry=retry_if_exception_type(
+                (httpx.TimeoutException, httpx.ConnectError, _TransientHttpError)
+            ),
+            reraise=True,
+        )
+
         try:
-            response = await client.get(fetch_path)
-            response.raise_for_status()
+            async for attempt in retryer:
+                with attempt:
+                    return await self._do_request(client, fetch_path)
+        except _TransientHttpError as exc:
+            raise SourceFetchError(
+                f"Web retailer request failed after {self._max_retries} attempts: {exc}",
+                source="web_retailer",
+            ) from exc
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            if status == 403:
-                raise SourceFetchError(
-                    "Web retailer returned HTTP 403 (Forbidden).",
-                    source="web_retailer",
-                ) from exc
-            elif status == 429:
-                raise SourceFetchError(
-                    "Web retailer rate limit exceeded (HTTP 429).",
-                    source="web_retailer",
-                ) from exc
-            else:
-                raise SourceFetchError(
-                    f"Web retailer returned HTTP {status}",
-                    source="web_retailer",
-                ) from exc
+            raise SourceFetchError(
+                f"Web retailer returned HTTP {status}",
+                source="web_retailer",
+            ) from exc
         except httpx.TimeoutException as exc:
             raise SourceFetchError(
                 "Web retailer request timed out",
@@ -166,6 +219,32 @@ class WebRetailerClient:
                 source="web_retailer",
             ) from exc
 
+        raise SourceFetchError("Web retailer request failed unexpectedly", source="web_retailer")
+
+    async def _do_request(self, client: httpx.AsyncClient, path: str) -> str:
+        """Execute a single HTTP GET with transient-error detection."""
+        response = await client.get(path)
+
+        if response.status_code == 429:
+            retry_after_text = response.headers.get("Retry-After")
+            retry_after = float(retry_after_text) if retry_after_text else None
+            if retry_after is not None:
+                logger.info("Rate limited (429), waiting %.1fs per Retry-After", retry_after)
+                await asyncio.sleep(retry_after)
+            raise _TransientHttpError(
+                f"Rate limited (HTTP 429, Retry-After: {retry_after_text})",
+                status_code=429,
+                retry_after=retry_after,
+            )
+
+        if response.status_code >= 500:
+            logger.warning("Transient server error HTTP %d, will retry", response.status_code)
+            raise _TransientHttpError(
+                f"Server error HTTP {response.status_code}",
+                status_code=response.status_code,
+            )
+
+        response.raise_for_status()
         return response.text
 
     async def close(self) -> None:
