@@ -9,6 +9,8 @@ from libs.marketplace.identity import (
     build_listing_id,
     build_product_key,
     build_seller_id,
+    derive_product_key_from_listing,
+    extract_product_identifier_from_metadata,
     listing_id_to_external_id,
 )
 
@@ -258,3 +260,348 @@ def test_different_sources_same_raw_id_are_distinct() -> None:
     assert mapper.get_product_key(listing_b) == "other:P1"
     assert mapper.listing_count == 2
     assert mapper.product_count == 2
+
+
+# ---------------------------------------------------------------------------
+# extract_product_identifier_from_metadata (TASK-044)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_upc_valid() -> None:
+    """Valid UPC-A (12 digits) is extracted."""
+    metadata = {"upc": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("upc", "012345678905")
+
+
+def test_extract_ean_valid() -> None:
+    """Valid EAN-13 (13 digits) is extracted."""
+    metadata = {"ean": "5901234123457"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("ean", "5901234123457")
+
+
+def test_extract_asin_valid() -> None:
+    """Valid ASIN (10 alphanumeric) is extracted."""
+    metadata = {"asin": "B08N5WRWNW"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("asin", "B08N5WRWNW")
+
+
+def test_extract_isbn_valid() -> None:
+    """Valid ISBN-13 is extracted."""
+    metadata = {"isbn": "9780306406157"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("isbn", "9780306406157")
+
+
+def test_extract_gtin_preferred_over_upc() -> None:
+    """GTIN takes precedence when both GTIN and UPC are present."""
+    metadata = {"gtin": "0012345678905", "upc": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "0012345678905")
+
+
+def test_extract_invalid_upc_rejected() -> None:
+    """Invalid UPC format (wrong length) returns None."""
+    metadata = {"upc": "12345"}  # Too short
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_invalid_asin_rejected() -> None:
+    """Invalid ASIN format (wrong length) returns None."""
+    metadata = {"asin": "B08N5"}  # Too short
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_empty_metadata_returns_none() -> None:
+    """Empty metadata dict returns None."""
+    result = extract_product_identifier_from_metadata({})
+    assert result is None
+
+
+def test_extract_non_dict_metadata_returns_none() -> None:
+    """Non-dict metadata returns None."""
+    result = extract_product_identifier_from_metadata(None)  # type: ignore[arg-type]
+    assert result is None
+    result = extract_product_identifier_from_metadata("not a dict")  # type: ignore[arg-type]
+    assert result is None
+
+
+def test_extract_whitespace_value_rejected() -> None:
+    """Whitespace-only identifier value is rejected."""
+    metadata = {"upc": "   "}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_numeric_upc_converted_to_string() -> None:
+    """Numeric UPC values are converted to strings for validation."""
+    metadata = {"upc": 12345678905}
+    result = extract_product_identifier_from_metadata(metadata)
+    # int(12345678905) -> str "12345678905" which is 11 digits, not valid UPC-A
+    assert result is None
+
+
+def test_extract_mpn_valid() -> None:
+    """Valid MPN (alphanumeric with hyphens) is extracted."""
+    metadata = {"mpn": "ABC-123-XYZ"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("mpn", "ABC-123-XYZ")
+
+
+def test_extract_mpn_too_short_rejected() -> None:
+    """MPN shorter than 4 characters is rejected."""
+    metadata = {"mpn": "AB"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_priority_order_gtin_first() -> None:
+    """Identifier extraction follows priority order: GTIN > UPC > EAN > ..."""
+    # When multiple identifiers exist, the first in priority order wins
+    metadata = {
+        "mpn": "MFR-123",
+        "upc": "012345678905",
+        "ean": "5901234123457",
+    }
+    result = extract_product_identifier_from_metadata(metadata)
+    # GTIN not present, so UPC is next in priority
+    assert result == ("upc", "012345678905")
+
+
+def test_extract_gtin_valid_8_digits() -> None:
+    """Valid GTIN-8 (8 digits) is extracted."""
+    metadata = {"gtin": "12345678"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "12345678")
+
+
+def test_extract_gtin_valid_12_digits() -> None:
+    """Valid GTIN-12 (same as UPC-A) is extracted."""
+    metadata = {"gtin": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "012345678905")
+
+
+def test_extract_gtin_valid_13_digits() -> None:
+    """Valid GTIN-13 (same as EAN-13) is extracted."""
+    metadata = {"gtin": "5901234123457"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "5901234123457")
+
+
+def test_extract_gtin_valid_14_digits() -> None:
+    """Valid GTIN-14 (14 digits) is extracted."""
+    metadata = {"gtin": "00123456789050"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "00123456789050")
+
+
+def test_extract_invalid_gtin_rejected() -> None:
+    """Invalid GTIN format (non-numeric or wrong length) returns None."""
+    metadata = {"gtin": "not-a-real-gtin"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_invalid_gtin_too_short_rejected() -> None:
+    """GTIN shorter than 8 digits is rejected."""
+    metadata = {"gtin": "1234567"}  # 7 digits
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_invalid_gtin_too_long_rejected() -> None:
+    """GTIN longer than 14 digits is rejected."""
+    metadata = {"gtin": "12345678901234567"}  # 17 digits
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_gtin_shadows_upc_when_both_present() -> None:
+    """Valid GTIN takes precedence over valid UPC when both exist."""
+    metadata = {"gtin": "00123456789050", "upc": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "00123456789050")
+
+
+def test_extract_invalid_gtin_allows_fallback_to_upc() -> None:
+    """Invalid GTIN is skipped, allowing valid UPC to be used."""
+    metadata = {"gtin": "junk", "upc": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("upc", "012345678905")
+
+
+# ---------------------------------------------------------------------------
+# derive_product_key_from_listing (TASK-044)
+# ---------------------------------------------------------------------------
+
+
+def test_derive_product_key_with_upc() -> None:
+    """Product key is derived from UPC in metadata."""
+    metadata = {"upc": "012345678905"}
+    result = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+    assert result == "ebay:012345678905"
+
+
+def test_derive_product_key_with_asin() -> None:
+    """Product key is derived from ASIN in metadata."""
+    metadata = {"asin": "B08N5WRWNW"}
+    result = derive_product_key_from_listing("amazon", "amazon:B08N5WRWNW-1", metadata)
+    assert result == "amazon:B08N5WRWNW"
+
+
+def test_derive_product_key_no_identifier_returns_none() -> None:
+    """When no explicit identifier exists, listing remains unmapped."""
+    metadata = {"title": "Widget Pro", "condition": "new"}
+    result = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+    assert result is None
+
+
+def test_derive_product_key_deterministic() -> None:
+    """Same input always produces same product key (replay-safe)."""
+    metadata = {"upc": "012345678905"}
+    key1 = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+    key2 = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+    assert key1 == key2
+
+
+def test_derive_product_key_different_listings_same_product() -> None:
+    """Different listings with same UPC map to same product key."""
+    metadata1 = {"upc": "012345678905"}
+    metadata2 = {"upc": "012345678905"}
+    key1 = derive_product_key_from_listing("ebay", "ebay:12345", metadata1)
+    key2 = derive_product_key_from_listing("ebay", "ebay:67890", metadata2)
+    assert key1 == key2 == "ebay:012345678905"
+
+
+def test_derive_product_key_different_sources_same_upc() -> None:
+    """Same UPC from different sources produces source-prefixed keys."""
+    metadata = {"upc": "012345678905"}
+    key_ebay = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+    key_amazon = derive_product_key_from_listing("amazon", "amazon:B08N5WRWNW", metadata)
+    assert key_ebay == "ebay:012345678905"
+    assert key_amazon == "amazon:012345678905"
+    assert key_ebay != key_amazon  # Source prefix ensures isolation
+
+
+def test_derive_product_key_invalid_upc_returns_none() -> None:
+    """Invalid UPC format results in None (listing stays unmapped)."""
+    metadata = {"upc": "invalid-upc"}
+    result = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+    assert result is None
+
+
+def test_derive_product_key_preserves_listing_separation() -> None:
+    """Listings without identifiers remain separate (not merged)."""
+    metadata1 = {"title": "Widget A"}
+    metadata2 = {"title": "Widget B"}
+    key1 = derive_product_key_from_listing("ebay", "ebay:1", metadata1)
+    key2 = derive_product_key_from_listing("ebay", "ebay:2", metadata2)
+    # Both should be None - they stay as separate unmapped listings
+    assert key1 is None
+    assert key2 is None
+
+
+# ---------------------------------------------------------------------------
+# Integration: ListingProductMapper + derive_product_key (TASK-044)
+# ---------------------------------------------------------------------------
+
+
+def test_mapper_integration_assign_derived_key() -> None:
+    """Full flow: derive product key from metadata, then assign to mapper."""
+    mapper = ListingProductMapper()
+    metadata = {"upc": "012345678905"}
+    product_key = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+
+    assert product_key is not None
+    mapper.assign("ebay:12345", product_key)
+
+    assert mapper.get_product_key("ebay:12345") == "ebay:012345678905"
+    assert mapper.has_listing("ebay:12345")
+    assert mapper.has_product("ebay:012345678905")
+
+
+def test_mapper_integration_multiple_listings_one_product() -> None:
+    """Multiple listings with same UPC map to single product."""
+    mapper = ListingProductMapper()
+
+    # Two eBay listings for the same product (same UPC)
+    metadata1 = {"upc": "012345678905", "seller": "seller1"}
+    metadata2 = {"upc": "012345678905", "seller": "seller2"}
+
+    key1 = derive_product_key_from_listing("ebay", "ebay:L1", metadata1)
+    key2 = derive_product_key_from_listing("ebay", "ebay:L2", metadata2)
+
+    assert key1 == key2 == "ebay:012345678905"  # Same product key, narrowed to str
+    mapper.assign("ebay:L1", key1)
+    mapper.assign("ebay:L2", key2)
+
+    assert mapper.get_listing_ids("ebay:012345678905") == {"ebay:L1", "ebay:L2"}
+    assert mapper.product_count == 1
+    assert mapper.listing_count == 2
+
+
+def test_mapper_integration_ambiguous_listings_stay_separate() -> None:
+    """Listings without explicit identifiers remain unmapped and separate."""
+    mapper = ListingProductMapper()
+
+    # Two listings with only titles (no UPC/ASIN/etc.)
+    metadata1 = {"title": "iPhone 13 Pro"}
+    metadata2 = {"title": "iPhone 13 Pro Max"}
+
+    key1 = derive_product_key_from_listing("ebay", "ebay:L1", metadata1)
+    key2 = derive_product_key_from_listing("ebay", "ebay:L2", metadata2)
+
+    # Both should be None - no assignment happens
+    assert key1 is None
+    assert key2 is None
+
+    # Mapper has no mappings
+    assert mapper.listing_count == 0
+    assert mapper.product_count == 0
+
+
+def test_mapper_integration_replay_idempotency() -> None:
+    """Replaying the same listing produces identical mapping (idempotent)."""
+    mapper = ListingProductMapper()
+    metadata = {"upc": "012345678905"}
+    product_key = derive_product_key_from_listing("ebay", "ebay:12345", metadata)
+
+    assert product_key is not None
+
+    # First observation
+    mapper.assign("ebay:12345", product_key)
+    assert mapper.listing_count == 1
+
+    # Replay: same listing, same product key
+    mapper.assign("ebay:12345", product_key)
+    assert mapper.listing_count == 1  # No duplicate
+    assert mapper.product_count == 1
+
+
+def test_mapper_integration_cross_source_product_grouping() -> None:
+    """Different sources can reference same logical product via shared identifier."""
+    mapper = ListingProductMapper()
+
+    # Same physical product sold on eBay and Amazon (same UPC)
+    ebay_metadata = {"upc": "012345678905"}
+    amazon_metadata = {"upc": "012345678905"}
+
+    ebay_key = derive_product_key_from_listing("ebay", "ebay:12345", ebay_metadata)
+    amazon_key = derive_product_key_from_listing("amazon", "amazon:B08N5WRWNW", amazon_metadata)
+
+    # Keys are source-prefixed but point to same UPC
+    assert ebay_key == "ebay:012345678905"
+    assert amazon_key == "amazon:012345678905"
+
+    # Each source maintains its own namespace
+    mapper.assign("ebay:12345", ebay_key)
+    mapper.assign("amazon:B08N5WRWNW", amazon_key)
+
+    # Different product keys (source-isolated)
+    assert mapper.product_count == 2
+    assert mapper.listing_count == 2

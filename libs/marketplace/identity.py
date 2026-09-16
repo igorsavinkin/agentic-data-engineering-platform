@@ -15,11 +15,16 @@ Design rationale
   (a dictionary) so that it can be used inside adapters, the processor,
   or tests without external dependencies.  Persistent storage of the
   mapping is a downstream concern (warehouse / data-lake layer).
+* Product key derivation prefers explicit/stable identifiers (UPC, EAN,
+  ASIN, GTIN) over title-based heuristics. When no explicit identifier
+  exists, listings remain unmapped rather than being merged by similarity.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from typing import Any
 
 
 def build_listing_id(source: str, raw_listing_id: str) -> str:
@@ -106,6 +111,140 @@ def build_product_key(source: str, product_identifier: str) -> str:
     if not product_identifier:
         raise ValueError("product_identifier must be non-empty")
     return f"{source}:{product_identifier}"
+
+
+# Standard product identifier keys commonly found in listing metadata.
+# Ordered by preference: GTIN (most universal) > UPC/EAN > ASIN (Amazon-specific).
+_PRODUCT_ID_KEYS = [
+    "gtin",
+    "upc",
+    "ean",
+    "isbn",
+    "asin",
+    "mpn",  # Manufacturer Part Number (less reliable but sometimes available)
+]
+
+# Regex patterns for validating common product identifier formats.
+_GTIN_PATTERNS = {
+    "gtin": re.compile(r"^\d{8,14}$"),  # GTIN-8/12/13/14: variable digit length
+    "upc": re.compile(r"^\d{12}$"),  # UPC-A: 12 digits
+    "ean": re.compile(r"^\d{13}$"),  # EAN-13: 13 digits
+    "isbn": re.compile(r"^(?:97[89])?\d{9}[\dX]$"),  # ISBN-10/13
+    "asin": re.compile(r"^[A-Z0-9]{10}$"),  # Amazon ASIN: 10 alphanumeric
+    "mpn": re.compile(r"^[A-Za-z0-9\-_.]{4,30}$"),  # MPN: 4-30 alphanumeric with hyphens/dots
+}
+
+
+def extract_product_identifier_from_metadata(
+    metadata: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Extract a product identifier from listing metadata.
+
+    Scans metadata for standard product identifier fields (GTIN, UPC, EAN,
+    ISBN, ASIN, MPN) and returns the first valid identifier found, along
+    with its type. Validation uses format-specific regex patterns to reject
+    malformed values.
+
+    This function implements the TASK-044 requirement to prefer explicit/
+    stable identifiers over fuzzy matching. When no valid identifier exists,
+    it returns None rather than attempting title-based heuristics.
+
+    Parameters
+    ----------
+    metadata:
+        Listing metadata dictionary, potentially containing product
+        identifier fields like "upc", "ean", "asin", etc.
+
+    Returns
+    -------
+    tuple[str, str] | None
+        ``(identifier_type, value)`` if a valid identifier is found,
+        e.g. ``("upc", "012345678905")``, or ``None`` if no valid
+        identifier exists.
+
+    Examples
+    --------
+    >>> extract_product_identifier_from_metadata({"upc": "012345678905"})
+    ('upc', '012345678905')
+    >>> extract_product_identifier_from_metadata({"title": "Widget"})
+    None
+    >>> extract_product_identifier_from_metadata({"upc": "invalid"})
+    None
+    """
+    if not isinstance(metadata, dict):
+        return None
+
+    for key in _PRODUCT_ID_KEYS:
+        value = metadata.get(key)
+        if value is None:
+            continue
+
+        # Normalize to string for validation
+        value_str = str(value).strip()
+        if not value_str:
+            continue
+
+        # Validate against format-specific pattern
+        pattern = _GTIN_PATTERNS.get(key)
+        if pattern is not None and not pattern.match(value_str):
+            # Invalid format — skip this identifier
+            continue
+
+        # Found a valid identifier
+        return key, value_str
+
+    return None
+
+
+def derive_product_key_from_listing(
+    source: str,
+    listing_id: str,
+    metadata: dict[str, Any],
+) -> str | None:
+    """Derive a product key from a normalized listing.
+
+    Attempts to extract an explicit product identifier from the listing's
+    metadata and builds a deterministic product key. If no valid identifier
+    exists, returns None — the listing remains unmapped rather than being
+    merged by title similarity.
+
+    This implements the core TASK-044 principle: ambiguous matches must
+    remain unresolved/separate.
+
+    Parameters
+    ----------
+    source:
+        Source adapter name (e.g. "ebay", "bestbuy").
+    listing_id:
+        Qualified listing ID (for logging/debugging purposes).
+    metadata:
+        Normalized listing metadata, potentially containing product
+        identifiers.
+
+    Returns
+    -------
+    str | None
+        Product key like ``"ebay:UPC-012345678905"`` if an explicit
+        identifier is found, or ``None`` if the listing should remain
+        unmapped.
+
+    Examples
+    --------
+    >>> derive_product_key_from_listing(
+    ...     "ebay", "ebay:12345", {"upc": "012345678905"}
+    ... )
+    'ebay:012345678905'
+    >>> derive_product_key_from_listing("ebay", "ebay:12345", {})
+    None
+    """
+    result = extract_product_identifier_from_metadata(metadata)
+    if result is None:
+        return None
+
+    identifier_type, value = result
+    # Use the raw identifier value as the product key component
+    # (not prefixed with type, to keep keys concise)
+    return build_product_key(source, value)
 
 
 def listing_id_to_external_id(qualified_listing_id: str) -> tuple[str, str]:
