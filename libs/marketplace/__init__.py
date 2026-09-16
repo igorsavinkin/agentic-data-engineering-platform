@@ -23,6 +23,8 @@ from libs.marketplace.identity import (
     build_listing_id,
     build_product_key,
     build_seller_id,
+    derive_product_key_from_listing,
+    extract_product_identifier_from_metadata,
     listing_id_to_external_id,
 )
 from libs.marketplace.listing import MarketplaceListing
@@ -35,5 +37,7 @@ __all__ = [
     "build_listing_id",
     "build_product_key",
     "build_seller_id",
+    "derive_product_key_from_listing",
+    "extract_product_identifier_from_metadata",
     "listing_id_to_external_id",
 ]
