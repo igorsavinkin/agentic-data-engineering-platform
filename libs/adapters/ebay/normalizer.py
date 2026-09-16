@@ -31,7 +31,6 @@ from libs.adapters.ebay.models import (
 from libs.adapters.ebay.models import (
     EbaySeller as EbaySellerModel,
 )
-from libs.marketplace.identity import build_seller_id
 from libs.marketplace.listing import MarketplaceListing
 from libs.marketplace.seller import Seller
 
@@ -86,8 +85,9 @@ def normalize_ebay_seller(
     if not username:
         return None
 
-    # Build deterministic seller identity
-    seller_id = build_seller_id(source, username)
+    # Use raw username as seller_id; Seller.qualified_id will prepend source
+    # automatically, producing "ebay:<username>" (not "ebay:ebay:<username>")
+    seller_id = username
 
     # Collect optional diagnostic metadata
     metadata: dict[str, Any] = {}
@@ -271,9 +271,14 @@ def normalize_listing(
         # Store the most specific category for reference
         metadata["category_id"] = summary.category_ids[-1]
 
-    # Include raw price info for diagnostics when price was valid
-    if price is not None and summary.price is not None:
+    # Persist normalized price/currency (exact Decimal + ISO currency)
+    if price is not None:
+        metadata["price"] = str(price)  # Decimal as string for JSON serialization
+        metadata["currency"] = currency
+    elif summary.price is not None:
+        # Fallback: store raw info when normalization produced None (e.g. negative)
         metadata["price_original"] = float(summary.price.value)
+        metadata["currency"] = currency
 
     return MarketplaceListing(
         listing_id=listing_id,

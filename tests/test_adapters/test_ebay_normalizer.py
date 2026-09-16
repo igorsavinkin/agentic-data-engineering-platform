@@ -127,7 +127,8 @@ class TestNormalizeEbaySeller:
         result = normalize_ebay_seller(ebay_seller)
 
         assert result is not None
-        assert result.seller_id == "ebay:top_seller"
+        assert result.seller_id == "top_seller"  # Raw username, not double-prefixed
+        assert result.qualified_id == "ebay:top_seller"  # Single prefix via qualified_id
         assert result.source == "ebay"
         assert result.display_name == "top_seller"
         assert result.metadata["feedback_score"] == 5000
@@ -156,7 +157,8 @@ class TestNormalizeEbaySeller:
         result = normalize_ebay_seller(ebay_seller, source="custom_source")
 
         assert result is not None
-        assert result.seller_id == "custom_source:seller_x"
+        assert result.seller_id == "seller_x"  # Raw username unchanged
+        assert result.qualified_id == "custom_source:seller_x"  # Single prefix
         assert result.source == "custom_source"
 
     def test_deterministic_identity(self) -> None:
@@ -286,12 +288,15 @@ class TestNormalizeListing:
 
         # Seller should be normalized
         assert listing.seller is not None
-        assert listing.seller.seller_id == "ebay:test_seller_123"
+        assert listing.seller.seller_id == "test_seller_123"  # Raw username
+        assert listing.seller.qualified_id == "ebay:test_seller_123"
 
-        # Metadata should contain diagnostic info
+        # Metadata should contain diagnostic info including price/currency
         assert listing.metadata["condition"] == "new"
         assert listing.metadata["availability_raw"] is True
         assert listing.metadata["category_id"] == "9012"
+        assert listing.metadata["price"] == "999.99"  # Exact Decimal as string
+        assert listing.metadata["currency"] == "USD"
 
     def test_minimal_listing_handles_missing_fields(
         self, minimal_ebay_summary: EbayListingSummary
@@ -320,12 +325,16 @@ class TestNormalizeListing:
         assert listing.listing_id == "555555555"  # Raw item_id
         assert listing.qualified_id == "ebay:555555555"
         assert listing.seller is not None
-        assert listing.seller.seller_id == "ebay:partial_seller"
+        assert listing.seller.seller_id == "partial_seller"  # Raw username
+        assert listing.seller.qualified_id == "ebay:partial_seller"
         assert listing.seller.metadata == {}  # No feedback data
 
         # Out of stock (empty availability lists)
         assert listing.metadata["availability_raw"] is False
         assert listing.metadata["condition"] == "used"
+        # Price/currency should be present
+        assert listing.metadata["price"] == "50.0"  # Decimal("50.0") -> "50.0"
+        assert listing.metadata["currency"] == "EUR"
 
     def test_listing_id_is_deterministic(self, full_ebay_summary: EbayListingSummary) -> None:
         """Same item_id always produces the same listing_id."""
