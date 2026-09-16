@@ -26,10 +26,16 @@ SAMPLE_HTML = """\
 <html>
 <head><title>Books - Products</title></head>
 <body>
+<ul class="breadcrumb">
+  <li><a href="../index.html">Home</a></li>
+  <li class="active">Books</li>
+</ul>
 <article class="product_pod">
-  <h3><a href="product1.html">A Light in the Attic</a></h3>
-  <p class="price_color">£51.77</p>
-  <p class="instock availability">In stock (25 available)</p>
+  <h3><a href="product1.html" title="A Light in the Attic">A Light in the Attic</a></h3>
+  <div class="product_price">
+    <p class="price_color">&pound;51.77</p>
+    <p class="instock availability">In stock</p>
+  </div>
 </article>
 </body>
 </html>
@@ -256,9 +262,11 @@ class TestWebRetailerAdapter:
         assert adapter.source_name == "web_retailer"
 
     @pytest.mark.asyncio
-    async def test_fetch_returns_empty_fetch_result(self) -> None:
-        """TASK-046: fetch returns empty FetchResult after successful HTML fetch."""
+    async def test_fetch_parses_html_into_events(self) -> None:
+        """TASK-047: fetch parses HTML and returns canonical events."""
         mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
         mock_client.fetch_listing_page.return_value = SAMPLE_HTML
 
         adapter = WebRetailerAdapter(client=mock_client)
@@ -266,11 +274,10 @@ class TestWebRetailerAdapter:
 
         assert isinstance(result, FetchResult)
         assert result.source == "web_retailer"
-        assert result.events == ()
-        assert result.malformed == ()
-        assert result.total_records == 0
-        assert result.has_events is False
-        assert result.has_malformed is False
+        assert result.has_events
+        assert len(result.events) == 1
+        assert result.events[0].payload.name == "A Light in the Attic"
+        assert result.total_records == 1
 
     @pytest.mark.asyncio
     async def test_fetch_empty_html_raises_source_fetch_error(self) -> None:
@@ -309,6 +316,8 @@ class TestWebRetailerAdapter:
         from libs.observability.source_metrics import SourceMetric, SourceMetrics
 
         mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
         mock_client.fetch_listing_page.return_value = SAMPLE_HTML
 
         metrics = SourceMetrics(source_name="web_retailer")
@@ -320,6 +329,8 @@ class TestWebRetailerAdapter:
         assert snapshot[SourceMetric.FETCH_ATTEMPTS] == 1
         assert snapshot[SourceMetric.FETCH_SUCCESS] == 1
         assert snapshot[SourceMetric.FETCH_FAILURE] == 0
+        assert snapshot[SourceMetric.RECORDS_COLLECTED] == 1
+        assert snapshot[SourceMetric.RECORDS_EMITTED] == 1
 
     @pytest.mark.asyncio
     async def test_fetch_records_metrics_on_failure(self) -> None:
@@ -354,6 +365,8 @@ class TestWebRetailerAdapter:
     async def test_adapter_passes_catalog_path_to_client(self) -> None:
         """Adapter forwards catalog_path to client.fetch_listing_page."""
         mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
         mock_client.fetch_listing_page.return_value = SAMPLE_HTML
 
         adapter = WebRetailerAdapter(catalog_path="/custom/catalog", client=mock_client)
