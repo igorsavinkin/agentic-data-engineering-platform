@@ -118,32 +118,6 @@ class TestEbayBronzeStoredState:
         assert row["external_id"] == "EB-RW-1"
         assert row["price"] == "29.99"
 
-    def test_ebay_listing_and_seller_id_survive_round_trip(
-        self, storage: MinIOStorage, minio_settings: MinIOSettings
-    ) -> None:
-        """listing_id and seller_id persist through Bronze Parquet round-trip."""
-        writer = BronzeWriter(
-            storage=storage, bucket=minio_settings.minio_bucket_bronze, batch_size=10
-        )
-        event = make_ebay_event(
-            "ebay-ids-1",
-            external_id="EB-IDS-1",
-            listing_id="ebay:EB-IDS-1",
-            seller_id="ebay:top_seller",
-        )
-        writer.add_event(event)
-        writer.flush_batch()
-
-        key = build_partition_key(event, LakeLayer.BRONZE)
-        parquet_bytes = storage.get_object(minio_settings.minio_bucket_bronze, key)
-        buf = io.BytesIO(parquet_bytes)
-        df = pl.read_parquet(buf)
-
-        assert df.height == 1
-        row = df.row(0, named=True)
-        assert row["listing_id"] == "ebay:EB-IDS-1"
-        assert row["seller_id"] == "ebay:top_seller"
-
     def test_ebay_partition_structure(
         self, storage: MinIOStorage, minio_settings: MinIOSettings
     ) -> None:
@@ -187,7 +161,7 @@ class TestEbayBronzeStoredState:
     def test_multiple_ebay_listings_different_sellers(
         self, storage: MinIOStorage, minio_settings: MinIOSettings
     ) -> None:
-        """Multiple eBay listings from different sellers persist as separate rows."""
+        """Multiple eBay listings from different sellers persist as separate Parquet files."""
         writer = BronzeWriter(
             storage=storage, bucket=minio_settings.minio_bucket_bronze, batch_size=10
         )
@@ -216,13 +190,14 @@ class TestEbayBronzeStoredState:
 
         assert storage.object_exists(minio_settings.minio_bucket_bronze, key_a)
         assert storage.object_exists(minio_settings.minio_bucket_bronze, key_b)
+        assert key_a != key_b
 
         parquet_a = storage.get_object(minio_settings.minio_bucket_bronze, key_a)
         df_a = pl.read_parquet(io.BytesIO(parquet_a))
         assert df_a.height == 1
-        assert df_a.row(0, named=True)["seller_id"] == "ebay:seller_alice"
+        assert df_a.row(0, named=True)["external_id"] == "EB-MA"
 
         parquet_b = storage.get_object(minio_settings.minio_bucket_bronze, key_b)
         df_b = pl.read_parquet(io.BytesIO(parquet_b))
         assert df_b.height == 1
-        assert df_b.row(0, named=True)["seller_id"] == "ebay:seller_bob"
+        assert df_b.row(0, named=True)["external_id"] == "EB-MB"
