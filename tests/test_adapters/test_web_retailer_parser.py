@@ -5,10 +5,11 @@ Covers:
 - Multiple products on one page
 - Missing price -> null price
 - Missing availability -> unknown
-- Malformed HTML / unexpected structure -> no crash, partial results
+- Malformed HTML / unexpected structure -> no crash, partial results + malformed
 - Empty page -> empty FetchResult
 - Canonical event compatibility
-- Price parsing edge cases
+- Price parsing edge cases (currency symbols, thousands separators, zero)
+- Realistic ../../ relative URL resolution (F1)
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from libs.adapters.web_retailer import WebRetailerAdapter, WebRetailerClient
 from libs.adapters.web_retailer.parser import parse_listing_page
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "web_retailer"
-BASE_URL = "http://books.toscrape.com"
+PAGE_URL = "http://books.toscrape.com/catalogue/category/books_1/index.html"
 
 
 def _load_fixture(name: str) -> str:
@@ -41,12 +42,13 @@ class TestParseListingPage:
 
     def test_extracts_multiple_products(self) -> None:
         html = _load_fixture("listing_page.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, malformed = parse_listing_page(html, page_url=PAGE_URL)
         assert len(products) == 3
+        assert len(malformed) == 0
 
     def test_all_fields_populated(self) -> None:
         html = _load_fixture("listing_page.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
         first = products[0]
         assert first.product_id == "a-light-in-the-attic_1000"
@@ -55,11 +57,25 @@ class TestParseListingPage:
         assert first.currency == "GBP"
         assert first.availability == "in_stock"
         assert first.category == "Travel"
-        assert "a-light-in-the-attic_1000/index.html" in first.url
+
+    def test_url_resolved_correctly_with_relative_links(self) -> None:
+        """Real books.toscrape.com uses ../../ relative links (F1)."""
+        html = _load_fixture("listing_page.html")
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
+
+        assert (
+            products[0].url
+            == "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html"
+        )
+        assert (
+            products[1].url
+            == "http://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html"
+        )
+        assert products[2].url == "http://books.toscrape.com/catalogue/soumission_998/index.html"
 
     def test_out_of_stock_product(self) -> None:
         html = _load_fixture("listing_page.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
         out_of_stock = products[2]
         assert out_of_stock.name == "Soumission"
@@ -67,36 +83,34 @@ class TestParseListingPage:
 
     def test_category_from_breadcrumb(self) -> None:
         html = _load_fixture("listing_page.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
         for product in products:
             assert product.category == "Travel"
 
-    def test_url_resolution_with_base_url(self) -> None:
-        html = _load_fixture("listing_page.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
-
-        first = products[0]
-        assert first.url.startswith(BASE_URL)
-        assert "a-light-in-the-attic_1000/index.html" in first.url
-
-    def test_empty_html_returns_empty_list(self) -> None:
-        assert parse_listing_page("") == []
-        assert parse_listing_page("   ") == []
-
-    def test_empty_listing_returns_empty_list(self) -> None:
-        html = _load_fixture("empty_listing.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+    def test_empty_html_returns_empty_lists(self) -> None:
+        products, malformed = parse_listing_page("")
         assert products == []
+        assert malformed == []
+        products, malformed = parse_listing_page("   ")
+        assert products == []
+        assert malformed == []
 
-    def test_malformed_structure_does_not_crash(self) -> None:
+    def test_empty_listing_returns_empty_lists(self) -> None:
+        html = _load_fixture("empty_listing.html")
+        products, malformed = parse_listing_page(html, page_url=PAGE_URL)
+        assert products == []
+        assert malformed == []
+
+    def test_malformed_structure_partial_results(self) -> None:
         html = _load_fixture("malformed_structure.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, malformed = parse_listing_page(html, page_url=PAGE_URL)
 
         valid = [p for p in products if p.product_id == "valid-book_300"]
         assert len(valid) == 1
         assert valid[0].name == "Valid Book"
         assert valid[0].price == Decimal("30.00")
+        assert len(malformed) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +123,7 @@ class TestMissingFields:
 
     def test_missing_price_element(self) -> None:
         html = _load_fixture("missing_price.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
         missing = next(p for p in products if p.name == "Missing Price Book")
         assert missing.price is None
@@ -117,28 +131,28 @@ class TestMissingFields:
 
     def test_unparseable_price_text(self) -> None:
         html = _load_fixture("missing_price.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
-        malformed = next(p for p in products if p.name == "Malformed Price Book")
-        assert malformed.price is None
+        malformed_price = next(p for p in products if p.name == "Malformed Price Book")
+        assert malformed_price.price is None
 
     def test_zero_price_is_valid(self) -> None:
         html = _load_fixture("missing_price.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
         zero = next(p for p in products if p.name == "Zero Price Book")
         assert zero.price == Decimal("0.00")
 
     def test_missing_availability_element(self) -> None:
         html = _load_fixture("missing_availability.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
         no_avail = next(p for p in products if p.name == "No Availability Book")
         assert no_avail.availability == "unknown"
 
     def test_unrecognized_availability_class(self) -> None:
         html = _load_fixture("missing_availability.html")
-        products = parse_listing_page(html, base_url=BASE_URL)
+        products, _ = parse_listing_page(html, page_url=PAGE_URL)
 
         unknown = next(p for p in products if p.name == "Unknown Availability Book")
         assert unknown.availability == "unknown"
@@ -154,26 +168,32 @@ class TestPriceParsing:
 
     def test_gbp_pound_symbol(self) -> None:
         html = '<article class="product_pod"><h3><a href="test_1/index.html" title="Test">Test</a></h3><div class="product_price"><p class="price_color">&pound;99.99</p><p class="instock availability">In stock</p></div></article>'
-        products = parse_listing_page(html)
+        products, _ = parse_listing_page(html)
         assert products[0].price == Decimal("99.99")
         assert products[0].currency == "GBP"
 
     def test_dollar_sign(self) -> None:
         html = '<article class="product_pod"><h3><a href="test_1/index.html" title="Test">Test</a></h3><div class="product_price"><p class="price_color">$42.50</p><p class="instock availability">In stock</p></div></article>'
-        products = parse_listing_page(html)
+        products, _ = parse_listing_page(html)
         assert products[0].price == Decimal("42.50")
         assert products[0].currency == "USD"
 
     def test_euro_sign(self) -> None:
         html = '<article class="product_pod"><h3><a href="test_1/index.html" title="Test">Test</a></h3><div class="product_price"><p class="price_color">\u20ac15.00</p><p class="instock availability">In stock</p></div></article>'
-        products = parse_listing_page(html)
+        products, _ = parse_listing_page(html)
         assert products[0].price == Decimal("15.00")
         assert products[0].currency == "EUR"
 
     def test_integer_price(self) -> None:
         html = '<article class="product_pod"><h3><a href="test_1/index.html" title="Test">Test</a></h3><div class="product_price"><p class="price_color">&pound;50</p><p class="instock availability">In stock</p></div></article>'
-        products = parse_listing_page(html)
+        products, _ = parse_listing_page(html)
         assert products[0].price == Decimal("50")
+
+    def test_thousands_separator_comma(self) -> None:
+        """F6: thousands-separated price is parsed correctly."""
+        html = '<article class="product_pod"><h3><a href="test_1/index.html" title="Test">Test</a></h3><div class="product_price"><p class="price_color">&pound;1,234.56</p><p class="instock availability">In stock</p></div></article>'
+        products, _ = parse_listing_page(html)
+        assert products[0].price == Decimal("1234.56")
 
 
 # ---------------------------------------------------------------------------
@@ -187,13 +207,14 @@ class TestAdapterIntegration:
     @pytest.fixture
     def mock_client(self) -> WebRetailerClient:
         client = AsyncMock(spec=WebRetailerClient)
-        client._base_url = BASE_URL
+        client.base_url = "http://books.toscrape.com"
+        client.catalog_path = "/catalogue/category/books_1/index.html"
         return client
 
     @pytest.mark.asyncio
     async def test_fetch_returns_canonical_events(self, mock_client: WebRetailerClient) -> None:
         html = _load_fixture("listing_page.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         result = await adapter.fetch()
@@ -206,7 +227,7 @@ class TestAdapterIntegration:
     @pytest.mark.asyncio
     async def test_event_source_matches_adapter(self, mock_client: WebRetailerClient) -> None:
         html = _load_fixture("listing_page.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         result = await adapter.fetch()
@@ -217,7 +238,7 @@ class TestAdapterIntegration:
     @pytest.mark.asyncio
     async def test_external_id_is_stable(self, mock_client: WebRetailerClient) -> None:
         html = _load_fixture("listing_page.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         result1 = await adapter.fetch()
@@ -231,7 +252,7 @@ class TestAdapterIntegration:
     async def test_empty_html_raises_source_fetch_error(
         self, mock_client: WebRetailerClient
     ) -> None:
-        mock_client.fetch_listing_page = AsyncMock(return_value="")
+        mock_client.fetch_listing_page = AsyncMock(return_value="")  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         with pytest.raises(SourceFetchError, match="empty HTML"):
@@ -240,7 +261,7 @@ class TestAdapterIntegration:
     @pytest.mark.asyncio
     async def test_empty_listing_returns_zero_events(self, mock_client: WebRetailerClient) -> None:
         html = _load_fixture("empty_listing.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         result = await adapter.fetch()
@@ -254,7 +275,7 @@ class TestAdapterIntegration:
         self, mock_client: WebRetailerClient
     ) -> None:
         html = _load_fixture("missing_price.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         result = await adapter.fetch()
@@ -269,18 +290,21 @@ class TestAdapterIntegration:
         self, mock_client: WebRetailerClient
     ) -> None:
         html = _load_fixture("malformed_structure.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         result = await adapter.fetch()
 
         valid_events = [e for e in result.events if e.payload.name == "Valid Book"]
         assert len(valid_events) == 1
+        assert result.has_malformed
+        assert len(result.malformed) == 2
+        assert result.total_records == 3
 
     @pytest.mark.asyncio
     async def test_event_id_is_deterministic(self, mock_client: WebRetailerClient) -> None:
         html = _load_fixture("listing_page.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
 
@@ -295,7 +319,7 @@ class TestAdapterIntegration:
     @pytest.mark.asyncio
     async def test_availability_mapped_correctly(self, mock_client: WebRetailerClient) -> None:
         html = _load_fixture("listing_page.html")
-        mock_client.fetch_listing_page = AsyncMock(return_value=html)
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
 
         adapter = WebRetailerAdapter(client=mock_client)
         result = await adapter.fetch()
@@ -303,3 +327,18 @@ class TestAdapterIntegration:
         avail_map = {e.payload.name: e.payload.availability.value for e in result.events}
         assert avail_map["A Light in the Attic"] == "in_stock"
         assert avail_map["Soumission"] == "out_of_stock"
+
+    @pytest.mark.asyncio
+    async def test_urls_resolved_correctly(self, mock_client: WebRetailerClient) -> None:
+        """F1: adapter resolves ../../ relative URLs to canonical catalogue paths."""
+        html = _load_fixture("listing_page.html")
+        mock_client.fetch_listing_page = AsyncMock(return_value=html)  # type: ignore[method-assign]
+
+        adapter = WebRetailerAdapter(client=mock_client)
+        result = await adapter.fetch()
+
+        urls = {e.payload.name: e.payload.url for e in result.events}
+        assert (
+            urls["A Light in the Attic"]
+            == "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html"
+        )

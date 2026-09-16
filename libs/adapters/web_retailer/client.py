@@ -94,6 +94,14 @@ class WebRetailerClient:
         self._catalog_path = resolved_path
         self._client = http_client
 
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
+    @property
+    def catalog_path(self) -> str:
+        return self._catalog_path
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(

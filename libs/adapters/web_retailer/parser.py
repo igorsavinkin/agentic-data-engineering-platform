@@ -11,7 +11,8 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Sequence
+from typing import Any
+from urllib.parse import urljoin
 
 from selectolax.parser import HTMLParser
 
@@ -22,12 +23,6 @@ _CURRENCY_SYMBOLS: dict[str, str] = {
     "$": "USD",
     "\u20ac": "EUR",
 }
-
-_PRICE_RE = re.compile(
-    r"[^\d.,]+"
-    r"(?P<digits>[\d]+(?:[.,]\d{3})*(?:[.,]\d{1,2})?)"
-    r"[^\d]*$"
-)
 
 _THOUSANDS_RE = re.compile(r"(?<=\d)[,.](?=\d{3}(?:[^\d]|$))")
 
@@ -45,28 +40,34 @@ class ParsedProduct:
     url: str
 
 
-def parse_listing_page(html: str, base_url: str = "") -> list[ParsedProduct]:
+def parse_listing_page(
+    html: str, page_url: str = ""
+) -> tuple[list[ParsedProduct], list[dict[str, Any]]]:
     """Parse a books.toscrape.com listing page into ParsedProduct records.
 
-    Returns an empty list when no products are found (structural change or
-    empty page).  Does not raise on malformed HTML.
+    Returns ``(products, malformed)`` where malformed contains articles that
+    could not be parsed (missing required fields) with a diagnostic reason.
+    Returns empty lists when the page has no product articles.
     """
     if not html or not html.strip():
-        return []
+        return [], []
 
     tree = HTMLParser(html)
     category = _extract_category(tree)
     products: list[ParsedProduct] = []
+    malformed: list[dict[str, Any]] = []
 
     for article in tree.css("article.product_pod"):
         try:
-            product = _parse_article(article, base_url, category)
+            product, reason = _parse_article(article, page_url, category)
             if product is not None:
                 products.append(product)
+            elif reason is not None:
+                malformed.append(reason)
         except Exception:
             logger.warning("Skipping unparseable product article", exc_info=True)
 
-    return products
+    return products, malformed
 
 
 def _extract_category(tree: HTMLParser) -> str:
@@ -79,19 +80,42 @@ def _extract_category(tree: HTMLParser) -> str:
     return labels[-1] if labels else "Books"
 
 
-def _parse_article(article: Any, base_url: str, category: str) -> ParsedProduct | None:
-    """Parse a single <article class='product_pod'> element."""
+def _parse_article(
+    article: Any, page_url: str, category: str
+) -> tuple[ParsedProduct | None, dict[str, Any] | None]:
+    """Parse a single <article class='product_pod'> element.
+
+    Returns ``(product, None)`` on success or ``(None, malformed_entry)``
+    when required fields are missing.
+    """
     title_link = article.css_first("h3 a")
     if title_link is None:
-        return None
+        return None, {
+            "raw_record": {"html_snippet": str(article.html)[:200]},
+            "reason": "Missing h3 a element",
+        }
 
     name = title_link.attributes.get("title") or ""
     name = name.strip()
-    if not name:
-        return None
 
     relative_url = title_link.attributes.get("href") or ""
-    url = _resolve_url(relative_url, base_url)
+    url = _resolve_url(relative_url, page_url)
+
+    if not name and not relative_url:
+        return None, {
+            "raw_record": {"html_snippet": str(article.html)[:200]},
+            "reason": "Missing name and URL",
+        }
+    if not name:
+        return None, {
+            "raw_record": {"html_snippet": str(article.html)[:200], "url": url},
+            "reason": "Missing product name",
+        }
+    if not url:
+        return None, {
+            "raw_record": {"name": name, "html_snippet": str(article.html)[:200]},
+            "reason": "Missing product URL",
+        }
 
     product_id = _extract_product_id(relative_url)
     if not product_id:
@@ -110,7 +134,7 @@ def _parse_article(article: Any, base_url: str, category: str) -> ParsedProduct 
         availability=availability,
         category=category,
         url=url,
-    )
+    ), None
 
 
 def _get_text(node: Any, selector: str) -> str:
@@ -121,19 +145,15 @@ def _get_text(node: Any, selector: str) -> str:
     return str(el.text(strip=True))
 
 
-def _resolve_url(relative_url: str, base_url: str) -> str:
-    """Resolve a relative product URL against the base URL."""
+def _resolve_url(relative_url: str, page_url: str) -> str:
+    """Resolve a relative product URL against the page URL."""
     if not relative_url:
         return ""
     if relative_url.startswith(("http://", "https://")):
         return relative_url
-    if not base_url:
+    if not page_url:
         return relative_url
-    base = base_url.rstrip("/")
-    if relative_url.startswith("../"):
-        relative_url = relative_url.lstrip(".")
-        relative_url = relative_url.lstrip("/")
-    return f"{base}/{relative_url}"
+    return urljoin(page_url, relative_url)
 
 
 def _extract_product_id(url: str) -> str:
@@ -187,18 +207,15 @@ def _parse_price(text: str) -> tuple[Decimal | None, str]:
 
 
 def _parse_availability(article: Any) -> str:
-    """Map availability element to canonical Availability enum value."""
+    """Map availability element to canonical Availability enum value.
+
+    Text content is the primary signal; CSS classes are a fallback.
+    """
     el = article.css_first("p.availability")
     if el is None:
         return "unknown"
 
-    classes = el.attributes.get("class", "")
     text = el.text(strip=True).lower()
-
-    if "instock" in classes:
-        return "in_stock"
-    if "availoffset" in classes:
-        return "out_of_stock"
 
     if "in stock" in text:
         return "in_stock"
@@ -207,9 +224,8 @@ def _parse_availability(article: Any) -> str:
     if "preorder" in text or "pre-order" in text:
         return "preorder"
 
+    classes = el.attributes.get("class", "")
+    if "instock" in classes:
+        return "in_stock"
+
     return "unknown"
-
-
-def parse_prices(prices: Sequence[str]) -> list[Decimal | None]:
-    """Parse multiple price strings — exposed for testing."""
-    return [_parse_price(p)[0] for p in prices]

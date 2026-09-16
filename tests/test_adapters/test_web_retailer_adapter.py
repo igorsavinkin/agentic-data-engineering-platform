@@ -265,7 +265,8 @@ class TestWebRetailerAdapter:
     async def test_fetch_parses_html_into_events(self) -> None:
         """TASK-047: fetch parses HTML and returns canonical events."""
         mock_client = AsyncMock(spec=WebRetailerClient)
-        mock_client._base_url = "http://books.toscrape.com"
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
         mock_client.fetch_listing_page.return_value = SAMPLE_HTML
 
         adapter = WebRetailerAdapter(client=mock_client)
@@ -315,7 +316,8 @@ class TestWebRetailerAdapter:
         from libs.observability.source_metrics import SourceMetric, SourceMetrics
 
         mock_client = AsyncMock(spec=WebRetailerClient)
-        mock_client._base_url = "http://books.toscrape.com"
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
         mock_client.fetch_listing_page.return_value = SAMPLE_HTML
 
         metrics = SourceMetrics(source_name="web_retailer")
@@ -363,7 +365,8 @@ class TestWebRetailerAdapter:
     async def test_adapter_passes_catalog_path_to_client(self) -> None:
         """Adapter forwards catalog_path to client.fetch_listing_page."""
         mock_client = AsyncMock(spec=WebRetailerClient)
-        mock_client._base_url = "http://books.toscrape.com"
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
         mock_client.fetch_listing_page.return_value = SAMPLE_HTML
 
         adapter = WebRetailerAdapter(catalog_path="/custom/catalog", client=mock_client)

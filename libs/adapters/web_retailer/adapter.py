@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urljoin
 
 from libs.adapters import FetchResult, SourceAdapterProtocol, SourceFetchError
 from libs.adapters.web_retailer.client import WebRetailerClient
@@ -70,12 +71,12 @@ class WebRetailerAdapter(SourceAdapterProtocol):
                     )
 
                 collected_at = datetime.now(timezone.utc)
-                base_url = self._client._base_url
+                page_url = self._build_page_url()
 
-                parsed = parse_listing_page(html, base_url=base_url)
+                parsed, parser_malformed = parse_listing_page(html, page_url=page_url)
 
                 events: list[ProductObservationEvent] = []
-                malformed: list[dict[str, Any]] = []
+                malformed: list[dict[str, Any]] = list(parser_malformed)
 
                 for product in parsed:
                     try:
@@ -94,7 +95,7 @@ class WebRetailerAdapter(SourceAdapterProtocol):
                             }
                         )
 
-                total_collected = len(parsed)
+                total_collected = len(parsed) + len(parser_malformed)
 
                 result: FetchResult[ProductObservationEvent] = FetchResult(
                     events=tuple(events),
@@ -118,6 +119,11 @@ class WebRetailerAdapter(SourceAdapterProtocol):
                 self._metrics.record_fetch_failure()
                 raise
 
+    def _build_page_url(self) -> str:
+        """Build the full page URL for relative URL resolution."""
+        path = self._catalog_path or self._client.catalog_path
+        return urljoin(self._client.base_url + "/", path.lstrip("/"))
+
     def _to_canonical_event(
         self, product: ParsedProduct, collected_at: datetime
     ) -> ProductObservationEvent:
@@ -127,7 +133,7 @@ class WebRetailerAdapter(SourceAdapterProtocol):
             external_id=product.product_id,
             name=product.name,
             url=product.url,
-            price=float(product.price) if product.price is not None else None,
+            price=product.price,
             currency=product.currency,
             availability=product.availability,
             category=product.category,

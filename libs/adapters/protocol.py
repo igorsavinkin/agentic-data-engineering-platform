@@ -14,10 +14,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Generic, TypeVar
 
 from libs.event_contracts.product_observation import (
+    Availability,
     ProductObservationEvent,
+    ProductObservationPayload,
     utc_now,
 )
 
@@ -190,7 +193,7 @@ class SourceAdapterProtocol(ABC):
         external_id: str,
         name: str,
         url: str,
-        price: float | None,
+        price: Decimal | float | None,
         currency: str,
         availability: str,
         category: str,
@@ -207,12 +210,6 @@ class SourceAdapterProtocol(ABC):
         ``listing_id`` and ``seller_id`` are optional marketplace fields.
         Non-marketplace sources should omit them (defaults to ``None``).
         """
-        from decimal import Decimal
-
-        from libs.event_contracts.product_observation import (
-            Availability,
-            ProductObservationPayload,
-        )
 
         payload = ProductObservationPayload(
             external_id=external_id,
