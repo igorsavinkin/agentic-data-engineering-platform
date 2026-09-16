@@ -195,12 +195,17 @@ class SourceAdapterProtocol(ABC):
         availability: str,
         category: str,
         collected_at: datetime,
+        listing_id: str | None = None,
+        seller_id: str | None = None,
     ) -> ProductObservationEvent:
         """Construct a validated canonical event.
 
         Concrete adapters call this helper after mapping source fields to the
         canonical shape.  All validation (non-negative price, timezone-aware
         timestamps, schema version) is enforced by the Pydantic model.
+
+        ``listing_id`` and ``seller_id`` are optional marketplace fields.
+        Non-marketplace sources should omit them (defaults to ``None``).
         """
         from decimal import Decimal
 
@@ -217,6 +222,8 @@ class SourceAdapterProtocol(ABC):
             currency=currency.upper(),
             availability=Availability(availability),
             category=category,
+            listing_id=listing_id,
+            seller_id=seller_id,
             collected_at=collected_at,
         )
 

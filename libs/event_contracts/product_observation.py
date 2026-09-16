@@ -63,6 +63,24 @@ class ProductObservationPayload(BaseModel):
         description="Availability state at observation time.",
     )
     category: str = Field(..., min_length=1, description="Product category.")
+    listing_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Optional marketplace listing identifier.  When present, "
+            "external_id refers to a specific listing rather than a "
+            "product directly.  Non-marketplace sources leave this None."
+        ),
+    )
+    seller_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Optional marketplace seller identifier.  When present, "
+            "identifies the seller offering this listing.  Non-marketplace "
+            "sources leave this None."
+        ),
+    )
     collected_at: datetime = Field(
         ...,
         description="Timestamp when the observation was collected from the source.",
