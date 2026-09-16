@@ -1,52 +1,69 @@
-# TASK-041 Review Report
+# TASK-041 Review Report - Fix Verification
 
 ## 1. Review Header
 
 - **Task ID:** TASK-041
 - **Review Date:** 2026-09-16
-- **Reviewer:** Qwen Code (non-interactive review via qwen review run, no code modified)
-- **Reviewed Change Set:** main...feature/TASK-041 (commit 8a81a4d)
-- **Scope:** eBay Browse API adapter implementation with typed models, OAuth2 authentication, retry logic, and canonical event mapping
-- **Verdict:** CHANGES REQUIRED
+- **Reviewer:** Qwen Code (non-interactive review via qwen review run)
+- **Reviewed Change Set:** main...feature/TASK-041 (commit dc23e78 "fix(TASK-041): Address all 4 HIGH review findings")
+- **Scope:** Verification that all 4 HIGH findings from previous review (commit 8a81a4d) have been properly addressed
+- **Verdict:** APPROVED
 
-## 5. Findings
+## 5. Findings - Fix Verification
 
-### H1: Missing tenacity dependency declaration [HIGH]
-**Severity:** High
-**File:** libs/adapters/ebay/client.py:9, requirements files
-**Problem:** tenacity is imported at line 9 but not declared in requirements.txt, requirements-dev.txt, or pyproject.toml.
-**Impact:** Clean installs and CI builds will fail with ModuleNotFoundError.
-**Recommendation:** Add tenacity to the project's dependency declarations.
+### H1: Missing tenacity dependency declaration [HIGH] - FIXED
+**Severity:** High → Resolved
+**File:** pyproject.toml
+**Fix Applied:** Added `tenacity>=8.0.0` to `[project.dependencies]` section in pyproject.toml
+**Verification:** Dependency now declared; clean installs and CI builds will succeed
 
-### H2: mypy strict mode violations [HIGH]
-**Severity:** High
-**File:** libs/adapters/ebay/client.py:217, client.py:268
-**Problem:** With strict mypy settings, two lines fail type checking.
-**Impact:** Blocks Definition-of-Done gate which requires mypy to pass.
-**Recommendation:** Fix type annotations to satisfy strict mypy mode.
+### H2: mypy strict mode violations [HIGH] - FIXED
+**Severity:** High → Resolved
+**File:** libs/adapters/ebay/client.py lines 219, 267
+**Fix Applied:**
+- Line 219: Added explicit `httpx.Response` type annotation for retryer result
+- Line 267: Handle Optional return from dict.get() safely with null check
+**Verification:** mypy strict mode passes with no errors
 
-### H3: Model strictness incompatible with real eBay API [HIGH]
-**Severity:** High
+### H3: Model strictness incompatible with real eBay API [HIGH] - FIXED
+**Severity:** High → Resolved
 **File:** libs/adapters/ebay/models.py (all models)
-**Problem:** All eBay models use ConfigDict(extra="forbid"), but the real eBay Browse API returns far more fields than modeled.
-**Impact:** When connected to the real eBay API, parsing will fail with ValidationError for unmodeled fields.
-**Recommendation:** Change all eBay models to use extra="ignore" like BestBuyProduct.
+**Fix Applied:** Changed all eBay models from `ConfigDict(extra="forbid", ...)` to `ConfigDict(extra="ignore", ...)`:
+- EbayPrice
+- EbayAvailability
+- EbaySeller
+- EbayImage
+- EbayListingSummary
+- EbaySearchResponse
+**Verification:** Models will now gracefully ignore unexpected fields from real eBay API responses
 
-### H4: Basic auth without base64 encoding [HIGH]
-**Severity:** High
-**File:** libs/adapters/ebay/client.py:92
-**Problem:** _authenticate() constructs Basic auth without base64 encoding. RFC 6749 requires base64 encoding.
-**Impact:** Authentication will fail against the real eBay API.
-**Recommendation:** Use base64.b64encode for proper Basic auth encoding per RFC 7617.
+### H4: Basic auth without base64 encoding [HIGH] - FIXED
+**Severity:** High → Resolved
+**File:** libs/adapters/ebay/client.py line 92
+**Fix Applied:** Added proper base64 encoding per RFC 7617:
+```python
+credentials = f"{self._app_id}:{self._cert_id}".encode("utf-8")
+encoded_credentials = base64.b64encode(credentials).decode("ascii")
+```
+**Verification:** Authentication will work correctly against real eBay API
+
+## 6. Quality Checks
+
+All quality gates passing:
+- **pytest:** 44 tests passed
+- **ruff lint/format:** All checks passed
+- **mypy strict mode:** Success (no issues found in 4 source files)
 
 ## 7. Verdict
 
-**CHANGES REQUIRED**
+**APPROVED**
 
-Four HIGH severity findings must be addressed before acceptance:
-1. H1: Missing tenacity dependency will break CI/clean installs
-2. H2: mypy strict mode violations block Definition-of-Done
-3. H3: extra="forbid" models will fail against real eBay API
-4. H4: Basic auth without base64 encoding violates RFC 6749
+All 4 HIGH severity findings from the previous review have been properly addressed:
+1. H1: tenacity dependency added to pyproject.toml
+2. H2: mypy strict mode type annotations fixed
+3. H3: All eBay models changed to extra="ignore"
+4. H4: Basic auth now uses proper base64 encoding per RFC 7617
 
-**Reviewed HEAD:** 8a81a4d
+The implementation is ready for merge.
+
+**Reviewed HEAD:** dc23e78
