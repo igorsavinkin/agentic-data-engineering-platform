@@ -28,6 +28,11 @@ from libs.adapters.ebay.models import (
 from libs.common.kafka_consumer import ConsumerMessage
 from libs.common.kafka_producer import DeliveryReceipt
 from libs.event_contracts import ProductObservationEvent
+from libs.marketplace.identity import (
+    ListingProductMapper,
+    build_listing_id,
+    derive_product_key_from_listing,
+)
 from services.ingestion.runner import IngestionRunner
 from services.processor.deduplication import DeduplicationState
 from services.processor.pipeline import ProcessorPipeline
@@ -429,6 +434,42 @@ class TestMultipleListingsSameProduct:
         seller_ids = {e.payload.seller_id for e in sinks.validated_events}
         assert seller_ids == {"ebay:shop_a", "ebay:shop_b", "ebay:shop_c"}
 
+    def test_listings_grouped_by_product_key_via_upc(self) -> None:
+        """Two listings from different sellers sharing a UPC are grouped
+        under one product key by ListingProductMapper, demonstrating the
+        Milestone 5A scenario: multiple marketplace listings for one
+        logical product."""
+        mapper = ListingProductMapper()
+
+        listing_a_id = build_listing_id("ebay", "SELLER-A-ITEM-1")
+        listing_b_id = build_listing_id("ebay", "SELLER-B-ITEM-2")
+        shared_upc = "012345678905"
+
+        product_key_a = derive_product_key_from_listing(
+            "ebay",
+            listing_a_id,
+            {"upc": shared_upc},
+        )
+        product_key_b = derive_product_key_from_listing(
+            "ebay",
+            listing_b_id,
+            {"upc": shared_upc},
+        )
+
+        assert product_key_a is not None
+        assert product_key_b is not None
+        assert product_key_a == product_key_b == f"ebay:{shared_upc}"
+
+        mapper.assign(listing_a_id, product_key_a)
+        mapper.assign(listing_b_id, product_key_b)
+
+        assert mapper.get_product_key(listing_a_id) == product_key_a
+        assert mapper.get_product_key(listing_b_id) == product_key_b
+        grouped_listings = mapper.get_listing_ids(product_key_a)
+        assert grouped_listings == {listing_a_id, listing_b_id}
+        assert mapper.product_count == 1
+        assert mapper.listing_count == 2
+
 
 # ---------------------------------------------------------------------------
 # Tests: Processor pipeline — final stored state
@@ -607,8 +648,9 @@ class TestReplayIdempotency:
         ebay_adapter: EbayAdapter,
         mock_ebay_client: AsyncMock,
     ) -> None:
-        """Replayed events through ProcessorPipeline with shared DeduplicationState
-        demonstrate that duplicate observations are deduplicated."""
+        """Feeding the same event (same event_id) twice through
+        ProcessorPipeline with shared DeduplicationState demonstrates
+        that the duplicate is skipped."""
         listing = _make_listing("DEDUP1", "Dedup Product", price_value=10.00)
         mock_ebay_client.search_items.return_value = (
             _make_search_response([listing]),
@@ -619,17 +661,9 @@ class TestReplayIdempotency:
             adapters=[ebay_adapter],
             producer=mock_producer,  # type: ignore[arg-type]
         )
-
         await runner.run_once()
-        first_event = mock_producer.published[0]
 
-        mock_producer.published.clear()
-        mock_ebay_client.search_items.return_value = (
-            _make_search_response([listing]),
-            [],
-        )
-        await runner.run_once()
-        second_event = mock_producer.published[0]
+        original_event = mock_producer.published[0]
 
         sinks = TrackingSinks()
         shared_dedup = DeduplicationState()
@@ -639,16 +673,17 @@ class TestReplayIdempotency:
             dedup_state=shared_dedup,
         )
 
-        msg1 = _wrap_as_consumer_message(first_event, offset=0)
+        msg1 = _wrap_as_consumer_message(original_event, offset=0)
         result1 = pipeline.process_batch([msg1])
         assert result1.published_valid == 1
+        assert result1.duplicates_skipped == 0
 
-        msg2 = _wrap_as_consumer_message(second_event, offset=1)
+        msg2 = _wrap_as_consumer_message(original_event, offset=1)
         result2 = pipeline.process_batch([msg2])
+        assert result2.published_valid == 0
+        assert result2.duplicates_skipped == 1
 
-        total_valid = result1.published_valid + result2.published_valid
-        assert total_valid <= 2
-        assert len(sinks.validated_events) <= 2
+        assert len(sinks.validated_events) == 1
 
 
 # ---------------------------------------------------------------------------

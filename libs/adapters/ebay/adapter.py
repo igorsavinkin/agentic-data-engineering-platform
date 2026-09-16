@@ -11,6 +11,7 @@ from libs.adapters.ebay.models import EbayListingSummary
 from libs.event_contracts.product_observation import (
     ProductObservationEvent,
 )
+from libs.marketplace.identity import build_listing_id, build_seller_id
 from libs.observability.source_metrics import SourceMetric, SourceMetrics
 
 # Default availability when eBay doesn't provide explicit stock info
@@ -163,8 +164,10 @@ class EbayAdapter(SourceAdapterProtocol):
         # Build URL - prefer item_web_url, fallback to constructed URL
         url = summary.item_web_url or f"https://www.ebay.com/itm/{summary.item_id}"
 
-        listing_id = f"ebay:{summary.item_id}"
-        seller_id = f"ebay:{summary.seller.username}" if summary.seller else None
+        listing_id = build_listing_id(self.source_name, summary.item_id)
+        seller_id = (
+            build_seller_id(self.source_name, summary.seller.username) if summary.seller else None
+        )
 
         return self._build_event(
             source=self.source_name,
