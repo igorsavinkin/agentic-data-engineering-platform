@@ -5,6 +5,24 @@ cd "$(git rev-parse --show-toplevel)"
 # redirect their commands into the repository being pushed.
 unset $(git rev-parse --local-env-vars)
 
+# Skip tests for doc-only changes
+if [ "${SKIP_TESTS:-}" != "1" ]; then
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+      break
+    fi
+    changed=$(git diff --name-only "$remote_sha".."$local_sha" 2>/dev/null || true)
+    if [ -n "$changed" ]; then
+      non_doc=$(echo "$changed" | grep -v -E '^(docs/|.*\.md$)' || true)
+      if [ -z "$non_doc" ]; then
+        echo "pre-push: doc-only changes detected, skipping tests"
+        SKIP_TESTS=1
+      fi
+    fi
+    break
+  done
+fi
+
 if [ "${SKIP_TESTS:-}" != "1" ]; then
   python -m pytest
   python -m mypy
