@@ -5,10 +5,11 @@
 - **Task ID:** TASK-045 — eBay Integration Tests
 - **Review date:** 2026-09-16
 - **Reviewer:** Qwen Code (independent review, no code modified)
-- **Reviewed commit:** `a9d9c6c1b86192733d51ee2a16d06ffd65158719` (`feat(TASK-045): Add eBay integration tests covering full ingestion pipeline`)
-- **Reviewed change set:** `3df127c09033366e0344106edeffba5043a2d232...a9d9c6c1b86192733d51ee2a16d06ffd65158719` on `feature/TASK-045` (1 commit, 1 file)
-- **Scope:** Full TASK-045 implementation — a single new test file `tests/test_ebay_integration.py` (+692 insertions)
-- **Verdict:** `CHANGES REQUIRED`
+- **Reviewed change set:** `3df127c..7cfa2d8` on `feature/TASK-045`, merged to `main` via `7cfa2d8` (PR #57)
+  - 5 commits: `a9d9c6c`, `28ffbd4`, `a168c91`, `48b14ab`, `3a94de0`
+  - 4 files changed: `libs/adapters/ebay/adapter.py` (+10), `tests/test_ebay_integration.py` (+1131), `tests/test_ebay_bronze_integration.py` (+203), `docs/reviews/TASK-045-review.md` (+154, round-1 review being superseded by this report)
+- **Scope:** Post-merge review of the final merged state (not the original single-commit submission reviewed in round 1).
+- **Verdict:** `APPROVED WITH NON-BLOCKING FINDINGS`
 
 ---
 
@@ -16,139 +17,122 @@
 
 | Requirement | Status | Implementation evidence |
 |---|---|---|
-| Keep source-specific structures behind the adapter/normalization boundary | ✅ Met | Tests construct `EbayListingSummary`/`EbaySearchResponse` behind the adapter and assert canonical `ProductObservationEvent` output only. |
-| Preserve stable source, listing/product, event, and timestamp identity | ⚠️ Partial | Source identity (`event.source == "ebay"`) and `external_id` are asserted; **listing/seller identity is not** — see F3. |
-| Use typed Python, explicit configuration, deterministic tests, existing conventions | ✅ Met | Typed helpers/fixtures; `ruff`/`mypy` pass on the file (independently verified). |
-| Consider retries, replay, duplicates, partial failure, idempotency | ⚠️ Partial | Error isolation, empty response, and two-cycle determinism are covered; **idempotency/deduplication is not** — see F4. |
-| Never commit or log credentials | ✅ Met | No credentials, secrets, or logging introduced; tests use mocks/`MagicMock`. |
-| Do not begin later roadmap tasks | ✅ Met | Only a test file added; no application/library changes. |
-| Escalate if a fundamental incompatible canonical model / schema change is required | ✅ N/A | No canonical/warehouse change attempted. |
+| Keep source-specific structures behind the adapter/normalization boundary | ✅ Met | Tests construct `EbayListingSummary`/`EbaySearchResponse` behind the adapter and assert canonical `ProductObservationEvent` output only; `test_ebay_does_not_leak_source_specific_fields` asserts the exact canonical payload key set with no eBay-specific fields. |
+| Preserve stable source, listing/product, event, and timestamp identity | ⚠️ Partial | Source (`event.source == "ebay"`), `external_id`, `event_id`, and partition key are asserted. `listing_id`/`seller_id` are now populated by the adapter and asserted at the event level, but are **dropped at the Parquet persistence layer** (see F1). |
+| Use typed Python, explicit configuration, deterministic tests, existing conventions | ✅ Met | Typed helpers/fixtures; `ruff`/`mypy` pass on all changed files (independently verified). |
+| Consider retries, replay, duplicates, partial failure, idempotency | ✅ Met | Error isolation, empty response, replay determinism, processor deduplication (`test_deduplication_via_processor_pipeline`), and Bronze replay overwrite (`test_ebay_replay_idempotency`) are covered. |
+| Never commit or log credentials | ✅ Met | Fully mocked (`AsyncMock`); the Bronze integration test uses the standard local `minioadmin` dev credentials already used by the repository, not secrets. |
+| Do not begin later roadmap tasks | ✅ Met | Only test files plus a 10-line adapter identity-wiring change; no application/library scope expansion. |
+| Escalate if a fundamental incompatible canonical model / schema change is required | ✅ N/A | No canonical/warehouse schema change attempted. |
 
 ### Task-specific scope & acceptance criteria
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| Integration tests from mocked eBay responses through adapter, marketplace normalization, canonical ingestion, Kafka, processor, Parquet, and PostgreSQL | ❌ Not met | Tests stop at the **mock Kafka producer** (`MockProducer`). Marketplace normalization, processor, Parquet, and PostgreSQL boundaries are not exercised (F2, F3). |
-| Cover multiple sellers/listings | ✅ Met | `test_multiple_listings_from_different_sellers`, `test_all_three_sources_in_one_cycle`. |
-| Cover replay, repeated observations, ambiguity, malformed input | ✅ Met (except idempotency) | Replay determinism (`TestReplayIdempotency`), malformed (`TestMalformedInput`), ambiguity (`TestAmbiguity`). |
-| Regression smoke tests for existing sources | ✅ Met | `TestRegressionSmoke` runs fake_store + best_buy + ebay together and checks no source-specific field leakage. |
-| Acceptance: demonstrate **multiple marketplace listings for one logical product** | ❌ Not met | No test maps two listings to one logical product (F1). |
-| Acceptance: **final stored state** asserted | ❌ Not met | No processor/Parquet/PostgreSQL output is asserted (F2). |
-| Acceptance: replay/idempotency asserted | ⚠️ Partial | Replay determinism asserted; idempotency is not (F4). |
-| Acceptance: tests need no live eBay credentials | ✅ Met | Fully mocked (`AsyncMock` client). |
-| Acceptance: pass repository quality checks | ✅ Met | `pytest`, `ruff`, `mypy` all pass on the new file (independently verified). |
+| Integration tests from mocked eBay responses through adapter, marketplace normalization, canonical ingestion, Kafka, processor, Parquet, and PostgreSQL where infrastructure supports it | ✅ Met (within supported boundaries) | Hermetic tests cover adapter → mock Kafka producer → processor pipeline; `test_ebay_bronze_integration.py` covers Bronze Parquet persistence behind `@pytest.mark.integration`. PostgreSQL is not exercised (no established in-memory/unit boundary for it in this task's path). |
+| Cover multiple sellers/listings | ✅ Met | `test_multiple_listings_from_different_sellers`, `TestMultipleListingsSameProduct` (4 tests), `test_multiple_ebay_listings_different_sellers` (Bronze). |
+| Cover replay, repeated observations, ambiguity, malformed input | ✅ Met | `TestReplayIdempotency`, `TestMalformedInput`, `TestAmbiguity`, Bronze replay overwrite. |
+| Regression smoke tests for existing sources | ✅ Met | `TestRegressionSmoke` runs fake_store + best_buy + ebay together; `test_multiple_ebay_fetch_cycles`. |
+| Acceptance: multiple marketplace listings for one logical product without breaking canonical pipeline | ⚠️ Partial (honestly scoped) | Multiple same-titled listings from different sellers coexist through the pipeline with distinct `listing_id`/`seller_id` (prerequisite demonstrated). True grouping into one logical product is deferred because the eBay `item_summary/search` endpoint exposes no UPC/GTIN/EAN/ASIN (documented in test docstrings). See N2. |
+| Acceptance: final stored state and replay/idempotency asserted | ✅ Met | Processor validated sink state and Bronze Parquet stored state are asserted; dedup + overwrite idempotency are asserted. |
+| Acceptance: no live eBay credentials | ✅ Met | Fully mocked. |
+| Acceptance: pass repository quality checks | ✅ Met | `pytest` (hermetic), `ruff check`, `ruff format --check`, `mypy` all pass (independently verified). |
 
 ---
 
 ## 3. Git Diff Review
 
-- **Scope correctness:** ✅ Correct. The range contains a single new file, `tests/test_ebay_integration.py` (+692, 0 deletions). No application/library code touched.
-- **Unrelated changes:** ✅ None.
-- **Architectural changes:** ✅ None. No service boundaries, event contracts, Kafka semantics, data-lake, or warehouse schema changes.
+- **Scope correctness:** ✅ Correct. The range contains the TASK-045 test work plus a minimal, targeted adapter change (+10 lines) that wires the pre-existing marketplace identity helpers (`build_listing_id`, `build_seller_id`) into `_map_listing_to_event`. This is a legitimate, in-scope enabler for the tests (round-1 F3).
+- **Unrelated changes:** ✅ None. No other application/library files touched.
+- **Architectural changes:** ✅ None. No event-contract, Kafka, data-lake, warehouse, or service-boundary changes. The adapter change reuses existing `libs.marketplace.identity` helpers rather than inventing new structures.
 - **Accidental/debug/temporary/secret content:** ✅ None. No debug prints, dead/generated files, or secrets.
-- **Dependency/config changes:** ✅ None. `pyproject.toml`, requirements, CI, and infrastructure untouched. All imports resolve to existing modules.
+- **Dependency/config changes:** ✅ None. `pyproject.toml`, requirements, CI, and infra untouched.
 - **Test weakening:** ✅ None. Only additions; no existing test deleted or relaxed.
-- **Branch/task isolation:** ✅ Correct. Reviewed HEAD `a9d9c6c` is on `feature/TASK-045`; the range contains only the single TASK-045 commit and no TASK-044/other-task changes.
+- **Branch/task isolation:** ✅ Correct. The range contains only the five TASK-045 commits; the round-1 review doc (`docs/reviews/TASK-045-review.md`) is a committed review artifact superseded by this report.
+- **Note:** The adapter diff is the only production-code change in an otherwise test-only task. It is narrowly scoped and correct; verified in §4.
 
 ---
 
 ## 4. Test and Verification Review
 
 ### Tests examined
-`tests/test_ebay_integration.py` (16 tests) covering:
-- single listing → one canonical event; source/external_id/name/price/currency assertions
-- three listings from three different sellers
-- partition key format (`ebay:<external_id>`)
-- two-cycle replay determinism (same external IDs, same prices/currency)
-- client-level malformed records tracked in `runner.stats`
-- all-listings-malformed → zero events (`model_construct` to trigger mapping failure)
-- eBay failure does not block fake_store (error isolation)
-- empty eBay response → zero events, zero errors
-- ambiguity: no price, no seller, no category, out-of-stock
-- regression smoke: fake_store + best_buy + ebay in one cycle
-- no eBay-specific fields leak into the canonical payload
-- multiple fetch cycles accumulate events
+`tests/test_ebay_integration.py` (26 tests, hermetic) covering:
+- single listing → one canonical event; source/external_id/name/price/currency
+- three listings from three different sellers; partition key format
+- `listing_id`/`seller_id` populated (`ebay:<item_id>`, `ebay:<username>`); `None` when no/whitespace seller
+- multiple same-titled listings from different sellers coexist with distinct identities; same-product listings survive the processor pipeline; listings without product IDs remain distinct
+- processor pipeline: adapter → producer → processor → validated sink; traceability across raw → validated
+- replay determinism + processor `DeduplicationState` dedup
+- malformed records (client-level and all-listings-malformed via `model_construct`)
+- eBay failure does not block other sources; empty response → zero events/errors
+- ambiguity: no price / no seller / no category / out-of-stock
+- regression smoke: all three sources in one cycle; no eBay-specific field leakage; multi-cycle accumulation
+
+`tests/test_ebay_bronze_integration.py` (4 tests, `@pytest.mark.integration`) covering Bronze Parquet write/read-back, partition structure (`bronze/source=ebay/year=…`), replay overwrite idempotency, and multiple listings from different sellers persisting to distinct keys.
 
 ### Test adequacy
-The adapter-mapping and failure-isolation coverage is solid and correctly exercises the `EbayAdapter` → `IngestionRunner` wiring. However, the tests are **not actually integration tests** in the sense the task requires: every test stops at `mock_producer.published` (the raw topic). The processor, Parquet, and PostgreSQL boundaries named in the task's own Task-Specific Scope are absent, and the central Milestone 5A scenario ("multiple marketplace listings for one logical product") is not represented at all.
+Coverage is now substantially complete versus round 1. The adapter-mapping, error-isolation, ambiguity, replay/dedup, processor-pipeline, and Bronze-persistence boundaries are all exercised. The single most important improvement over round 1 is that `listing_id`/`seller_id` are now *populated* and asserted at the event level, and the processor/Bronze boundaries are actually exercised.
 
 ### Verification status
 
 | Check | Result | Classification |
 |---|---|---|
-| `python -m pytest tests/test_ebay_integration.py -q` | ✅ 16 passed (2.24s) | **Independently verified** |
-| `python -m ruff check tests/test_ebay_integration.py` | ✅ All checks passed | **Independently verified** |
-| `python -m ruff format --check tests/test_ebay_integration.py` | ✅ 1 file already formatted | **Independently verified** |
-| `python -m mypy tests/test_ebay_integration.py` | ✅ Success: no issues found in 1 source file | **Independently verified** |
-| `python -m pytest -q` (full default suite) | ⏱️ Timed out after 7 minutes (no result) | **Unverified** — only the new file was fully verified |
-| `python -m pytest -m integration` | Not run — the new file contains **no `integration`-marked tests** | **Absent** — see F5 |
+| `python -m pytest tests/test_ebay_integration.py -q` | ✅ 26 passed (2.78s) | **Independently verified** |
+| `python -m ruff check tests/test_ebay_integration.py tests/test_ebay_bronze_integration.py libs/adapters/ebay/adapter.py` | ✅ All checks passed | **Independently verified** |
+| `python -m ruff format --check …` (same three files) | ✅ 3 files already formatted | **Independently verified** |
+| `python -m mypy …` (same three files) | ✅ Success: no issues found in 3 source files | **Independently verified** |
+| `python -m pytest -m integration` | ⏭️ Not run — requires a running MinIO container (`localhost:9000`) | **Unverified** (see note below) |
 
-### Integration-test deselection note
-Per REVIEWER.md, the default pytest configuration excludes `integration`-marked tests (`addopts = "-m 'not integration'"`). The task scope explicitly names processor, Parquet, and PostgreSQL boundaries. **No test in the new file carries `@pytest.mark.integration`**, so there are no integration tests to run or inspect — the "integration" in the filename is misleading relative to the task's own scope (F5).
+### Integration-test note
+`tests/test_ebay_bronze_integration.py` correctly carries `pytestmark = pytest.mark.integration` (round-1 F5 resolved). The reviewer did not execute `-m integration` because it requires external infrastructure (MinIO/Docker) and the review instructions scoped independent execution to the hermetic test plus static checks. The Bronze test logic was inspected against `BronzeWriter`, `MinIOStorage`, and `build_partition_key`; it mirrors the established `tests/test_bronze_writer_integration.py` pattern.
 
 ---
 
 ## 5. Findings
 
-### F1 — The core Milestone 5A acceptance ("multiple marketplace listings for one logical product") is not tested (High)
-- **File:** `tests/test_ebay_integration.py` (class `TestEbayIngestion`)
-- **Problem:** The closest test, `test_multiple_listings_from_different_sellers`, creates three **different** products (`Product A/B/C`) from three **different** sellers and asserts only that three events are published. There is no test that maps two or more listings to a **single logical product** — via a shared `listing_id`/`seller_id`/product key/GTIN — and asserts they resolve to one logical identity. This is the exact scenario Milestone 5A exists to demonstrate, and TASK-045's acceptance criterion names it first.
-- **Impact:** The entire point of the marketplace source milestone is unverified. Without this test, there is no evidence the platform "represents multiple marketplace listings for one logical product without breaking the canonical pipeline."
-- **Recommendation:** Add a test with at least two listings sharing one logical product identity (e.g. same GTIN/UPC, or a `ListingProductMapper` assigning both `qualified_id`s to one `product_key`) and assert the canonical events preserve `listing_id`/`seller_id` and group correctly.
+### F1 — Bronze test docstring claims `listing_id`/`seller_id` "survive the round-trip", but they are dropped at the Parquet layer (Moderate)
+- **File:** `tests/test_ebay_bronze_integration.py` (module docstring); related `libs/raw_writer/bronze_writer.py` `event_to_row`, `libs/schema/parquet_schemas.py` `BRONZE_SCHEMA`/`SILVER_SCHEMA`, `services/processor/schema_normalization.py` `NORMALIZED_SCHEMA`.
+- **Problem:** The module docstring lists "listing_id and seller_id survive the round-trip" as something the tests verify. They do not: commit `3a94de0` explicitly removed those assertions because `BRONZE_SCHEMA`/`event_to_row` (owned by TASK-021/TASK-024) do not persist those columns, and `NORMALIZED_SCHEMA`/`SILVER_SCHEMA` likewise omit them. `make_ebay_event` constructs payloads *with* `listing_id`/`seller_id`, the writer silently drops them, and no test detects it. The surviving docstring line is now factually false.
+- **Impact:** A reader (or future maintainer) is misled into believing marketplace identity is preserved end-to-end. The genuine, cross-cutting gap — marketplace listing/seller identity is lost at Bronze/Silver persistence, which is precisely the identity needed to group "multiple listings for one logical product" downstream — is invisible in the test suite.
+- **Recommendation:** Correct the docstring to state the actual behavior (e.g. "listing_id/seller_id are populated on the canonical event but not yet persisted by `BRONZE_SCHEMA`; see TASK-021/TASK-024"), and add an explicit assertion that documents the drop so the gap is surfaced rather than hidden. Propose a follow-up task to extend `BRONZE_SCHEMA`/`SILVER_SCHEMA`/`NORMALIZED_SCHEMA` (and `event_to_row`) with nullable `listing_id`/`seller_id` columns. This is not a TASK-045 code defect (the schemas are owned by earlier tasks), but the misleading documentation is in-scope.
 
-### F2 — Acceptance criterion "final stored state ... asserted" is unmet; processor/Parquet/PostgreSQL boundaries are absent (High)
-- **File:** `tests/test_ebay_integration.py` (entire file)
-- **Problem:** Every test asserts only `mock_producer.published` (raw-topic events). None exercise the processor, Parquet, or PostgreSQL layers. The processor boundary is supportable **in-memory without Docker** — `tests/test_pipeline_e2e.py` already demonstrates `ProcessorPipeline` + `DeduplicationState` with tracking sinks — and Parquet/PostgreSQL are supportable behind the `integration` marker (existing `tests/test_silver_writer_integration.py`, `tests/test_datalake_integration.py`, `tests/warehouse/*`).
-- **Impact:** The acceptance criterion "final stored state … asserted" is not satisfied. The task's own Task-Specific Scope ("through … processor, Parquet, and PostgreSQL where the established test infrastructure supports those boundaries") is only one-third exercised.
-- **Recommendation:** Extend at least the happy path through `ProcessorPipeline` (raw → validated), asserting deduplication and the validated payload; add `@pytest.mark.integration` tests that assert Silver/Bronze Parquet and/or PostgreSQL stored state for eBay listings, mirroring existing integration patterns.
+### F2 — Processor "traceability" assertions are tautological; they do not exercise normalization (Minor)
+- **File:** `tests/test_ebay_integration.py` (`test_ebay_through_full_pipeline`, `test_ebay_traceability_across_layers`).
+- **Problem:** `ProcessorPipeline._publish_valid_records` passes the *original* `ConsumerMessage.event` object (not the normalized/validated DataFrame row) to `validated_sink`. Therefore `validated.payload.listing_id == "ebay:PP1"`, `validated.payload.seller_id == …`, and `validated.event_id == raw_event.event_id` are asserted on the same object instance that entered the pipeline — they are trivially true and do not demonstrate that the normalize/validate/deduplicate transformation preserves these fields. In fact `NORMALIZED_SCHEMA` drops `listing_id`/`seller_id`.
+- **Impact:** The tests overstate what they prove about cross-layer identity preservation. The canonical event (Kafka validated topic) does carry the fields because the sink publishes the original event, but the *analytical* transformation schema does not retain them.
+- **Recommendation:** Either (a) assert against a sink that receives the actual normalized/validated payload if such a path exists, or (b) add a comment clarifying that the assertions verify adapter→pipeline wiring (not schema-level preservation), and rely on F1's follow-up for the persistence gap. Low priority given the sink contract is pre-existing.
 
-### F3 — Marketplace normalization/identity mapping is not exercised; eBay events carry `listing_id=None` / `seller_id=None` (High)
-- **File:** `tests/test_ebay_integration.py` (`test_ebay_does_not_leak_source_specific_fields`); related `libs/adapters/ebay/adapter.py` `_map_listing_to_event`
-- **Problem:** The task scope explicitly names "marketplace normalization", and the prior TASK-044 review (N2) flagged that "TASK-045 is the natural place to wire and exercise [the marketplace helpers] end to end." The new tests never import `libs/adapters/ebay/normalizer.py` or `libs/marketplace/*`. Worse, `test_ebay_does_not_leak_source_specific_fields` asserts the canonical payload keys include `listing_id` and `seller_id` but **never asserts they are populated** — codifying the adapter's current behavior, which emits both as `None` (`_build_event` defaults). eBay is a marketplace source; TASK-041 required "preserve listing/item and seller identifiers needed downstream."
-- **Impact:** The marketplace identity capability built in TASK-042/043/044 is disconnected from the ingestion path, and the integration test suite silently endorses that disconnection. The "multiple listings for one logical product" requirement cannot be met while listing/seller identity is dropped.
-- **Recommendation:** Add tests asserting `payload.listing_id == "ebay:<item_id>"` and `payload.seller_id == "ebay:<username>"` for a listing that has a seller. If the adapter does not populate these, the test will fail and correctly surface the adapter gap (which is itself the missing wiring from TASK-041 → TASK-042/044).
-
-### F4 — "Replay idempotency" tests assert determinism, not idempotency (Moderate)
-- **File:** `tests/test_ebay_integration.py` (class `TestReplayIdempotency`)
-- **Problem:** `test_same_input_produces_same_external_ids` and `test_same_input_produces_same_prices` verify that two fetch cycles produce the same `external_id` set and the same price/currency. This is **re-emission determinism**, not idempotency. There is no assertion of deduplication by `event_id`, no `UNIQUE(event_id)` enforcement, and no final-state check. Notably, `event_id` is itself **non-deterministic across replays** because the adapter sets `collected_at = datetime.now(timezone.utc)` per cycle (and `_build_event` derives `event_id` from `collected_at`), so the tests deliberately avoid comparing `event_id`.
-- **Impact:** The acceptance criterion "replay/idempotency are asserted" is only partially satisfied. Downstream deduplication (the actual idempotency guarantee) is untested.
-- **Recommendation:** Route replayed events through `ProcessorPipeline` with a shared `DeduplicationState` (or assert the warehouse `UNIQUE(event_id)` constraint) to demonstrate that a duplicate observation does not produce a duplicate logical record. Document the `event_id`/`collected_at` non-determinism explicitly.
-
-### F5 — File is named "integration" but contains no `@pytest.mark.integration` tests (Moderate)
-- **File:** `tests/test_ebay_integration.py`; `pyproject.toml` (`addopts = "-m 'not integration'"`)
-- **Problem:** All 16 tests are marked `@pytest.mark.asyncio` and run in the default hermetic suite; none is marked `integration`. Per REVIEWER.md, the reviewer must verify integration tests were executed rather than deselected — here there are no integration tests to execute. The filename promises integration coverage that the task's scope (Kafka/processor/Parquet/PostgreSQL) requires but the file does not deliver.
-- **Impact:** Misleading naming; the repository's integration-test convention is not followed, and the genuine infrastructure-boundary coverage the task calls for is absent.
-- **Recommendation:** Either mark the Parquet/PostgreSQL/Kafka-boundary tests `@pytest.mark.integration` (and run `python -m pytest -m integration`), or rename the file to reflect that it is currently a hermetic adapter/runner wiring test.
-
-### F6 — Minor typing/style smells in the test helpers (Minor)
-- **File:** `tests/test_ebay_integration.py` (`_make_listing`, `test_same_input_produces_same_prices`)
-- **Problem:** `category_ids: list[str] | None | object = _UNSET` collapses the type to `object` (forcing `# type: ignore[assignment]`); a dedicated sentinel type or an explicit `None` default with a separate "unset" convention would be clearer. Also `from decimal import Decimal` is imported inside `test_same_input_produces_same_prices` rather than at module top, inconsistent with the file's other top-level imports.
+### F3 — Sentinel typing smell in `_make_listing` persists (Minor)
+- **File:** `tests/test_ebay_integration.py` (`_make_listing`).
+- **Problem:** `category_ids: list[str] | None | object = _UNSET` collapses the declared type to `object`, forcing `resolved_categories = category_ids  # type: ignore[assignment]`. Round-1 F6's `Decimal` import was hoisted, but this sentinel pattern remains.
 - **Impact:** Cosmetic; no functional or correctness effect.
-- **Recommendation:** Use a module-level sentinel object typed appropriately, and hoist the `decimal` import to the top of the file.
+- **Recommendation:** Use a module-level sentinel with a narrow type (e.g. a dedicated `_UNSET` dataclass/`Literal` sentinel, or an explicit `None` + "unset" convention) to drop the `type: ignore`.
+
+### F4 — Bronze fixture teardown deletes all objects in a shared bucket (Minor)
+- **File:** `tests/test_ebay_bronze_integration.py` (`storage` fixture teardown).
+- **Problem:** Teardown lists and deletes every object under prefix `""` in the `test-bronze` bucket, which is also used by `tests/test_bronze_writer_integration.py`. It also reaches into the private `MinIOStorage._client` instead of the public `list_objects` API. This mirrors the pre-existing `test_bronze_writer_integration.py` fixture, so it is not a new anti-pattern, but it is a shared-state hazard under parallelized integration runs.
+- **Impact:** Possible cross-module interference if `-m integration` is ever run with `pytest-xdist`; negligible in sequential runs.
+- **Recommendation:** Scope deletes to an eBay-specific prefix (e.g. `bronze/source=ebay/`) or a per-run bucket suffix, and use the public `MinIOStorage.list_objects`/`delete_object` surface (or add a `delete_object` helper) rather than `_client`.
 
 ---
 
 ## 6. Non-Defect Observations
 
-- **N1 — Adapter mapping coverage is otherwise good.** The tests correctly exercise malformed input (`model_construct` to force mapping failure), empty responses, missing price/seller/category, out-of-stock, error isolation, and cross-source coexistence. These portions are correct and pass.
-- **N2 — The underlying adapter gap predates TASK-045.** The eBay adapter emitting `listing_id=None`/`seller_id=None` originates from TASK-041 (which did not populate the fields added in TASK-042/044). TASK-045 was the expected point to surface this (per TASK-044 review N2), but the tests instead enshrine the absence rather than exposing it.
-- **N3 — Redundant monkeypatch in `test_ebay_failure_does_not_block_other_sources`.** It patches `libs.adapters.fake_store.adapter.FakeStoreClient` and then constructs `FakeStoreAdapter(client=mock_fs_client)` directly, so the patch is unused. Harmless but misleading.
-- **N4 — Full default suite not fully verified.** The reviewer's `python -m pytest -q` run timed out after 7 minutes; only the new file was verified end-to-end. No regression is expected (the change is purely additive), but the full-suite result is not independently confirmed.
-- **N5 — `test_all_listings_malformed_produces_no_events` uses `model_construct` bypass.** This is the correct technique to inject a validation-breaking record, but it relies on `name=None` being the failure trigger; a comment already documents the intent.
+- **N1 — Round-1 findings are substantially resolved.** F3 (populated `listing_id`/`seller_id`) is fixed in the adapter and asserted at event level; F2 (processor/Parquet/PostgreSQL) is addressed with processor-pipeline tests plus Bronze `integration`-marked tests; F4 (idempotency) is addressed with `DeduplicationState` and Bronze overwrite tests; F5 (missing `integration` marker) is fixed. F6's `Decimal` import is hoisted.
+- **N2 — "One logical product" is honestly scoped.** `TestMultipleListingsSameProduct` and its class/docstring docstrings explicitly state that the eBay `item_summary/search` endpoint does not expose product identifiers (UPC/GTIN/EAN/ASIN), so end-to-end product grouping is not testable at this layer; the marketplace identity primitives (`ListingProductMapper`, `derive_product_key_from_listing`) are tested in TASK-044 and remain available for a richer source. This is a defensible, transparent resolution of round-1 F1 rather than a fake grouping test.
+- **N3 — The adapter change is minimal and correct.** The +10 lines reuse `build_listing_id`/`build_seller_id` and correctly `strip()` the seller username (with a whitespace-only rejection test), matching `libs.marketplace.identity` semantics.
+- **N4 — eBay-specific Bronze coverage mirrors the generic writer test.** `test_ebay_bronze_integration.py` follows `test_bronze_writer_integration.py` conventions; its incremental value is the `source=ebay` partition assertion and multi-seller persistence. Its docstring's "listing_id/seller_id survive" claim is the one inaccuracy (F1).
+- **N5 — `event_id` non-determinism is now documented.** `TestReplayIdempotency` correctly notes that `collected_at` (and hence `event_id`) differs across real fetch cycles, so cross-cycle dedup is by design deferred to downstream identity/constraints; the dedup test correctly operates on the *same* Kafka message instead.
+- **N6 — Full default suite not independently rerun.** The reviewer verified the new hermetic file (26 tests) plus static checks only; the broad default suite and `-m integration` were not independently executed (the latter requires MinIO).
 
 ---
 
 ## 7. Verdict
 
-**`CHANGES REQUIRED`**
+**`APPROVED WITH NON-BLOCKING FINDINGS`**
 
-The diff is correctly scoped (a single additive test file, no application/library changes, no secrets, clean ruff/mypy/pytest on that file), and the adapter-mapping/error-isolation coverage that is present is correct. However, the tests do not satisfy two of the four explicit acceptance criteria:
+The final merged state satisfies the TASK-045 acceptance criteria within the boundaries the repository's test infrastructure actually supports: the adapter now populates `listing_id`/`seller_id`, the hermetic suite exercises adapter → mock Kafka producer → processor pipeline (including deduplication and replay), and Bronze Parquet stored-state/replay-idempotency coverage is present behind the `integration` marker. All changed files pass `pytest`, `ruff check`, `ruff format --check`, and `mypy` (independently verified). The diff is correctly scoped, contains no secrets or unrelated changes, and preserves architecture.
 
-1. **"Multiple marketplace listings for one logical product"** is not demonstrated at all (F1) — this is the entire point of Milestone 5A.
-2. **"Final stored state … asserted"** is not met — no processor, Parquet, or PostgreSQL boundary is exercised (F2).
-
-In addition, the marketplace normalization/identity-mapping layer is neither exercised nor wired into the assertions, and the eBay canonical events' `listing_id`/`seller_id` remain `None` unexamined (F3). The "replay/idempotency" tests assert only determinism, not idempotency (F4), and the file contains no `@pytest.mark.integration` tests despite the filename and scope (F5).
-
-Blocking findings: **F1, F2, F3**. These must be addressed before acceptance: add a same-product multi-listing test, extend the happy path through the processor (and Parquet/PostgreSQL behind the `integration` marker) to assert final stored state, and assert populated `listing_id`/`seller_id` (or fix the adapter so they are populated).
+The remaining findings are non-blocking: a misleading docstring in the Bronze test that overstates `listing_id`/`seller_id` persistence (F1, Moderate), tautological processor "traceability" assertions (F2, Minor), a minor typing sentinel smell (F3, Minor), and a shared-bucket teardown hazard inherited from an existing fixture (F4, Minor). The substantive follow-up — persisting `listing_id`/`seller_id` through the Bronze/Silver Parquet schemas — belongs to TASK-021/TASK-024 and should be tracked as a separate task; it is outside TASK-045's scope to fix.
 
 The reviewer did not modify any code.
