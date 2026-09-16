@@ -163,6 +163,9 @@ class EbayAdapter(SourceAdapterProtocol):
         # Build URL - prefer item_web_url, fallback to constructed URL
         url = summary.item_web_url or f"https://www.ebay.com/itm/{summary.item_id}"
 
+        listing_id = f"ebay:{summary.item_id}"
+        seller_id = f"ebay:{summary.seller.username}" if summary.seller else None
+
         return self._build_event(
             source=self.source_name,
             external_id=summary.item_id,
@@ -173,6 +176,8 @@ class EbayAdapter(SourceAdapterProtocol):
             availability=availability,
             category=self._extract_category(summary),
             collected_at=collected_at,
+            listing_id=listing_id,
+            seller_id=seller_id,
         )
 
     @staticmethod

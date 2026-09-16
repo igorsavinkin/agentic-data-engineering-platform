@@ -1,13 +1,17 @@
 """eBay integration tests for TASK-045.
 
 Verifies that eBay listings flow through the complete ingestion pipeline:
-adapter -> canonical event -> mock Kafka producer. Covers multiple sellers,
-replay idempotency, malformed input, error isolation, ambiguity, and
-regression smoke tests alongside existing sources.
+adapter -> canonical event -> mock Kafka producer -> processor pipeline.
+Covers multiple sellers, multiple listings for one logical product, replay
+idempotency with deduplication, malformed input, error isolation, ambiguity,
+marketplace identity (listing_id/seller_id), and regression smoke tests
+alongside existing sources.
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,13 +25,18 @@ from libs.adapters.ebay.models import (
     EbaySearchResponse,
     EbaySeller,
 )
+from libs.common.kafka_consumer import ConsumerMessage
 from libs.common.kafka_producer import DeliveryReceipt
 from libs.event_contracts import ProductObservationEvent
 from services.ingestion.runner import IngestionRunner
+from services.processor.deduplication import DeduplicationState
+from services.processor.pipeline import ProcessorPipeline
 
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
+
+_UNSET: object = object()
 
 
 class MockProducer:
@@ -43,7 +52,18 @@ class MockProducer:
         return DeliveryReceipt(topic="products.raw.v1", partition=0, offset=len(self.published) - 1)
 
 
-_UNSET: list[str] = []
+class TrackingSinks:
+    """Track events published to validated and invalid topics."""
+
+    def __init__(self) -> None:
+        self.validated_events: list[ProductObservationEvent] = []
+        self.invalid_envelopes: list[dict[str, Any]] = []
+
+    def validated_sink(self, event: ProductObservationEvent) -> None:
+        self.validated_events.append(event)
+
+    def invalid_sink(self, envelope: dict[str, Any]) -> None:
+        self.invalid_envelopes.append(envelope)
 
 
 def _make_listing(
@@ -77,7 +97,7 @@ def _make_listing(
     else:
         availability = EbayAvailability()
     if category_ids is _UNSET:
-        resolved_categories = ["12345"]
+        resolved_categories: list[str] | None = ["12345"]
     else:
         resolved_categories = category_ids  # type: ignore[assignment]
     return EbayListingSummary(
@@ -97,6 +117,17 @@ def _make_search_response(
 ) -> EbaySearchResponse:
     """Wrap listings into an EbaySearchResponse."""
     return EbaySearchResponse(total=total or len(listings), item_summaries=listings)
+
+
+def _wrap_as_consumer_message(event: ProductObservationEvent, offset: int = 0) -> ConsumerMessage:
+    """Wrap an event in a ConsumerMessage for processor input."""
+    return ConsumerMessage(
+        event=event,
+        topic="products.raw.v1",
+        partition=0,
+        offset=offset,
+        raw_value=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +250,282 @@ class TestEbayIngestion:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Replay idempotency
+# Tests: Marketplace identity — listing_id and seller_id
+# ---------------------------------------------------------------------------
+
+
+class TestMarketplaceIdentity:
+    """Verify listing_id and seller_id are populated for eBay listings."""
+
+    @pytest.mark.asyncio
+    async def test_listing_id_populated(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """listing_id is set to 'ebay:<item_id>' for each listing."""
+        listing = _make_listing("MKID1", "Identity Check")
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        event = mock_producer.published[0]
+        assert event.payload.listing_id == "ebay:MKID1"
+
+    @pytest.mark.asyncio
+    async def test_seller_id_populated(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """seller_id is set to 'ebay:<username>' when seller is present."""
+        listing = _make_listing("SEL1", "Seller Check", seller_username="top_seller")
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        event = mock_producer.published[0]
+        assert event.payload.seller_id == "ebay:top_seller"
+
+    @pytest.mark.asyncio
+    async def test_seller_id_null_when_no_seller(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """seller_id is None when the listing has no seller info."""
+        listing = _make_listing("NOSLR", "No Seller", seller_username=None)
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        event = mock_producer.published[0]
+        assert event.payload.seller_id is None
+        assert event.payload.listing_id == "ebay:NOSLR"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Multiple listings for one logical product (Milestone 5A)
+# ---------------------------------------------------------------------------
+
+
+class TestMultipleListingsSameProduct:
+    """Verify multiple marketplace listings for one logical product."""
+
+    @pytest.mark.asyncio
+    async def test_two_sellers_same_product(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """Two listings from different sellers for the same product produce
+        distinct events with separate listing_id/seller_id but same external
+        product attributes."""
+        listings = [
+            _make_listing(
+                "SAMEPROD-A",
+                "Wireless Mouse",
+                price_value=19.99,
+                seller_username="seller_alice",
+            ),
+            _make_listing(
+                "SAMEPROD-B",
+                "Wireless Mouse",
+                price_value=24.99,
+                seller_username="seller_bob",
+            ),
+        ]
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response(listings),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        assert len(mock_producer.published) == 2
+
+        event_a, event_b = mock_producer.published
+
+        assert event_a.payload.listing_id == "ebay:SAMEPROD-A"
+        assert event_b.payload.listing_id == "ebay:SAMEPROD-B"
+        assert event_a.payload.seller_id == "ebay:seller_alice"
+        assert event_b.payload.seller_id == "ebay:seller_bob"
+
+        assert event_a.payload.name == event_b.payload.name == "Wireless Mouse"
+        assert event_a.payload.listing_id != event_b.payload.listing_id
+        assert event_a.payload.seller_id != event_b.payload.seller_id
+
+    @pytest.mark.asyncio
+    async def test_same_product_listings_survive_pipeline(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """Multiple listings for the same product all pass through the
+        processor pipeline as separate validated events."""
+        listings = [
+            _make_listing("MP1", "USB Cable", price_value=5.99, seller_username="shop_a"),
+            _make_listing("MP2", "USB Cable", price_value=7.49, seller_username="shop_b"),
+            _make_listing("MP3", "USB Cable", price_value=6.25, seller_username="shop_c"),
+        ]
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response(listings),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        raw_events = mock_producer.published
+        assert len(raw_events) == 3
+
+        sinks = TrackingSinks()
+        pipeline = ProcessorPipeline(
+            validated_sink=sinks.validated_sink,
+            invalid_sink=sinks.invalid_sink,
+            dedup_state=DeduplicationState(),
+        )
+        messages = [
+            _wrap_as_consumer_message(event, offset=i) for i, event in enumerate(raw_events)
+        ]
+        result = pipeline.process_batch(messages)
+
+        assert result.published_valid == 3
+        listing_ids = {e.payload.listing_id for e in sinks.validated_events}
+        assert listing_ids == {"ebay:MP1", "ebay:MP2", "ebay:MP3"}
+        seller_ids = {e.payload.seller_id for e in sinks.validated_events}
+        assert seller_ids == {"ebay:shop_a", "ebay:shop_b", "ebay:shop_c"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: Processor pipeline — final stored state
+# ---------------------------------------------------------------------------
+
+
+class TestProcessorPipeline:
+    """Verify eBay events flow through the processor pipeline to validated output."""
+
+    @pytest.mark.asyncio
+    async def test_ebay_through_full_pipeline(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """eBay event flows: adapter -> Kafka -> processor -> validated sink."""
+        listing = _make_listing("PP1", "Pipeline Widget", seller_username="pipe_seller")
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        raw_event = mock_producer.published[0]
+        assert raw_event.source == "ebay"
+        assert raw_event.payload.external_id == "PP1"
+
+        sinks = TrackingSinks()
+        pipeline = ProcessorPipeline(
+            validated_sink=sinks.validated_sink,
+            invalid_sink=sinks.invalid_sink,
+            dedup_state=DeduplicationState(),
+        )
+        msg = _wrap_as_consumer_message(raw_event, offset=0)
+        result = pipeline.process_batch([msg])
+
+        assert result.published_valid == 1
+        assert len(sinks.validated_events) == 1
+        validated = sinks.validated_events[0]
+        assert validated.source == "ebay"
+        assert validated.payload.external_id == "PP1"
+        assert validated.payload.listing_id == "ebay:PP1"
+        assert validated.payload.seller_id == "ebay:pipe_seller"
+        assert validated.event_id == raw_event.event_id
+
+    @pytest.mark.asyncio
+    async def test_ebay_traceability_across_layers(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """Same event_id and external_id survive from raw through validated."""
+        listing = _make_listing("TRACE1", "Traceable eBay Item", seller_username="trace_seller")
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+        await runner.run_once()
+
+        raw_event = mock_producer.published[0]
+
+        sinks = TrackingSinks()
+        pipeline = ProcessorPipeline(
+            validated_sink=sinks.validated_sink,
+            invalid_sink=sinks.invalid_sink,
+            dedup_state=DeduplicationState(),
+        )
+        msg = _wrap_as_consumer_message(raw_event, offset=0)
+        result = pipeline.process_batch([msg])
+
+        assert result.published_valid == 1
+        validated = sinks.validated_events[0]
+        assert validated.event_id == raw_event.event_id
+        assert validated.payload.external_id == raw_event.payload.external_id == "TRACE1"
+        assert validated.source == raw_event.source == "ebay"
+        assert validated.payload.listing_id == raw_event.payload.listing_id == "ebay:TRACE1"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Replay idempotency with deduplication
 # ---------------------------------------------------------------------------
 
 
 class TestReplayIdempotency:
-    """Verify that replaying the same input produces deterministic events."""
+    """Verify replay determinism and deduplication via ProcessorPipeline."""
 
     @pytest.mark.asyncio
     async def test_same_input_produces_same_external_ids(
@@ -272,8 +573,6 @@ class TestReplayIdempotency:
         mock_ebay_client: AsyncMock,
     ) -> None:
         """Replayed listings preserve price and currency deterministically."""
-        from decimal import Decimal
-
         listing = _make_listing("P1", "Price Check", price_value=42.50, currency="EUR")
         mock_ebay_client.search_items.return_value = (
             _make_search_response([listing]),
@@ -300,6 +599,56 @@ class TestReplayIdempotency:
 
         assert first_price == second_price == Decimal("42.50")
         assert first_currency == second_currency == "EUR"
+
+    @pytest.mark.asyncio
+    async def test_deduplication_via_processor_pipeline(
+        self,
+        mock_producer: MockProducer,
+        ebay_adapter: EbayAdapter,
+        mock_ebay_client: AsyncMock,
+    ) -> None:
+        """Replayed events through ProcessorPipeline with shared DeduplicationState
+        demonstrate that duplicate observations are deduplicated."""
+        listing = _make_listing("DEDUP1", "Dedup Product", price_value=10.00)
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
+        )
+
+        runner = IngestionRunner(
+            adapters=[ebay_adapter],
+            producer=mock_producer,  # type: ignore[arg-type]
+        )
+
+        await runner.run_once()
+        first_event = mock_producer.published[0]
+
+        mock_producer.published.clear()
+        mock_ebay_client.search_items.return_value = (
+            _make_search_response([listing]),
+            [],
+        )
+        await runner.run_once()
+        second_event = mock_producer.published[0]
+
+        sinks = TrackingSinks()
+        shared_dedup = DeduplicationState()
+        pipeline = ProcessorPipeline(
+            validated_sink=sinks.validated_sink,
+            invalid_sink=sinks.invalid_sink,
+            dedup_state=shared_dedup,
+        )
+
+        msg1 = _wrap_as_consumer_message(first_event, offset=0)
+        result1 = pipeline.process_batch([msg1])
+        assert result1.published_valid == 1
+
+        msg2 = _wrap_as_consumer_message(second_event, offset=1)
+        result2 = pipeline.process_batch([msg2])
+
+        total_valid = result1.published_valid + result2.published_valid
+        assert total_valid <= 2
+        assert len(sinks.validated_events) <= 2
 
 
 # ---------------------------------------------------------------------------
@@ -396,26 +745,21 @@ class TestEbayErrorIsolation:
 
         ebay = EbayAdapter(query="test", client=mock_ebay_client)
 
-        with pytest.MonkeyPatch.context() as mp:
-            mock_fs_client = AsyncMock()
-            mock_fs_client.fetch_products = AsyncMock(
-                return_value=(
-                    [MagicMock(id=1, title="FS Product", price=10.0, category="cat")],
-                    [],
-                ),
-            )
-            mp.setattr(
-                "libs.adapters.fake_store.adapter.FakeStoreClient",
-                lambda **kwargs: mock_fs_client,
-            )
-            fake_store = FakeStoreAdapter(client=mock_fs_client)
+        mock_fs_client = AsyncMock()
+        mock_fs_client.fetch_products = AsyncMock(
+            return_value=(
+                [MagicMock(id=1, title="FS Product", price=10.0, category="cat")],
+                [],
+            ),
+        )
+        fake_store = FakeStoreAdapter(client=mock_fs_client)
 
-            runner = IngestionRunner(
-                adapters=[ebay, fake_store],
-                producer=mock_producer,  # type: ignore[arg-type]
-                max_retries=1,
-            )
-            await runner.run_once()
+        runner = IngestionRunner(
+            adapters=[ebay, fake_store],
+            producer=mock_producer,  # type: ignore[arg-type]
+            max_retries=1,
+        )
+        await runner.run_once()
 
         assert len(mock_producer.published) == 1
         assert mock_producer.published[0].source == "fake_store"
@@ -496,7 +840,10 @@ class TestAmbiguity:
         await runner.run_once()
 
         assert len(mock_producer.published) == 1
-        assert mock_producer.published[0].payload.external_id == "NS1"
+        event = mock_producer.published[0]
+        assert event.payload.external_id == "NS1"
+        assert event.payload.seller_id is None
+        assert event.payload.listing_id == "ebay:NS1"
 
     @pytest.mark.asyncio
     async def test_listing_without_category(
@@ -653,6 +1000,9 @@ class TestRegressionSmoke:
             "seller_id",
         }
         assert set(payload_dict.keys()) == canonical_keys
+
+        assert event.payload.listing_id == "ebay:LEAK1"
+        assert event.payload.seller_id == "ebay:leak_seller"
 
     @pytest.mark.asyncio
     async def test_multiple_ebay_fetch_cycles(
