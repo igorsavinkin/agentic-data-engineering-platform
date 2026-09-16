@@ -10,7 +10,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 class EbayPrice(BaseModel):
     """Price object from eBay Browse API."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     value: float = Field(..., description="Price amount")
     currency: str = Field(..., description="ISO-4217 currency code")
@@ -19,7 +19,7 @@ class EbayPrice(BaseModel):
 class EbayAvailability(BaseModel):
     """Availability information from eBay listing."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     ship_to_location_availability: list[dict] = Field(
         default_factory=list,
@@ -46,7 +46,7 @@ class EbayAvailability(BaseModel):
 class EbaySeller(BaseModel):
     """Seller information from eBay listing."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     username: str = Field(..., description="Seller username")
     feedback_score: Optional[int] = Field(
@@ -64,7 +64,7 @@ class EbaySeller(BaseModel):
 class EbayImage(BaseModel):
     """Image reference from eBay listing."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     image_url: Optional[str] = Field(
         None,
@@ -81,7 +81,7 @@ class EbayListingSummary(BaseModel):
     for basic price/availability observations without full item detail.
     """
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     item_id: str = Field(
         ...,
@@ -109,7 +109,7 @@ class EbayListingSummary(BaseModel):
 class EbaySearchResponse(BaseModel):
     """Top-level response from eBay Browse API item_summary search."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     total: int = Field(..., description="Total number of matching listings")
     item_summaries: list[EbayListingSummary] = Field(

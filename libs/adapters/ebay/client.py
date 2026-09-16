@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from typing import Any, Optional
 
@@ -88,11 +89,12 @@ class EbayClient:
 
         client = await self._get_client()
 
-        # eBay uses Basic auth with app_id:cert_id for token endpoint
-        auth_string = f"{self._app_id}:{self._cert_id}"
+        # eBay uses Basic auth with base64-encoded app_id:cert_id (RFC 7617)
+        credentials = f"{self._app_id}:{self._cert_id}".encode("utf-8")
+        encoded_credentials = base64.b64encode(credentials).decode("ascii")
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {auth_string}",
+            "Authorization": f"Basic {encoded_credentials}",
         }
         data = {
             "grant_type": "client_credentials",
@@ -214,7 +216,7 @@ class EbayClient:
             return response
 
         try:
-            response = await retryer(_do_request)
+            response: httpx.Response = await retryer(_do_request)
         except SourceFetchError:
             raise
         except httpx.HTTPStatusError as exc:
@@ -261,7 +263,8 @@ class EbayClient:
 
         # Extract total and raw item summaries
         total = data.get("total", 0)
-        raw_summaries = data.get("itemSummaries", data.get("item_summaries", []))
+        raw_items = data.get("itemSummaries", data.get("item_summaries", []))
+        raw_summaries: list[dict[str, Any]] = raw_items if raw_items is not None else []
 
         # Validate individual item summaries
         valid_summaries: list[EbayListingSummary] = []
