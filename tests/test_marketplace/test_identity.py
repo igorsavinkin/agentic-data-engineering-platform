@@ -372,6 +372,69 @@ def test_extract_priority_order_gtin_first() -> None:
     assert result == ("upc", "012345678905")
 
 
+def test_extract_gtin_valid_8_digits() -> None:
+    """Valid GTIN-8 (8 digits) is extracted."""
+    metadata = {"gtin": "12345678"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "12345678")
+
+
+def test_extract_gtin_valid_12_digits() -> None:
+    """Valid GTIN-12 (same as UPC-A) is extracted."""
+    metadata = {"gtin": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "012345678905")
+
+
+def test_extract_gtin_valid_13_digits() -> None:
+    """Valid GTIN-13 (same as EAN-13) is extracted."""
+    metadata = {"gtin": "5901234123457"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "5901234123457")
+
+
+def test_extract_gtin_valid_14_digits() -> None:
+    """Valid GTIN-14 (14 digits) is extracted."""
+    metadata = {"gtin": "00123456789050"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "00123456789050")
+
+
+def test_extract_invalid_gtin_rejected() -> None:
+    """Invalid GTIN format (non-numeric or wrong length) returns None."""
+    metadata = {"gtin": "not-a-real-gtin"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_invalid_gtin_too_short_rejected() -> None:
+    """GTIN shorter than 8 digits is rejected."""
+    metadata = {"gtin": "1234567"}  # 7 digits
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_invalid_gtin_too_long_rejected() -> None:
+    """GTIN longer than 14 digits is rejected."""
+    metadata = {"gtin": "12345678901234567"}  # 17 digits
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result is None
+
+
+def test_extract_gtin_shadows_upc_when_both_present() -> None:
+    """Valid GTIN takes precedence over valid UPC when both exist."""
+    metadata = {"gtin": "00123456789050", "upc": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("gtin", "00123456789050")
+
+
+def test_extract_invalid_gtin_allows_fallback_to_upc() -> None:
+    """Invalid GTIN is skipped, allowing valid UPC to be used."""
+    metadata = {"gtin": "junk", "upc": "012345678905"}
+    result = extract_product_identifier_from_metadata(metadata)
+    assert result == ("upc", "012345678905")
+
+
 # ---------------------------------------------------------------------------
 # derive_product_key_from_listing (TASK-044)
 # ---------------------------------------------------------------------------
@@ -473,7 +536,7 @@ def test_mapper_integration_multiple_listings_one_product() -> None:
     key1 = derive_product_key_from_listing("ebay", "ebay:L1", metadata1)
     key2 = derive_product_key_from_listing("ebay", "ebay:L2", metadata2)
 
-    assert key1 == key2  # Same product key
+    assert key1 == key2 == "ebay:012345678905"  # Same product key, narrowed to str
     mapper.assign("ebay:L1", key1)
     mapper.assign("ebay:L2", key2)
 

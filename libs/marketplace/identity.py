@@ -126,6 +126,7 @@ _PRODUCT_ID_KEYS = [
 
 # Regex patterns for validating common product identifier formats.
 _GTIN_PATTERNS = {
+    "gtin": re.compile(r"^\d{8,14}$"),  # GTIN-8/12/13/14: variable digit length
     "upc": re.compile(r"^\d{12}$"),  # UPC-A: 12 digits
     "ean": re.compile(r"^\d{13}$"),  # EAN-13: 13 digits
     "isbn": re.compile(r"^(?:97[89])?\d{9}[\dX]$"),  # ISBN-10/13
