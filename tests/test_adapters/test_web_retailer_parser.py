@@ -22,7 +22,7 @@ import pytest
 
 from libs.adapters import SourceFetchError
 from libs.adapters.web_retailer import WebRetailerAdapter, WebRetailerClient
-from libs.adapters.web_retailer.parser import parse_listing_page
+from libs.adapters.web_retailer.parser import extract_next_page_url, parse_listing_page
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "web_retailer"
 PAGE_URL = "http://books.toscrape.com/catalogue/category/books_1/index.html"
@@ -342,3 +342,73 @@ class TestAdapterIntegration:
             urls["A Light in the Attic"]
             == "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html"
         )
+
+
+# ---------------------------------------------------------------------------
+# Parser: pagination extraction (TASK-048)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractNextPageUrl:
+    """Tests for extract_next_page_url() pagination link extraction."""
+
+    def test_extracts_next_page_relative_link(self) -> None:
+        html = """\
+        <html><body>
+        <ul class="pager">
+            <li class="current">Page 1 of 3</li>
+            <li class="next"><a href="page-2.html">next</a></li>
+        </ul>
+        </body></html>
+        """
+        result = extract_next_page_url(html, PAGE_URL)
+        assert result == "http://books.toscrape.com/catalogue/category/books_1/page-2.html"
+
+    def test_returns_none_when_no_pager(self) -> None:
+        html = "<html><body><p>No pager here</p></body></html>"
+        assert extract_next_page_url(html, PAGE_URL) is None
+
+    def test_returns_none_on_last_page(self) -> None:
+        html = """\
+        <html><body>
+        <ul class="pager">
+            <li class="current">Page 3 of 3</li>
+        </ul>
+        </body></html>
+        """
+        assert extract_next_page_url(html, PAGE_URL) is None
+
+    def test_resolves_absolute_url(self) -> None:
+        html = """\
+        <html><body>
+        <ul class="pager">
+            <li class="next"><a href="http://example.com/page-2.html">next</a></li>
+        </ul>
+        </body></html>
+        """
+        result = extract_next_page_url(html, PAGE_URL)
+        assert result == "http://example.com/page-2.html"
+
+    def test_returns_none_for_empty_html(self) -> None:
+        assert extract_next_page_url("", PAGE_URL) is None
+        assert extract_next_page_url("   ", PAGE_URL) is None
+
+    def test_returns_none_when_no_page_url(self) -> None:
+        html = """\
+        <html><body>
+        <ul class="pager">
+            <li class="next"><a href="page-2.html">next</a></li>
+        </ul>
+        </body></html>
+        """
+        assert extract_next_page_url(html, "") is None
+
+    def test_returns_none_for_empty_href(self) -> None:
+        html = """\
+        <html><body>
+        <ul class="pager">
+            <li class="next"><a href="">next</a></li>
+        </ul>
+        </body></html>
+        """
+        assert extract_next_page_url(html, PAGE_URL) is None

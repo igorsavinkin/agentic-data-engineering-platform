@@ -1,17 +1,23 @@
-"""Tests for the web retailer adapter (TASK-046).
+"""Tests for the web retailer adapter (TASK-046/047/048).
 
 Covers:
 - adapter construction and source_name correctness
 - HTTP client success (mocked 200 response returns HTML body)
 - HTTP client failure modes (timeout, 403, 404, 500, connection error)
 - configuration via environment variables
-- configuration validation (missing/invalid base URL, timeout)
+- configuration validation (missing/invalid base URL, timeout, max_retries)
 - adapter protocol compliance (returns FetchResult, event source matches)
 - empty HTML body raises SourceFetchError
+- TASK-048: retry with exponential backoff for transient failures
+- TASK-048: 429 with Retry-After header
+- TASK-048: pagination across multiple pages
+- TASK-048: max_pages limit
+- TASK-048: partial page failure returns collected pages
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -20,6 +26,8 @@ import pytest
 from libs.adapters import FetchResult, SourceFetchError
 from libs.adapters.web_retailer.adapter import WebRetailerAdapter
 from libs.adapters.web_retailer.client import WebRetailerClient
+
+FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "web_retailer"
 
 SAMPLE_HTML = """\
 <!DOCTYPE html>
@@ -46,10 +54,12 @@ def _mock_httpx_response(
     *,
     status_code: int = 200,
     text: str = SAMPLE_HTML,
+    headers: dict[str, str] | None = None,
 ) -> MagicMock:
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
     resp.text = text
+    resp.headers = headers or {}
     if status_code >= 400:
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
             message=f"HTTP {status_code}",
@@ -111,21 +121,21 @@ class TestWebRetailerClient:
             await client.fetch_listing_page()
 
     @pytest.mark.asyncio
-    async def test_fetch_429_raises_source_fetch_error(self) -> None:
+    async def test_fetch_429_raises_source_fetch_error_after_retries(self) -> None:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _mock_httpx_response(status_code=429)
 
-        client = WebRetailerClient(http_client=mock_client)
+        client = WebRetailerClient(http_client=mock_client, max_retries=1)
 
         with pytest.raises(SourceFetchError, match="429"):
             await client.fetch_listing_page()
 
     @pytest.mark.asyncio
-    async def test_fetch_500_raises_source_fetch_error(self) -> None:
+    async def test_fetch_500_raises_source_fetch_error_after_retries(self) -> None:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _mock_httpx_response(status_code=500)
 
-        client = WebRetailerClient(http_client=mock_client)
+        client = WebRetailerClient(http_client=mock_client, max_retries=1)
 
         with pytest.raises(SourceFetchError, match="500"):
             await client.fetch_listing_page()
@@ -135,7 +145,7 @@ class TestWebRetailerClient:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.side_effect = httpx.TimeoutException("timed out")
 
-        client = WebRetailerClient(http_client=mock_client)
+        client = WebRetailerClient(http_client=mock_client, max_retries=1)
 
         with pytest.raises(SourceFetchError, match="timed out"):
             await client.fetch_listing_page()
@@ -145,7 +155,7 @@ class TestWebRetailerClient:
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.side_effect = httpx.ConnectError("connection refused")
 
-        client = WebRetailerClient(http_client=mock_client)
+        client = WebRetailerClient(http_client=mock_client, max_retries=1)
 
         with pytest.raises(SourceFetchError, match="connection"):
             await client.fetch_listing_page()
@@ -166,6 +176,136 @@ class TestWebRetailerClient:
 
 
 # ---------------------------------------------------------------------------
+# Retry tests (TASK-048)
+# ---------------------------------------------------------------------------
+
+
+class TestClientRetry:
+    """Tests for retry behavior with transient HTTP failures."""
+
+    @pytest.mark.asyncio
+    async def test_retry_on_500_then_success(self) -> None:
+        """500 on first attempt, 200 on second → returns HTML."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.side_effect = [
+            _mock_httpx_response(status_code=500),
+            _mock_httpx_response(status_code=200, text=SAMPLE_HTML),
+        ]
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+        html = await client.fetch_listing_page()
+
+        assert html == SAMPLE_HTML
+        assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_exhaustion_raises_source_fetch_error(self) -> None:
+        """3 consecutive 500s → SourceFetchError after exhausting retries."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.return_value = _mock_httpx_response(status_code=500)
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+
+        with pytest.raises(SourceFetchError, match="after 3 attempts"):
+            await client.fetch_listing_page()
+
+        assert mock_client.get.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_retry_on_timeout_then_success(self) -> None:
+        """Timeout on first attempt, success on second."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.side_effect = [
+            httpx.TimeoutException("timed out"),
+            _mock_httpx_response(status_code=200, text=SAMPLE_HTML),
+        ]
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+        html = await client.fetch_listing_page()
+
+        assert html == SAMPLE_HTML
+        assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_on_connection_error_then_success(self) -> None:
+        """Connection error on first attempt, success on second."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.side_effect = [
+            httpx.ConnectError("connection refused"),
+            _mock_httpx_response(status_code=200, text=SAMPLE_HTML),
+        ]
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+        html = await client.fetch_listing_page()
+
+        assert html == SAMPLE_HTML
+        assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_429_with_retry_after_respects_header(self) -> None:
+        """429 with Retry-After header waits and retries."""
+        from unittest.mock import patch
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.side_effect = [
+            _mock_httpx_response(status_code=429, headers={"Retry-After": "0"}),
+            _mock_httpx_response(status_code=200, text=SAMPLE_HTML),
+        ]
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+
+        with patch(
+            "libs.adapters.web_retailer.client.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            html = await client.fetch_listing_page()
+
+        assert html == SAMPLE_HTML
+        sleep_calls = [call.args[0] for call in mock_sleep.await_args_list]
+        assert 0.0 in sleep_calls
+
+    @pytest.mark.asyncio
+    async def test_429_without_retry_after_uses_backoff(self) -> None:
+        """429 without Retry-After uses exponential backoff."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.side_effect = [
+            _mock_httpx_response(status_code=429),
+            _mock_httpx_response(status_code=200, text=SAMPLE_HTML),
+        ]
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+        html = await client.fetch_listing_page()
+
+        assert html == SAMPLE_HTML
+        assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_403(self) -> None:
+        """403 is not retried — fails immediately."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.return_value = _mock_httpx_response(status_code=403)
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+
+        with pytest.raises(SourceFetchError, match="403"):
+            await client.fetch_listing_page()
+
+        assert mock_client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_404(self) -> None:
+        """404 is not retried — fails immediately."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.get.return_value = _mock_httpx_response(status_code=404)
+
+        client = WebRetailerClient(http_client=mock_client, max_retries=3)
+
+        with pytest.raises(SourceFetchError, match="404"):
+            await client.fetch_listing_page()
+
+        assert mock_client.get.await_count == 1
+
+
+# ---------------------------------------------------------------------------
 # Configuration tests
 # ---------------------------------------------------------------------------
 
@@ -178,6 +318,7 @@ class TestConfiguration:
         client = WebRetailerClient()
         assert client._base_url == "http://books.toscrape.com"
         assert client._timeout == 30.0
+        assert client._max_retries == 3
 
     def test_constructor_overrides(self) -> None:
         """Constructor arguments override defaults."""
@@ -186,11 +327,13 @@ class TestConfiguration:
             timeout=15.0,
             user_agent="TestAgent/1.0",
             catalog_path="/custom/path",
+            max_retries=5,
         )
         assert client._base_url == "http://example.com"
         assert client._timeout == 15.0
         assert client._user_agent == "TestAgent/1.0"
         assert client._catalog_path == "/custom/path"
+        assert client._max_retries == 5
 
     def test_env_var_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """WEB_RETAILER_BASE_URL env var is used when no constructor arg."""
@@ -215,6 +358,12 @@ class TestConfiguration:
         monkeypatch.setenv("WEB_RETAILER_CATALOG_PATH", "/env/path")
         client = WebRetailerClient()
         assert client._catalog_path == "/env/path"
+
+    def test_env_var_max_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """WEB_RETAILER_MAX_RETRIES env var is used when no constructor arg."""
+        monkeypatch.setenv("WEB_RETAILER_MAX_RETRIES", "5")
+        client = WebRetailerClient()
+        assert client._max_retries == 5
 
     def test_constructor_overrides_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Constructor argument takes priority over env var."""
@@ -246,6 +395,11 @@ class TestConfiguration:
         """Negative timeout raises SourceFetchError."""
         with pytest.raises(SourceFetchError, match="positive"):
             WebRetailerClient(timeout=-5.0)
+
+    def test_invalid_max_retries_zero(self) -> None:
+        """Zero max_retries raises SourceFetchError."""
+        with pytest.raises(SourceFetchError, match="max_retries"):
+            WebRetailerClient(max_retries=0)
 
 
 # ---------------------------------------------------------------------------
@@ -373,3 +527,189 @@ class TestWebRetailerAdapter:
         await adapter.fetch()
 
         mock_client.fetch_listing_page.assert_awaited_once_with("/custom/catalog")
+
+
+# ---------------------------------------------------------------------------
+# Pagination tests (TASK-048)
+# ---------------------------------------------------------------------------
+
+PAGE_1_HTML = """\
+<!DOCTYPE html>
+<html>
+<body>
+<ul class="breadcrumb"><li class="active">Books</li></ul>
+<article class="product_pod">
+  <h3><a href="book-a_100/index.html" title="Book A">Book A</a></h3>
+  <div class="product_price">
+    <p class="price_color">&pound;10.00</p>
+    <p class="instock availability">In stock</p>
+  </div>
+</article>
+<ul class="pager">
+    <li class="current">Page 1 of 3</li>
+    <li class="next"><a href="page-2.html">next</a></li>
+</ul>
+</body>
+</html>
+"""
+
+PAGE_2_HTML = """\
+<!DOCTYPE html>
+<html>
+<body>
+<ul class="breadcrumb"><li class="active">Books</li></ul>
+<article class="product_pod">
+  <h3><a href="book-b_200/index.html" title="Book B">Book B</a></h3>
+  <div class="product_price">
+    <p class="price_color">&pound;20.00</p>
+    <p class="instock availability">In stock</p>
+  </div>
+</article>
+<ul class="pager">
+    <li class="current">Page 2 of 3</li>
+    <li class="next"><a href="page-3.html">next</a></li>
+</ul>
+</body>
+</html>
+"""
+
+PAGE_3_HTML = """\
+<!DOCTYPE html>
+<html>
+<body>
+<ul class="breadcrumb"><li class="active">Books</li></ul>
+<article class="product_pod">
+  <h3><a href="book-c_300/index.html" title="Book C">Book C</a></h3>
+  <div class="product_price">
+    <p class="price_color">&pound;30.00</p>
+    <p class="instock availability">In stock</p>
+  </div>
+</article>
+<ul class="pager">
+    <li class="current">Page 3 of 3</li>
+</ul>
+</body>
+</html>
+"""
+
+EMPTY_PAGE_HTML = """\
+<!DOCTYPE html>
+<html>
+<body>
+<ul class="breadcrumb"><li class="active">Books</li></ul>
+<ul class="pager">
+    <li class="current">Page 1 of 1</li>
+</ul>
+</body>
+</html>
+"""
+
+
+class TestPagination:
+    """Tests for multi-page pagination (TASK-048)."""
+
+    @pytest.mark.asyncio
+    async def test_multi_page_pagination_aggregates_events(self) -> None:
+        """3 pages of products → all events aggregated into one FetchResult."""
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [PAGE_1_HTML, PAGE_2_HTML, PAGE_3_HTML]
+
+        adapter = WebRetailerAdapter(client=mock_client)
+        result = await adapter.fetch()
+
+        assert result.has_events
+        assert len(result.events) == 3
+        names = {e.payload.name for e in result.events}
+        assert names == {"Book A", "Book B", "Book C"}
+        assert result.total_records == 3
+        assert mock_client.fetch_listing_page.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_max_pages_limit_respected(self) -> None:
+        """Stops after max_pages even if more pages exist."""
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [PAGE_1_HTML, PAGE_2_HTML, PAGE_3_HTML]
+
+        adapter = WebRetailerAdapter(client=mock_client, max_pages=2)
+        result = await adapter.fetch()
+
+        assert len(result.events) == 2
+        assert mock_client.fetch_listing_page.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_next_page_link_single_page_result(self) -> None:
+        """No next-page link on first page → single page result."""
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.return_value = PAGE_3_HTML
+
+        adapter = WebRetailerAdapter(client=mock_client)
+        result = await adapter.fetch()
+
+        assert len(result.events) == 1
+        assert mock_client.fetch_listing_page.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_partial_page_failure_returns_collected_pages(self) -> None:
+        """Page 1 OK, page 2 fails → returns page 1 events, logs error."""
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [
+            PAGE_1_HTML,
+            SourceFetchError("HTTP 500", source="web_retailer"),
+        ]
+
+        adapter = WebRetailerAdapter(client=mock_client)
+        result = await adapter.fetch()
+
+        assert len(result.events) == 1
+        assert result.events[0].payload.name == "Book A"
+        assert mock_client.fetch_listing_page.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_page_in_pagination_stops(self) -> None:
+        """Empty HTML on page 2 stops pagination, returns page 1 results."""
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [PAGE_1_HTML, ""]
+
+        adapter = WebRetailerAdapter(client=mock_client)
+        result = await adapter.fetch()
+
+        assert len(result.events) == 1
+        assert mock_client.fetch_listing_page.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_listing_page_no_error(self) -> None:
+        """Empty product listing (no articles, no next) → zero events."""
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.return_value = EMPTY_PAGE_HTML
+
+        adapter = WebRetailerAdapter(client=mock_client)
+        result = await adapter.fetch()
+
+        assert not result.has_events
+        assert result.total_records == 0
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_events_across_pages(self) -> None:
+        """Events from different pages have distinct external_ids."""
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [PAGE_1_HTML, PAGE_2_HTML, PAGE_3_HTML]
+
+        adapter = WebRetailerAdapter(client=mock_client)
+        result = await adapter.fetch()
+
+        external_ids = [e.payload.external_id for e in result.events]
+        assert len(external_ids) == len(set(external_ids))
