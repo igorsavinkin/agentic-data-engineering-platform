@@ -21,3 +21,6 @@ pyarrow>=14.0,<20
 
 # HTTP client for source adapters (TASK-035).
 httpx>=0.27,<1
+
+# Retry with exponential backoff for source adapters (TASK-041).
+tenacity>=8.0.0
