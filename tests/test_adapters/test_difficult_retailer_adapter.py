@@ -18,6 +18,7 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -81,7 +82,7 @@ def _make_mock_client(
 def _make_adapter(
     *,
     mock_http: AsyncMock | None = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> DifficultRetailerAdapter:
     if mock_http is None:
         mock_http = _make_mock_client()
