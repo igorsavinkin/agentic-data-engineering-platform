@@ -64,6 +64,19 @@ class TestRequiredFieldsCheck:
         assert result.details["null_counts_by_column"]["b"] == 1
         assert result.failed_records == 3
 
+    def test_failed_records_counts_rows_not_nulls(self) -> None:
+        df = pl.DataFrame(
+            {
+                "a": [None, "x", "y"],
+                "b": [None, "z", "w"],
+            }
+        )
+        check = RequiredFieldsCheck(columns=["a", "b"])
+        result = check.run(df)
+        assert result.status == CheckStatus.FAILED
+        assert result.failed_records == 1
+        assert result.records_checked == 3
+
     def test_missing_column(self) -> None:
         df = _sample_df()
         check = RequiredFieldsCheck(columns=["nonexistent"])

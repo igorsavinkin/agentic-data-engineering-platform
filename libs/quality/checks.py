@@ -73,7 +73,9 @@ class RequiredFieldsCheck:
             if count > 0:
                 null_counts[col] = count
 
-        total_failed = sum(null_counts.values()) if null_counts else 0
+        rows_with_nulls = df.filter(
+            pl.any_horizontal([pl.col(c).is_null() for c in self.columns])
+        ).height
 
         if null_counts:
             return QualityResult(
@@ -81,7 +83,7 @@ class RequiredFieldsCheck:
                 severity=self.severity,
                 status=CheckStatus.FAILED,
                 records_checked=df.height,
-                failed_records=total_failed,
+                failed_records=rows_with_nulls,
                 details={"null_counts_by_column": null_counts},
                 message=f"null values found in {len(null_counts)} column(s)",
                 checked_at=now,
