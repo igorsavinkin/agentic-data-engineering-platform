@@ -158,7 +158,13 @@ CREATE TABLE data_quality_results (
     severity            TEXT NOT NULL,          -- 'info', 'warning', 'error'
     passed              BOOLEAN NOT NULL,
     message             TEXT,                   -- human-readable explanation
-    checked_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    checked_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    records_checked     BIGINT NOT NULL DEFAULT 0,
+    failed_records      BIGINT NOT NULL DEFAULT 0,
+    details             JSONB,                  -- check-specific diagnostic metadata
+    replay_key          TEXT NOT NULL DEFAULT '',
+
+    CONSTRAINT uk_data_quality_results_replay_key UNIQUE (replay_key)
 );
 
 COMMENT ON TABLE data_quality_results IS
@@ -169,6 +175,9 @@ COMMENT ON COLUMN data_quality_results.check_name IS
 
 COMMENT ON COLUMN data_quality_results.severity IS
     'Severity level: info, warning, or error.';
+
+COMMENT ON COLUMN data_quality_results.replay_key IS
+    'Deterministic identity key for replay-safe idempotent writes.';
 
 
 COMMIT;
