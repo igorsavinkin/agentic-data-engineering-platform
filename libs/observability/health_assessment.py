@@ -127,7 +127,8 @@ class SourceHealthTracker:
     """Track per-fetch outcomes and produce health assessments.
 
     Maintains a bounded history of fetch outcomes and evaluates source
-    health on demand. Thread-safe for concurrent outcome recording.
+    health on demand. Designed for single-threaded use; callers should
+    not share a tracker across threads without external synchronization.
 
     The tracker is read-only with respect to the event pipeline — it
     observes outcomes but never mutates downstream data.
@@ -264,7 +265,11 @@ class SourceHealthAssessor:
                 reasons=["no fetch history"],
                 source=source_name,
                 assessed_at=now,
-                signals={"total_fetches": 0},
+                signals={
+                    "total_fetches": 0,
+                    "freshness_age_seconds": freshness_age_seconds,
+                    "max_freshness_age_seconds": self._config.max_freshness_age_seconds,
+                },
             )
 
         total = len(outcomes)
