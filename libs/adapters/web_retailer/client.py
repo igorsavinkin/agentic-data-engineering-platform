@@ -20,6 +20,7 @@ from tenacity import (
 )
 
 from libs.adapters import SourceFetchError
+from libs.observability.source_metrics import SourceMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ class WebRetailerClient:
         catalog_path: str | None = None,
         max_retries: int | None = None,
         http_client: httpx.AsyncClient | None = None,
+        metrics: SourceMetrics | None = None,
     ) -> None:
         resolved_base_url = str(
             _resolve_config("WEB_RETAILER_BASE_URL", base_url, DEFAULT_BASE_URL)
@@ -135,6 +137,7 @@ class WebRetailerClient:
         self._catalog_path = resolved_path
         self._max_retries = resolved_retries
         self._client = http_client
+        self._metrics = metrics
 
     @property
     def base_url(self) -> str:
@@ -186,6 +189,7 @@ class WebRetailerClient:
                 (httpx.TimeoutException, httpx.ConnectError, _TransientHttpError)
             ),
             reraise=True,
+            before_sleep=self._on_retry,
         )
 
         try:
@@ -257,3 +261,8 @@ class WebRetailerClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+    def _on_retry(self, retry_state: object) -> None:
+        """Tenacity before_sleep callback — record retry metric."""
+        if self._metrics is not None:
+            self._metrics.record_retry()

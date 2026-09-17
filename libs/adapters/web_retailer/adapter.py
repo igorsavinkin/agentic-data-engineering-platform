@@ -47,6 +47,7 @@ class WebRetailerAdapter(SourceAdapterProtocol):
     ) -> None:
         self._catalog_path = catalog_path
         self._max_pages = max_pages if max_pages is not None else DEFAULT_MAX_PAGES
+        self._metrics = metrics or SourceMetrics(source_name=self.source_name)
         if client is not None:
             self._client = client
         else:
@@ -55,8 +56,8 @@ class WebRetailerAdapter(SourceAdapterProtocol):
                 timeout=timeout,
                 user_agent=user_agent,
                 catalog_path=catalog_path,
+                metrics=self._metrics,
             )
-        self._metrics = metrics or SourceMetrics(source_name=self.source_name)
 
     @property
     def source_name(self) -> str:
@@ -90,6 +91,8 @@ class WebRetailerAdapter(SourceAdapterProtocol):
         all_events: list[ProductObservationEvent] = []
         all_malformed: list[dict[str, Any]] = []
         total_collected = 0
+        pages_fetched = 0
+        partial_failure = False
 
         current_path: str | None = self._catalog_path
 
@@ -98,11 +101,15 @@ class WebRetailerAdapter(SourceAdapterProtocol):
                 html = await self._client.fetch_listing_page(current_path)
             except SourceFetchError:
                 if page_num > 1:
+                    partial_failure = True
                     logger.error(
-                        "Pagination failed at page %d after %d successful pages; "
-                        "returning partial results",
-                        page_num,
-                        page_num - 1,
+                        "pagination_failed",
+                        extra={
+                            "operation": "pagination",
+                            "source": self.source_name,
+                            "page": page_num,
+                            "successful_pages": page_num - 1,
+                        },
                     )
                     break
                 raise
@@ -113,7 +120,14 @@ class WebRetailerAdapter(SourceAdapterProtocol):
                         "Web retailer returned empty HTML body",
                         source="web_retailer",
                     )
-                logger.warning("Empty HTML on page %d, stopping pagination", page_num)
+                logger.warning(
+                    "pagination_empty_page",
+                    extra={
+                        "operation": "pagination",
+                        "source": self.source_name,
+                        "page": page_num,
+                    },
+                )
                 break
 
             page_url = self._build_page_url_for_path(current_path)
@@ -139,6 +153,18 @@ class WebRetailerAdapter(SourceAdapterProtocol):
             page_total = len(parsed) + len(parser_malformed)
             total_collected += page_total
             all_malformed.extend(parser_malformed)
+            pages_fetched += 1
+
+            if parser_malformed:
+                logger.warning(
+                    "parser_malformed_records",
+                    extra={
+                        "operation": "parse",
+                        "source": self.source_name,
+                        "page": page_num,
+                        "malformed_count": len(parser_malformed),
+                    },
+                )
 
             if page_num >= self._max_pages:
                 break
@@ -147,6 +173,12 @@ class WebRetailerAdapter(SourceAdapterProtocol):
             if next_url is None:
                 break
             current_path = next_url
+
+        self._metrics.record_pages_fetched(pages_fetched)
+        if all_malformed:
+            self._metrics.record_malformed(len(all_malformed))
+        if partial_failure:
+            self._metrics.record_partial_failure()
 
         result: FetchResult[ProductObservationEvent] = FetchResult(
             events=tuple(all_events),
@@ -160,6 +192,19 @@ class WebRetailerAdapter(SourceAdapterProtocol):
             records_collected=total_collected,
             records_emitted=len(all_events),
         )
+
+        if partial_failure or all_malformed:
+            logger.warning(
+                "degraded_collection",
+                extra={
+                    "operation": "fetch",
+                    "source": self.source_name,
+                    "pages_fetched": pages_fetched,
+                    "events_emitted": len(all_events),
+                    "malformed_records": len(all_malformed),
+                    "partial_failure": partial_failure,
+                },
+            )
 
         return result
 

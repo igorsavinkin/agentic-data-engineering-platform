@@ -321,3 +321,144 @@ class TestSourceMetricsIntegration:
         # Stale threshold check (e.g., 30 minutes)
         is_stale = age > 1800
         assert is_stale is True
+
+
+class TestTask049HealthMetrics:
+    """TASK-049: health metrics for pages, retries, malformed, partial failures."""
+
+    def test_initial_state_new_counters(self) -> None:
+        """New counters start at zero."""
+        metrics = SourceMetrics(source_name="test_source")
+        snapshot = metrics.snapshot()
+
+        assert snapshot[SourceMetric.PAGES_FETCHED] == 0
+        assert snapshot[SourceMetric.RETRY_ATTEMPTS] == 0
+        assert snapshot[SourceMetric.MALFORMED_RECORDS] == 0
+        assert snapshot[SourceMetric.PARTIAL_FAILURES] == 0
+
+    def test_record_pages_fetched(self) -> None:
+        """Pages fetched counter increments correctly."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.record_pages_fetched(3)
+
+        assert metrics.snapshot()[SourceMetric.PAGES_FETCHED] == 3
+
+    def test_record_pages_fetched_default(self) -> None:
+        """Pages fetched defaults to incrementing by 1."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.record_pages_fetched()
+        metrics.record_pages_fetched()
+
+        assert metrics.snapshot()[SourceMetric.PAGES_FETCHED] == 2
+
+    def test_record_retry(self) -> None:
+        """Retry attempts counter increments correctly."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.record_retry()
+        metrics.record_retry()
+        metrics.record_retry()
+
+        assert metrics.snapshot()[SourceMetric.RETRY_ATTEMPTS] == 3
+
+    def test_record_malformed(self) -> None:
+        """Malformed records counter increments correctly."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.record_malformed(5)
+
+        assert metrics.snapshot()[SourceMetric.MALFORMED_RECORDS] == 5
+
+    def test_record_malformed_default(self) -> None:
+        """Malformed records defaults to incrementing by 1."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.record_malformed()
+
+        assert metrics.snapshot()[SourceMetric.MALFORMED_RECORDS] == 1
+
+    def test_record_partial_failure(self) -> None:
+        """Partial failure counter increments correctly."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.record_partial_failure()
+        metrics.record_partial_failure()
+
+        assert metrics.snapshot()[SourceMetric.PARTIAL_FAILURES] == 2
+
+    def test_new_methods_exception_isolation(self) -> None:
+        """New metric methods never raise even if internals fail."""
+        metrics = SourceMetrics(source_name="test_source")
+
+        try:
+            metrics.record_pages_fetched(3)
+            metrics.record_retry()
+            metrics.record_malformed(5)
+            metrics.record_partial_failure()
+        except Exception as e:
+            pytest.fail(f"New metric methods should not raise: {e}")
+
+    def test_no_high_cardinality_labels(self) -> None:
+        """Snapshot contains only low-cardinality keys — no URLs, IDs, or error text."""
+        metrics = SourceMetrics(source_name="web_retailer")
+        metrics.increment(SourceMetric.FETCH_ATTEMPTS)
+        metrics.record_fetch_success(records_collected=10, records_emitted=8)
+        metrics.record_pages_fetched(3)
+        metrics.record_retry()
+        metrics.record_malformed(2)
+        metrics.record_partial_failure()
+
+        snapshot = metrics.snapshot()
+        snapshot_values = " ".join(str(v) for v in snapshot.values())
+
+        forbidden_patterns = ["http", "html", "product_", "error", "exception", "traceback"]
+        for pattern in forbidden_patterns:
+            assert pattern not in snapshot_values.lower(), (
+                f"Snapshot may contain high-cardinality data: '{pattern}'"
+            )
+
+    def test_freshness_state_after_success(self) -> None:
+        """Freshness timestamp is set after a successful fetch."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        assert metrics.get_last_successful_fetch() is None
+
+        metrics.record_fetch_success(records_collected=5, records_emitted=5)
+
+        assert metrics.get_last_successful_fetch() is not None
+        age = metrics.get_freshness_age_seconds()
+        assert age is not None
+        assert age >= 0
+
+    def test_freshness_not_updated_on_failure(self) -> None:
+        """Freshness is NOT updated on failed fetches."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.record_fetch_failure()
+
+        assert metrics.get_last_successful_fetch() is None
+        assert metrics.get_freshness_age_seconds() is None
+
+    def test_degraded_run_snapshot(self) -> None:
+        """Snapshot captures full health picture for a degraded run."""
+        metrics = SourceMetrics(source_name="web_retailer")
+
+        metrics.increment(SourceMetric.FETCH_ATTEMPTS)
+        metrics.record_pages_fetched(2)
+        metrics.record_retry()
+        metrics.record_malformed(3)
+        metrics.record_partial_failure()
+        metrics.record_fetch_success(records_collected=15, records_emitted=12)
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.FETCH_ATTEMPTS] == 1
+        assert snapshot[SourceMetric.FETCH_SUCCESS] == 1
+        assert snapshot[SourceMetric.PAGES_FETCHED] == 2
+        assert snapshot[SourceMetric.RETRY_ATTEMPTS] == 1
+        assert snapshot[SourceMetric.MALFORMED_RECORDS] == 3
+        assert snapshot[SourceMetric.PARTIAL_FAILURES] == 1
+        assert snapshot[SourceMetric.RECORDS_COLLECTED] == 15
+        assert snapshot[SourceMetric.RECORDS_EMITTED] == 12
+        assert snapshot["source_last_successful_fetch"] is not None
