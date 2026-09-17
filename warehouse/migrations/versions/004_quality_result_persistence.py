@@ -14,6 +14,7 @@ pre-existing columns.
 """
 
 # mypy: disable-error-code="import-untyped,import-not-found"
+import sqlalchemy as sa
 from alembic import op
 
 revision = "004"
@@ -25,19 +26,19 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "data_quality_results",
-        op.column("records_checked", op.types.BigInteger(), nullable=False, server_default="0"),
+        sa.Column("records_checked", sa.BigInteger(), nullable=False, server_default="0"),
     )
     op.add_column(
         "data_quality_results",
-        op.column("failed_records", op.types.BigInteger(), nullable=False, server_default="0"),
+        sa.Column("failed_records", sa.BigInteger(), nullable=False, server_default="0"),
     )
     op.add_column(
         "data_quality_results",
-        op.column("details", op.types.JSON()),
+        sa.Column("details", sa.JSON()),
     )
     op.add_column(
         "data_quality_results",
-        op.column("replay_key", op.types.Text(), nullable=False, server_default=""),
+        sa.Column("replay_key", sa.Text(), nullable=False, server_default=""),
     )
     op.create_unique_constraint(
         "uk_data_quality_results_replay_key",
