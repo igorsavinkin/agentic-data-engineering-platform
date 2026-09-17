@@ -13,6 +13,7 @@ Airflow/data-quality checks.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -35,6 +36,20 @@ class SourceDegradationState(StrEnum):
     STRUCTURALLY_CHANGED = "structurally_changed"
     PARTIALLY_PARSEABLE = "partially_parseable"
     EMPTY_RESULT = "empty_result"
+    STALE = "stale"
+
+
+class FreshnessState(StrEnum):
+    """Programmatic freshness classification.
+
+    Distinguishes the freshness semantics needed by downstream consumers
+    (e.g. Airflow ingestion_health DAGs) without requiring them to
+    interpret raw timestamps or thresholds.
+    """
+
+    FRESH = "fresh"
+    STALE = "stale"
+    NEVER_COLLECTED = "never_collected"
 
 
 @dataclass(frozen=True)
@@ -116,6 +131,9 @@ class SourceHealthTracker:
 
     The tracker is read-only with respect to the event pipeline — it
     observes outcomes but never mutates downstream data.
+
+    The ``clock`` parameter allows deterministic testing by injecting a
+    fixed or controlled time source.
     """
 
     def __init__(
@@ -123,16 +141,42 @@ class SourceHealthTracker:
         source_name: str,
         config: SourceHealthConfig | None = None,
         max_history: int = 100,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._source_name = source_name
         self._config = config or SourceHealthConfig()
         self._max_history = max_history
         self._outcomes: list[_FetchOutcome] = []
         self._consecutive_empty = 0
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._freshness_age_seconds: float | None = None
 
     @property
     def source_name(self) -> str:
         return self._source_name
+
+    def update_freshness_age(self, age_seconds: float | None) -> None:
+        """Update the freshness age for this source.
+
+        Called by the runner or metrics layer to feed freshness data
+        into the health tracker. None means no successful usable
+        fetch has occurred.
+        """
+        self._freshness_age_seconds = age_seconds
+
+    def get_freshness_state(self) -> FreshnessState:
+        """Return the current programmatic freshness classification.
+
+        Uses the configured ``max_freshness_age_seconds`` threshold.
+        Returns NEVER_COLLECTED if no freshness age has been recorded,
+        STALE if the age exceeds the threshold, FRESH otherwise.
+        """
+        if self._freshness_age_seconds is None:
+            return FreshnessState.NEVER_COLLECTED
+        threshold = self._config.max_freshness_age_seconds
+        if threshold is not None and self._freshness_age_seconds > threshold:
+            return FreshnessState.STALE
+        return FreshnessState.FRESH
 
     def record_fetch_success(
         self,
@@ -147,7 +191,7 @@ class SourceHealthTracker:
             events_emitted=events_emitted,
             total_records=total_records,
             malformed_count=malformed_count,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=self._clock(),
         )
         self._outcomes.append(outcome)
         self._trim_history()
@@ -162,17 +206,18 @@ class SourceHealthTracker:
         outcome = _FetchOutcome(
             success=False,
             failure_reason=reason,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=self._clock(),
         )
         self._outcomes.append(outcome)
         self._trim_history()
 
     def assess(self) -> SourceHealthAssessment:
         """Evaluate current source health from tracked outcomes."""
-        return SourceHealthAssessor(self._config).assess(
+        return SourceHealthAssessor(self._config, clock=self._clock).assess(
             source_name=self._source_name,
             outcomes=list(self._outcomes),
             consecutive_empty=self._consecutive_empty,
+            freshness_age_seconds=self._freshness_age_seconds,
         )
 
     def _trim_history(self) -> None:
@@ -189,13 +234,19 @@ class SourceHealthAssessor:
     1. UNREACHABLE — recent fetches are mostly failing
     2. RATE_LIMITED — explicit rate-limit failure reason
     3. STRUCTURALLY_CHANGED — explicit structural-change failure reason
-    4. EMPTY_RESULT — consecutive empty results or below min_expected_records
-    5. PARTIALLY_PARSEABLE — malformed ratio exceeds threshold
-    6. HEALTHY — none of the above
+    4. STALE — freshness age exceeds configured threshold
+    5. EMPTY_RESULT — consecutive empty results or below min_expected_records
+    6. PARTIALLY_PARSEABLE — malformed ratio exceeds threshold
+    7. HEALTHY — none of the above
     """
 
-    def __init__(self, config: SourceHealthConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: SourceHealthConfig | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._config = config or SourceHealthConfig()
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def assess(
         self,
@@ -203,8 +254,9 @@ class SourceHealthAssessor:
         source_name: str,
         outcomes: list[_FetchOutcome],
         consecutive_empty: int = 0,
+        freshness_age_seconds: float | None = None,
     ) -> SourceHealthAssessment:
-        now = datetime.now(timezone.utc)
+        now = self._clock()
 
         if not outcomes:
             return SourceHealthAssessment(
@@ -235,6 +287,8 @@ class SourceHealthAssessor:
             "total_events": total_events,
             "malformed_ratio": round(malformed_ratio, 4),
             "consecutive_empty_fetches": consecutive_empty,
+            "freshness_age_seconds": freshness_age_seconds,
+            "max_freshness_age_seconds": self._config.max_freshness_age_seconds,
         }
 
         if success_ratio < self._config.min_success_ratio:
@@ -294,6 +348,22 @@ class SourceHealthAssessor:
                     assessed_at=now,
                     signals=signals,
                 )
+
+        if (
+            self._config.max_freshness_age_seconds is not None
+            and freshness_age_seconds is not None
+            and freshness_age_seconds > self._config.max_freshness_age_seconds
+        ):
+            return SourceHealthAssessment(
+                state=SourceDegradationState.STALE,
+                reasons=[
+                    f"freshness age {freshness_age_seconds:.0f}s exceeds threshold "
+                    f"{self._config.max_freshness_age_seconds:.0f}s"
+                ],
+                source=source_name,
+                assessed_at=now,
+                signals=signals,
+            )
 
         if consecutive_empty >= self._config.max_empty_fetches:
             return SourceHealthAssessment(

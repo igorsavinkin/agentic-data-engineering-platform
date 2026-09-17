@@ -12,6 +12,7 @@ the adapter pipeline.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import StrEnum
 from threading import Lock
@@ -69,16 +70,20 @@ class SourceFreshness:
     Records the last successful fetch timestamp and provides staleness
     calculation. This is intentionally separate from counters because
     freshness is a gauge-like value, not a counter.
+
+    The ``clock`` parameter allows deterministic testing by injecting a
+    fixed or controlled time source.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], datetime] | None = None) -> None:
         self._lock = Lock()
         self._last_successful_fetch: datetime | None = None
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def record_success(self, timestamp: datetime | None = None) -> None:
-        """Record a successful fetch at the given timestamp (or now)."""
+        """Record a successful fetch at the given timestamp (or clock time)."""
         try:
-            ts = timestamp or datetime.now(timezone.utc)
+            ts = timestamp or self._clock()
             with self._lock:
                 self._last_successful_fetch = ts
         except Exception:
@@ -95,7 +100,7 @@ class SourceFreshness:
         Returns None if no successful fetch has occurred yet.
         """
         try:
-            ref = reference or datetime.now(timezone.utc)
+            ref = reference or self._clock()
             with self._lock:
                 if self._last_successful_fetch is None:
                     return None
@@ -122,12 +127,16 @@ class SourceMetrics:
     cannot alter adapter pipeline semantics (TASK-040 requirement).
     """
 
-    def __init__(self, source_name: str) -> None:
+    def __init__(
+        self,
+        source_name: str,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._source_name = source_name
         self._lock = Lock()
         self._counts = dict.fromkeys(SourceMetric, 0)
         self._latency = _LatencyTracker()
-        self._freshness = SourceFreshness()
+        self._freshness = SourceFreshness(clock=clock)
 
     @property
     def source_name(self) -> str:
@@ -158,14 +167,20 @@ class SourceMetrics:
             Total records received from the source (including malformed).
         records_emitted:
             Valid canonical events ready for publication.
+
+        Freshness is only refreshed when ``records_emitted > 0``.
+        Zero-result fetches do not update the freshness timestamp,
+        ensuring retries without usable data do not falsely refresh
+        freshness (TASK-054).
         """
         try:
             self.increment(SourceMetric.FETCH_SUCCESS)
             self.increment(SourceMetric.RECORDS_COLLECTED, records_collected)
             self.increment(SourceMetric.RECORDS_EMITTED, records_emitted)
-            self._freshness.record_success()
 
-            # Track zero-record fetches separately
+            if records_emitted > 0:
+                self._freshness.record_success()
+
             if records_collected == 0:
                 self.increment(SourceMetric.ZERO_RECORD_FETCHES)
         except Exception:
