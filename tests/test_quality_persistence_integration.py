@@ -9,6 +9,7 @@ These tests are skipped when no PostgreSQL instance is available.
 
 from __future__ import annotations
 
+# mypy: disable-error-code="import-untyped,no-any-return"
 import os
 from datetime import datetime, timezone
 
