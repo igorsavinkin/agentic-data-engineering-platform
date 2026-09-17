@@ -33,16 +33,11 @@ FROZEN_TIME = datetime(2026, 9, 17, 12, 0, 0, tzinfo=timezone.utc)
 def _make_clock(at: datetime | None = None) -> list:
     """Return a mutable clock list usable as a deterministic time source.
 
-    The list holds a single datetime element. Call ``clock_fn()`` to get
-    the current time. Mutate ``clock_list[0]`` to advance time.
+    The list holds a single datetime element. Pass ``lambda: clock_list[0]``
+    as the ``clock`` parameter. Mutate ``clock_list[0]`` to advance time.
     """
     base = at or FROZEN_TIME
-    container = [base]
-
-    def clock_fn() -> datetime:
-        return container[0]
-
-    return container
+    return [base]
 
 
 def _advance(clock_list: list, seconds: float) -> None:

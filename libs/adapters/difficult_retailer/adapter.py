@@ -188,6 +188,7 @@ class DifficultRetailerAdapter(SourceAdapterProtocol):
 
     def health_assessment(self) -> SourceHealthAssessment:
         """Return the current health assessment for this source."""
+        self._health_tracker.update_freshness_age(self._metrics.get_freshness_age_seconds())
         return self._health_tracker.assess()
 
     @property

@@ -200,25 +200,6 @@ def _run_pipeline(events: list[ProductObservationEvent]) -> TrackingSinks:
     return sinks
 
 
-def _make_ebay_search_response(count: int) -> Any:
-    """Create an EbaySearchResponse with the given number of items."""
-    from libs.adapters.ebay.models import (
-        EbayListingSummary,
-        EbayPrice,
-        EbaySearchResponse,
-    )
-
-    items = [
-        EbayListingSummary(
-            item_id=f"E{i}",
-            title=f"Ebay Item {i}",
-            price=EbayPrice(value=10.0 * i, currency="USD"),
-        )
-        for i in range(1, count + 1)
-    ]
-    return EbaySearchResponse(total=count, items=items)
-
-
 # ---------------------------------------------------------------------------
 # Scenario 1: Healthy observation through the pipeline
 # ---------------------------------------------------------------------------
@@ -673,7 +654,6 @@ class TestFreshnessBecomesStale:
 
         clock_list[0] = datetime(2026, 9, 17, 14, 0, 1, tzinfo=timezone.utc)
 
-        adapter._health_tracker.update_freshness_age(metrics.get_freshness_age_seconds())
         assessment = adapter.health_assessment()
         assert assessment.state == SourceDegradationState.STALE
 
@@ -766,13 +746,11 @@ class TestRecoveryFromDegraded:
         await runner.run_once()
 
         clock_list[0] = datetime(2026, 9, 17, 14, 0, 1, tzinfo=timezone.utc)
-        adapter._health_tracker.update_freshness_age(metrics.get_freshness_age_seconds())
         assert adapter.health_assessment().state == SourceDegradationState.STALE
 
         clock_list[0] = datetime(2026, 9, 17, 14, 1, 0, tzinfo=timezone.utc)
         await runner.run_once()
 
-        adapter._health_tracker.update_freshness_age(metrics.get_freshness_age_seconds())
         assert len(producer.published) == 6
         assert adapter.health_assessment().state == SourceDegradationState.HEALTHY
 
