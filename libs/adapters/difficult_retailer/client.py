@@ -1,8 +1,9 @@
 """HTTP client for a difficult retailer source.
 
-Classifies responses into ResponseKind categories and raises classified
+Classifies response into ResponseKind categories and raises classified
 SourceFetchError for non-success responses. Retries transient failures
-(5xx, timeouts, connection errors) with bounded exponential backoff.
+(429, 500/502/503/504, timeouts, connection errors) with bounded random
+exponential backoff with jitter to avoid retry storms.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -17,7 +19,7 @@ from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential,
+    wait_random_exponential,
 )
 
 from libs.adapters import SourceFetchError
@@ -34,10 +36,16 @@ DEFAULT_USER_AGENT = (
 )
 DEFAULT_CATALOG_PATH = "/products"
 DEFAULT_MAX_RETRIES = 3
+DEFAULT_BACKOFF_MULTIPLIER = 1.0
+DEFAULT_BACKOFF_MIN = 0.5
+DEFAULT_BACKOFF_MAX = 30.0
+DEFAULT_MAX_RETRY_AFTER = 60.0
+
+_TRANSIENT_5XX_STATUSES = frozenset({500, 502, 503, 504})
 
 
 class _TransientHttpError(Exception):
-    """Retryable HTTP error (5xx, timeout, connection error)."""
+    """Retryable HTTP error (429, 500/502/503/504, timeout, connection error)."""
 
     def __init__(
         self, message: str, *, status_code: int = 0, retry_after: float | None = None
@@ -90,6 +98,28 @@ def _validate_max_retries(max_retries: int) -> None:
         )
 
 
+def _validate_backoff_params(multiplier: float, min_wait: float, max_wait: float) -> None:
+    """Validate backoff parameters are positive and consistent."""
+    if multiplier <= 0:
+        raise SourceFetchError(
+            f"backoff_multiplier must be positive, got {multiplier}",
+            source="premium_retailer",
+        )
+    if min_wait <= 0:
+        raise SourceFetchError(
+            f"backoff_min must be positive, got {min_wait}", source="premium_retailer"
+        )
+    if max_wait <= 0:
+        raise SourceFetchError(
+            f"backoff_max must be positive, got {max_wait}", source="premium_retailer"
+        )
+    if max_wait < min_wait:
+        raise SourceFetchError(
+            f"backoff_max ({max_wait}) must be >= backoff_min ({min_wait})",
+            source="premium_retailer",
+        )
+
+
 class DifficultRetailerClient:
     """HTTP client that classifies difficult-source responses.
 
@@ -97,8 +127,9 @@ class DifficultRetailerClient:
     raises SourceFetchError with the ResponseKind attached so callers can
     implement source-aware retry and degradation strategies.
 
-    Configuration is resolved in priority order: constructor argument,
-    environment variable, default value.
+    Retry strategy uses bounded random exponential backoff with jitter to
+    avoid synchronized retry storms. Configuration is resolved in priority
+    order: constructor argument, environment variable, default value.
     """
 
     def __init__(
@@ -109,8 +140,13 @@ class DifficultRetailerClient:
         user_agent: str | None = None,
         catalog_path: str | None = None,
         max_retries: int | None = None,
+        backoff_multiplier: float | None = None,
+        backoff_min: float | None = None,
+        backoff_max: float | None = None,
+        max_retry_after: float | None = None,
         http_client: httpx.AsyncClient | None = None,
         metrics: SourceMetrics | None = None,
+        sleep_fn: Callable[[float], Any] | None = None,
     ) -> None:
         resolved_base_url = str(
             _resolve_config("DIFFICULT_RETAILER_BASE_URL", base_url, DEFAULT_BASE_URL)
@@ -127,18 +163,42 @@ class DifficultRetailerClient:
         resolved_retries = int(
             _resolve_config("DIFFICULT_RETAILER_MAX_RETRIES", max_retries, DEFAULT_MAX_RETRIES)
         )
+        resolved_multiplier = float(
+            _resolve_config(
+                "DIFFICULT_RETAILER_BACKOFF_MULTIPLIER",
+                backoff_multiplier,
+                DEFAULT_BACKOFF_MULTIPLIER,
+            )
+        )
+        resolved_min = float(
+            _resolve_config("DIFFICULT_RETAILER_BACKOFF_MIN", backoff_min, DEFAULT_BACKOFF_MIN)
+        )
+        resolved_max = float(
+            _resolve_config("DIFFICULT_RETAILER_BACKOFF_MAX", backoff_max, DEFAULT_BACKOFF_MAX)
+        )
+        resolved_max_retry_after = float(
+            _resolve_config(
+                "DIFFICULT_RETAILER_MAX_RETRY_AFTER", max_retry_after, DEFAULT_MAX_RETRY_AFTER
+            )
+        )
 
         _validate_base_url(resolved_base_url)
         _validate_timeout(resolved_timeout)
         _validate_max_retries(resolved_retries)
+        _validate_backoff_params(resolved_multiplier, resolved_min, resolved_max)
 
         self._base_url = resolved_base_url.rstrip("/")
         self._timeout = resolved_timeout
         self._user_agent = resolved_user_agent
         self._catalog_path = resolved_path
         self._max_retries = resolved_retries
+        self._backoff_multiplier = resolved_multiplier
+        self._backoff_min = resolved_min
+        self._backoff_max = resolved_max
+        self._max_retry_after = resolved_max_retry_after
         self._client = http_client
         self._metrics = metrics
+        self._sleep_fn = sleep_fn
 
     @property
     def base_url(self) -> str:
@@ -151,6 +211,23 @@ class DifficultRetailerClient:
     @property
     def max_retries(self) -> int:
         return self._max_retries
+
+    @property
+    def backoff_max(self) -> float:
+        return self._backoff_max
+
+    @property
+    def max_retry_after(self) -> float:
+        return self._max_retry_after
+
+    async def _sleep(self, seconds: float) -> None:
+        """Sleep using injectable function for test clock mocking."""
+        if self._sleep_fn is not None:
+            result = self._sleep_fn(seconds)
+            if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                await result
+        else:
+            await asyncio.sleep(seconds)
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -171,15 +248,20 @@ class DifficultRetailerClient:
         Returns HTML body only for SUCCESS responses. For all other response
         kinds, raises SourceFetchError with ``response_kind`` set.
 
-        Retries transient failures (5xx except 503, timeouts, connection errors)
-        with bounded exponential backoff. 429 responses respect Retry-After.
+        Retries transient failures (5xx, 429, timeouts, connection errors)
+        with bounded random exponential backoff and jitter. 429 responses
+        respect Retry-After (capped at max_retry_after).
         """
         client = await self._get_client()
         fetch_path = path or self._catalog_path
 
         retryer = AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
-            wait=wait_exponential(multiplier=1, min=2, max=30),
+            wait=wait_random_exponential(
+                multiplier=self._backoff_multiplier,
+                min=self._backoff_min,
+                max=self._backoff_max,
+            ),
             retry=retry_if_exception_type(
                 (httpx.TimeoutException, httpx.ConnectError, _TransientHttpError)
             ),
@@ -197,16 +279,40 @@ class DifficultRetailerClient:
                 source="premium_retailer",
             ) from exc
         except _TransientHttpError as exc:
+            logger.error(
+                "retry_budget_exhausted",
+                extra={
+                    "source": "premium_retailer",
+                    "max_retries": self._max_retries,
+                    "error": str(exc),
+                },
+            )
             raise SourceFetchError(
                 f"Premium retailer (transient): request failed after {self._max_retries} attempts: {exc}",
                 source="premium_retailer",
             ) from exc
         except httpx.TimeoutException as exc:
+            logger.error(
+                "retry_budget_exhausted",
+                extra={
+                    "source": "premium_retailer",
+                    "max_retries": self._max_retries,
+                    "error": "timeout",
+                },
+            )
             raise SourceFetchError(
                 "Premium retailer request timed out",
                 source="premium_retailer",
             ) from exc
         except httpx.ConnectError as exc:
+            logger.error(
+                "retry_budget_exhausted",
+                extra={
+                    "source": "premium_retailer",
+                    "max_retries": self._max_retries,
+                    "error": "connection",
+                },
+            )
             raise SourceFetchError(
                 f"Premium retailer connection failed: {exc}",
                 source="premium_retailer",
@@ -239,22 +345,40 @@ class DifficultRetailerClient:
                     retry_after = float(retry_after_text)
                 except ValueError:
                     retry_after = None
-            if retry_after is not None:
-                logger.info("Rate limited (429), waiting %.1fs per Retry-After", retry_after)
-                await asyncio.sleep(retry_after)
+            capped_retry_after = self._cap_retry_after(retry_after)
+            if capped_retry_after is not None:
+                logger.info(
+                    "rate_limited_waiting",
+                    extra={
+                        "source": "premium_retailer",
+                        "retry_after_original": retry_after,
+                        "retry_after_capped": capped_retry_after,
+                        "max_retry_after": self._max_retry_after,
+                    },
+                )
+                await self._sleep(capped_retry_after)
             raise _TransientHttpError(
                 f"Rate limited (HTTP 429, Retry-After: {retry_after_text})",
                 status_code=429,
-                retry_after=retry_after,
+                retry_after=capped_retry_after,
             )
 
-        if kind == ResponseKind.UNAVAILABLE and response.status_code == 503:
+        if response.status_code in _TRANSIENT_5XX_STATUSES:
             raise _TransientHttpError(
-                "Service unavailable (HTTP 503)",
-                status_code=503,
+                f"Server error (HTTP {response.status_code})",
+                status_code=response.status_code,
             )
 
         raise _ClassifiedError(kind)
+
+    def _cap_retry_after(self, retry_after: float | None) -> float | None:
+        """Cap Retry-After to max_retry_after to prevent unbounded waits.
+
+        Returns None for non-positive values (treated as absent).
+        """
+        if retry_after is None or retry_after <= 0:
+            return None
+        return min(retry_after, self._max_retry_after)
 
     async def close(self) -> None:
         """Close the underlying HTTP client if we own it."""
