@@ -120,6 +120,27 @@ class IngestionRunner:
             }
         return result
 
+    def get_source_health(self) -> dict[str, dict[str, Any]]:
+        """Get health assessment for all sources with health trackers.
+
+        Returns a dict mapping source name to health data including:
+        - state: degradation state string
+        - reasons: list of diagnostic reasons
+        - signals: measurable signals dict
+
+        Sources without health trackers are omitted.
+        """
+        result: dict[str, dict[str, Any]] = {}
+        for adapter in self._adapters:
+            if hasattr(adapter, "health_assessment"):
+                assessment = adapter.health_assessment()
+                result[adapter.source_name] = {
+                    "state": assessment.state.value,
+                    "reasons": assessment.reasons,
+                    "signals": assessment.signals,
+                }
+        return result
+
     async def run_once(self) -> IngestionStats:
         """Execute one fetch-publish cycle across all adapters.
 

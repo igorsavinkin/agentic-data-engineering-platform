@@ -21,6 +21,11 @@ from libs.adapters import FetchResult, SourceAdapterProtocol, SourceFetchError
 from libs.adapters.difficult_retailer.client import DifficultRetailerClient
 from libs.adapters.difficult_retailer.parser import ParseResult, parse_listing_page
 from libs.event_contracts.product_observation import ProductObservationEvent
+from libs.observability.health_assessment import (
+    SourceHealthAssessment,
+    SourceHealthConfig,
+    SourceHealthTracker,
+)
 from libs.observability.source_metrics import SourceMetric, SourceMetrics
 
 logger = logging.getLogger(__name__)
@@ -48,9 +53,15 @@ class DifficultRetailerAdapter(SourceAdapterProtocol):
         user_agent: str | None = None,
         client: DifficultRetailerClient | None = None,
         metrics: SourceMetrics | None = None,
+        health_tracker: SourceHealthTracker | None = None,
+        health_config: SourceHealthConfig | None = None,
     ) -> None:
         self._catalog_path = catalog_path
         self._metrics = metrics or SourceMetrics(source_name=self.source_name)
+        self._health_tracker = health_tracker or SourceHealthTracker(
+            source_name=self.source_name,
+            config=health_config,
+        )
         if client is not None:
             self._client = client
         else:
@@ -81,12 +92,23 @@ class DifficultRetailerAdapter(SourceAdapterProtocol):
 
         with self._metrics.time_fetch():
             try:
-                return await self._fetch_single()
-            except SourceFetchError:
+                result = await self._fetch_single()
+                self._health_tracker.record_fetch_success(
+                    events_emitted=len(result.events),
+                    total_records=result.total_records,
+                    malformed_count=len(result.malformed),
+                )
+                self._log_health_if_degraded()
+                return result
+            except SourceFetchError as exc:
                 self._metrics.record_fetch_failure()
+                self._health_tracker.record_fetch_failure(str(exc))
+                self._log_health_if_degraded()
                 raise
-            except Exception:
+            except Exception as exc:
                 self._metrics.record_fetch_failure()
+                self._health_tracker.record_fetch_failure(str(exc))
+                self._log_health_if_degraded()
                 raise
 
     async def _fetch_single(self) -> FetchResult[Any]:
@@ -136,6 +158,7 @@ class DifficultRetailerAdapter(SourceAdapterProtocol):
         self._metrics.record_pages_fetched(1)
         if all_malformed:
             self._metrics.record_malformed(len(all_malformed))
+            self._metrics.record_partial_failure()
 
         fetch_result: FetchResult[ProductObservationEvent] = FetchResult(
             events=tuple(all_events),
@@ -162,6 +185,29 @@ class DifficultRetailerAdapter(SourceAdapterProtocol):
             )
 
         return fetch_result
+
+    def health_assessment(self) -> SourceHealthAssessment:
+        """Return the current health assessment for this source."""
+        return self._health_tracker.assess()
+
+    @property
+    def health_tracker(self) -> SourceHealthTracker:
+        """Expose the health tracker for external assessment."""
+        return self._health_tracker
+
+    def _log_health_if_degraded(self) -> None:
+        """Log structured diagnostic if source is not healthy."""
+        assessment = self._health_tracker.assess()
+        if assessment.state != "healthy":
+            logger.warning(
+                "source_degradation_detected",
+                extra={
+                    "source": self.source_name,
+                    "degradation_state": assessment.state.value,
+                    "reasons": assessment.reasons,
+                    "signals": assessment.signals,
+                },
+            )
 
     def _build_page_url(self) -> str:
         """Build the full page URL for relative URL resolution."""
