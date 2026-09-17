@@ -2,8 +2,8 @@
 
 Classifies response into ResponseKind categories and raises classified
 SourceFetchError for non-success responses. Retries transient failures
-(5xx, timeouts, connection errors) with bounded random exponential backoff
-with jitter to avoid retry storms.
+(429, 500/502/503/504, timeouts, connection errors) with bounded random
+exponential backoff with jitter to avoid retry storms.
 """
 
 from __future__ import annotations
@@ -37,14 +37,15 @@ DEFAULT_USER_AGENT = (
 DEFAULT_CATALOG_PATH = "/products"
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BACKOFF_MULTIPLIER = 1.0
-DEFAULT_BACKOFF_MIN = 2.0
+DEFAULT_BACKOFF_MIN = 0.5
 DEFAULT_BACKOFF_MAX = 30.0
-DEFAULT_BACKOFF_JITTER = 5.0
 DEFAULT_MAX_RETRY_AFTER = 60.0
+
+_TRANSIENT_5XX_STATUSES = frozenset({500, 502, 503, 504})
 
 
 class _TransientHttpError(Exception):
-    """Retryable HTTP error (5xx, timeout, connection error)."""
+    """Retryable HTTP error (429, 500/502/503/504, timeout, connection error)."""
 
     def __init__(
         self, message: str, *, status_code: int = 0, retry_after: float | None = None
@@ -97,9 +98,7 @@ def _validate_max_retries(max_retries: int) -> None:
         )
 
 
-def _validate_backoff_params(
-    multiplier: float, min_wait: float, max_wait: float, jitter: float
-) -> None:
+def _validate_backoff_params(multiplier: float, min_wait: float, max_wait: float) -> None:
     """Validate backoff parameters are positive and consistent."""
     if multiplier <= 0:
         raise SourceFetchError(
@@ -118,10 +117,6 @@ def _validate_backoff_params(
         raise SourceFetchError(
             f"backoff_max ({max_wait}) must be >= backoff_min ({min_wait})",
             source="premium_retailer",
-        )
-    if jitter < 0:
-        raise SourceFetchError(
-            f"backoff_jitter must be non-negative, got {jitter}", source="premium_retailer"
         )
 
 
@@ -148,7 +143,6 @@ class DifficultRetailerClient:
         backoff_multiplier: float | None = None,
         backoff_min: float | None = None,
         backoff_max: float | None = None,
-        backoff_jitter: float | None = None,
         max_retry_after: float | None = None,
         http_client: httpx.AsyncClient | None = None,
         metrics: SourceMetrics | None = None,
@@ -182,11 +176,6 @@ class DifficultRetailerClient:
         resolved_max = float(
             _resolve_config("DIFFICULT_RETAILER_BACKOFF_MAX", backoff_max, DEFAULT_BACKOFF_MAX)
         )
-        resolved_jitter = float(
-            _resolve_config(
-                "DIFFICULT_RETAILER_BACKOFF_JITTER", backoff_jitter, DEFAULT_BACKOFF_JITTER
-            )
-        )
         resolved_max_retry_after = float(
             _resolve_config(
                 "DIFFICULT_RETAILER_MAX_RETRY_AFTER", max_retry_after, DEFAULT_MAX_RETRY_AFTER
@@ -196,7 +185,7 @@ class DifficultRetailerClient:
         _validate_base_url(resolved_base_url)
         _validate_timeout(resolved_timeout)
         _validate_max_retries(resolved_retries)
-        _validate_backoff_params(resolved_multiplier, resolved_min, resolved_max, resolved_jitter)
+        _validate_backoff_params(resolved_multiplier, resolved_min, resolved_max)
 
         self._base_url = resolved_base_url.rstrip("/")
         self._timeout = resolved_timeout
@@ -206,7 +195,6 @@ class DifficultRetailerClient:
         self._backoff_multiplier = resolved_multiplier
         self._backoff_min = resolved_min
         self._backoff_max = resolved_max
-        self._backoff_jitter = resolved_jitter
         self._max_retry_after = resolved_max_retry_after
         self._client = http_client
         self._metrics = metrics
@@ -375,7 +363,7 @@ class DifficultRetailerClient:
                 retry_after=capped_retry_after,
             )
 
-        if response.status_code >= 500:
+        if response.status_code in _TRANSIENT_5XX_STATUSES:
             raise _TransientHttpError(
                 f"Server error (HTTP {response.status_code})",
                 status_code=response.status_code,
@@ -384,8 +372,11 @@ class DifficultRetailerClient:
         raise _ClassifiedError(kind)
 
     def _cap_retry_after(self, retry_after: float | None) -> float | None:
-        """Cap Retry-After to max_retry_after to prevent unbounded waits."""
-        if retry_after is None:
+        """Cap Retry-After to max_retry_after to prevent unbounded waits.
+
+        Returns None for non-positive values (treated as absent).
+        """
+        if retry_after is None or retry_after <= 0:
             return None
         return min(retry_after, self._max_retry_after)
 

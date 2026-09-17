@@ -3,18 +3,19 @@
 Covers:
 - 429 + Retry-After (respected and capped)
 - 429 without Retry-After
-- transient 5xx then recovery
+- transient 5xx (500/502/503/504) then recovery
+- non-transient 5xx (501/505) not retried
 - timeout/connection retry then recovery
 - exhausted retry budget
 - non-retryable failure (no retry for 403/blocked)
 - bounded maximum wait/attempts
 - partial success preservation
 - replay/idempotency
-- retry metrics/logging
-- jitter configuration
+- retry metrics/logging (exact counts)
 - backoff parameter validation
 - env var configuration for backoff params
 - injectable sleep for deterministic tests
+- negative/zero Retry-After sanitization
 """
 
 from __future__ import annotations
@@ -102,7 +103,6 @@ def _make_client(
         max_retries=max_retries,
         backoff_min=0.001,
         backoff_max=0.01,
-        backoff_jitter=0.001,
         metrics=metrics,
         sleep_fn=sleep_fn,
         **kwargs,
@@ -177,7 +177,6 @@ class TestRetryAfterHandling:
             max_retries=3,
             backoff_min=0.001,
             backoff_max=0.01,
-            backoff_jitter=0.001,
             max_retry_after=30.0,
             sleep_fn=mock_sleep,
         )
@@ -410,6 +409,26 @@ class TestNonRetryableFailures:
             await adapter.fetch()
         assert mock_http.get.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_501_not_implemented_not_retried(self) -> None:
+        not_impl_resp = _mock_httpx_response(status_code=501, text="Not Implemented")
+        mock_http = _make_mock_client(responses=[not_impl_resp])
+
+        adapter = _make_adapter(mock_http=mock_http, max_retries=5)
+        with pytest.raises(SourceFetchError):
+            await adapter.fetch()
+        assert mock_http.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_505_http_version_not_retried(self) -> None:
+        version_resp = _mock_httpx_response(status_code=505, text="HTTP Version Not Supported")
+        mock_http = _make_mock_client(responses=[version_resp])
+
+        adapter = _make_adapter(mock_http=mock_http, max_retries=5)
+        with pytest.raises(SourceFetchError):
+            await adapter.fetch()
+        assert mock_http.get.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # Bounded maximum wait/attempts tests
@@ -430,7 +449,6 @@ class TestBoundedBackoff:
             backoff_multiplier=2.0,
             backoff_min=1.0,
             backoff_max=60.0,
-            backoff_jitter=10.0,
         )
         assert client.backoff_max == 60.0
 
@@ -449,14 +467,6 @@ class TestBoundedBackoff:
     def test_backoff_max_less_than_min(self) -> None:
         with pytest.raises(SourceFetchError, match="backoff_max.*backoff_min"):
             DifficultRetailerClient(backoff_min=10.0, backoff_max=5.0)
-
-    def test_negative_backoff_jitter(self) -> None:
-        with pytest.raises(SourceFetchError, match="backoff_jitter"):
-            DifficultRetailerClient(backoff_jitter=-1.0)
-
-    def test_zero_jitter_is_valid(self) -> None:
-        client = DifficultRetailerClient(backoff_jitter=0)
-        assert client is not None
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +561,7 @@ class TestRetryMetrics:
         await adapter.fetch()
 
         snapshot = metrics.snapshot()
-        assert snapshot["source_retry_attempts_total"] != 0
+        assert snapshot["source_retry_attempts_total"] == 1
 
     @pytest.mark.asyncio
     async def test_retry_metric_incremented_per_retry(self) -> None:
@@ -564,7 +574,7 @@ class TestRetryMetrics:
         await adapter.fetch()
 
         snapshot = metrics.snapshot()
-        assert snapshot["source_retry_attempts_total"] != 0
+        assert snapshot["source_retry_attempts_total"] == 2
 
     @pytest.mark.asyncio
     async def test_no_retry_metric_on_success(self) -> None:
@@ -634,11 +644,6 @@ class TestBackoffEnvVars:
         client = DifficultRetailerClient()
         assert client is not None
 
-    def test_env_var_backoff_jitter(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DIFFICULT_RETAILER_BACKOFF_JITTER", "10")
-        client = DifficultRetailerClient()
-        assert client is not None
-
 
 # ---------------------------------------------------------------------------
 # Retry-After capping tests
@@ -667,6 +672,14 @@ class TestRetryAfterCapping:
     def test_cap_retry_after_custom_max(self) -> None:
         client = DifficultRetailerClient(max_retry_after=10.0)
         assert client._cap_retry_after(120.0) == 10.0
+
+    def test_cap_retry_after_negative_returns_none(self) -> None:
+        client = DifficultRetailerClient(max_retry_after=60.0)
+        assert client._cap_retry_after(-5.0) is None
+
+    def test_cap_retry_after_zero_returns_none(self) -> None:
+        client = DifficultRetailerClient(max_retry_after=60.0)
+        assert client._cap_retry_after(0.0) is None
 
 
 # ---------------------------------------------------------------------------
