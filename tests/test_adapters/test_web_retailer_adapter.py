@@ -837,7 +837,9 @@ class TestHealthMetrics:
         result = await adapter.fetch()
 
         snapshot = metrics.snapshot()
-        assert snapshot[SourceMetric.MALFORMED_RECORDS] >= 1
+        malformed_count = snapshot[SourceMetric.MALFORMED_RECORDS]
+        assert isinstance(malformed_count, int)
+        assert malformed_count >= 1
         assert len(result.malformed) >= 1
 
     @pytest.mark.asyncio
@@ -918,8 +920,9 @@ class TestHealthMetrics:
         await adapter.fetch()
 
         assert metrics.get_last_successful_fetch() is not None
-        assert metrics.get_freshness_age_seconds() is not None
-        assert metrics.get_freshness_age_seconds() >= 0
+        age = metrics.get_freshness_age_seconds()
+        assert age is not None
+        assert age >= 0
 
     @pytest.mark.asyncio
     async def test_snapshot_no_high_cardinality_after_fetch(self) -> None:

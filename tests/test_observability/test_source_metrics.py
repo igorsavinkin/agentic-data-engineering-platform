@@ -428,8 +428,9 @@ class TestTask049HealthMetrics:
         metrics.record_fetch_success(records_collected=5, records_emitted=5)
 
         assert metrics.get_last_successful_fetch() is not None
-        assert metrics.get_freshness_age_seconds() is not None
-        assert metrics.get_freshness_age_seconds() >= 0
+        age = metrics.get_freshness_age_seconds()
+        assert age is not None
+        assert age >= 0
 
     def test_freshness_not_updated_on_failure(self) -> None:
         """Freshness is NOT updated on failed fetches."""
