@@ -1,7 +1,8 @@
 # Local development infrastructure for the AI Data Platform (TASK-004).
 #
 # Kafka (event backbone), MinIO (S3-compatible object storage for the raw and
-# lake zones), and PostgreSQL (warehouse and platform metadata).
+# lake zones), PostgreSQL (warehouse and platform metadata), and Airflow
+# (scheduled/batch orchestration — TASK-058).
 #
 # Usage (see docs/local-development.md):
 #   docker compose up -d --wait
@@ -93,6 +94,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-platform}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./airflow/init:/docker-entrypoint-initdb.d:ro
     networks:
       - platform
     healthcheck:
@@ -101,10 +103,94 @@ services:
       timeout: 5s
       retries: 12
 
+  # Airflow (TASK-058): scheduled/batch orchestration.
+  # LocalExecutor — single-machine executor suitable for development.
+  # Business DAGs live in airflow/dags/ (TASK-059+).
+  airflow-init:
+    image: apache/airflow:2.10.4-python3.12
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username admin --password admin \
+          --firstname Admin --lastname Admin \
+          --role Admin --email admin@example.com || true
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-platform}:${AIRFLOW_DB_PASSWORD:-platform-local}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-airflow-local-secret-key}
+    networks:
+      - platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-scheduler:
+    image: apache/airflow:2.10.4-python3.12
+    command: scheduler
+    restart: unless-stopped
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-platform}:${AIRFLOW_DB_PASSWORD:-platform-local}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-airflow-local-secret-key}
+      # Platform connectivity — available to DAG tasks via env vars.
+      AIRFLOW_VAR_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      AIRFLOW_VAR_MINIO_ENDPOINT: http://minio:9000
+      AIRFLOW_VAR_WAREHOUSE_DB_HOST: postgres
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags:ro
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - platform
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    image: apache/airflow:2.10.4-python3.12
+    command: webserver
+    restart: unless-stopped
+    ports:
+      - "${AIRFLOW_HOST_PORT:-8080}:8080"
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-platform}:${AIRFLOW_DB_PASSWORD:-platform-local}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-airflow-local-secret-key}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags:ro
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - platform
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
 volumes:
   kafka_data:
   minio_data:
   postgres_data:
+  airflow_logs:
 
 networks:
   # Fixed name so application services (later tasks) and other Compose
