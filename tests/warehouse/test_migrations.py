@@ -231,7 +231,7 @@ def test_migration_version_inspectable(db_connection, alembic_cfg):
     # Check version value
     cur.execute("SELECT version_num FROM alembic_version")
     version = cur.fetchone()[0]
-    assert version == "003"
+    assert version == "004"
 
     cur.close()
 
