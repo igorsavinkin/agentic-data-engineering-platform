@@ -24,6 +24,10 @@ class SourceMetric(StrEnum):
     RECORDS_COLLECTED = "source_records_collected_total"
     RECORDS_EMITTED = "source_records_emitted_total"
     ZERO_RECORD_FETCHES = "source_zero_record_fetches_total"
+    PAGES_FETCHED = "source_pages_fetched_total"
+    RETRY_ATTEMPTS = "source_retry_attempts_total"
+    MALFORMED_RECORDS = "source_malformed_records_total"
+    PARTIAL_FAILURES = "source_partial_failures_total"
 
 
 class _LatencyTracker:
@@ -171,6 +175,34 @@ class SourceMetrics:
         """Record a failed fetch attempt."""
         try:
             self.increment(SourceMetric.FETCH_FAILURE)
+        except Exception:
+            pass
+
+    def record_pages_fetched(self, count: int = 1) -> None:
+        """Record pages fetched during a paginated collection."""
+        try:
+            self.increment(SourceMetric.PAGES_FETCHED, count)
+        except Exception:
+            pass
+
+    def record_retry(self) -> None:
+        """Record a retry attempt within a fetch operation."""
+        try:
+            self.increment(SourceMetric.RETRY_ATTEMPTS)
+        except Exception:
+            pass
+
+    def record_malformed(self, count: int = 1) -> None:
+        """Record malformed/unparseable records encountered."""
+        try:
+            self.increment(SourceMetric.MALFORMED_RECORDS, count)
+        except Exception:
+            pass
+
+    def record_partial_failure(self) -> None:
+        """Record a partial collection failure (e.g. pagination interrupted)."""
+        try:
+            self.increment(SourceMetric.PARTIAL_FAILURES)
         except Exception:
             pass
 

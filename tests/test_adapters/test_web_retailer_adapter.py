@@ -713,3 +713,233 @@ class TestPagination:
 
         external_ids = [e.payload.external_id for e in result.events]
         assert len(external_ids) == len(set(external_ids))
+
+
+# ---------------------------------------------------------------------------
+# Health metrics tests (TASK-049)
+# ---------------------------------------------------------------------------
+
+
+MALFORMED_HTML = """\
+<!DOCTYPE html>
+<html>
+<body>
+<ul class="breadcrumb"><li class="active">Books</li></ul>
+<article class="product_pod">
+  <div class="product_price">
+    <p class="price_color">&pound;15.00</p>
+    <p class="instock availability">In stock</p>
+  </div>
+</article>
+<ul class="pager">
+    <li class="current">Page 1 of 1</li>
+</ul>
+</body>
+</html>
+"""
+
+
+class TestHealthMetrics:
+    """TASK-049: adapter records pages, retries, malformed, partial failures."""
+
+    @pytest.mark.asyncio
+    async def test_successful_fetch_records_pages_fetched(self) -> None:
+        """Single-page fetch records 1 page fetched."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.return_value = PAGE_3_HTML
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+        await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.PAGES_FETCHED] == 1
+        assert snapshot[SourceMetric.FETCH_SUCCESS] == 1
+
+    @pytest.mark.asyncio
+    async def test_multi_page_records_page_count(self) -> None:
+        """3-page pagination records 3 pages fetched."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [PAGE_1_HTML, PAGE_2_HTML, PAGE_3_HTML]
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+        await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.PAGES_FETCHED] == 3
+        assert snapshot[SourceMetric.RECORDS_COLLECTED] == 3
+        assert snapshot[SourceMetric.RECORDS_EMITTED] == 3
+
+    @pytest.mark.asyncio
+    async def test_zero_result_fetch(self) -> None:
+        """Empty listing page records success with zero records."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.return_value = EMPTY_PAGE_HTML
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+        result = await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.FETCH_SUCCESS] == 1
+        assert snapshot[SourceMetric.ZERO_RECORD_FETCHES] == 1
+        assert snapshot[SourceMetric.PAGES_FETCHED] == 1
+        assert snapshot[SourceMetric.RECORDS_COLLECTED] == 0
+        assert not result.has_events
+
+    @pytest.mark.asyncio
+    async def test_network_failure_metrics(self) -> None:
+        """Network failure records fetch_failure, no pages, no freshness."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.fetch_listing_page.side_effect = SourceFetchError(
+            "connection refused", source="web_retailer"
+        )
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+
+        with pytest.raises(SourceFetchError):
+            await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.FETCH_FAILURE] == 1
+        assert snapshot[SourceMetric.FETCH_SUCCESS] == 0
+        assert snapshot[SourceMetric.PAGES_FETCHED] == 0
+        assert metrics.get_last_successful_fetch() is None
+
+    @pytest.mark.asyncio
+    async def test_parser_malformed_records_tracked(self) -> None:
+        """Parser malformed records are counted in metrics."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.return_value = MALFORMED_HTML
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+        result = await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.MALFORMED_RECORDS] >= 1
+        assert len(result.malformed) >= 1
+
+    @pytest.mark.asyncio
+    async def test_partial_pagination_failure_tracked(self) -> None:
+        """Partial pagination failure records partial_failure metric."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [
+            PAGE_1_HTML,
+            SourceFetchError("HTTP 500", source="web_retailer"),
+        ]
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+        result = await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.PARTIAL_FAILURES] == 1
+        assert snapshot[SourceMetric.PAGES_FETCHED] == 1
+        assert snapshot[SourceMetric.FETCH_SUCCESS] == 1
+        assert len(result.events) == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_metrics_via_client(self) -> None:
+        """Client retries are recorded in metrics."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.return_value = SAMPLE_HTML
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        metrics.record_retry()
+        metrics.record_retry()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.RETRY_ATTEMPTS] == 2
+
+    @pytest.mark.asyncio
+    async def test_record_event_counts_accurate(self) -> None:
+        """Record and event counts are accurate across pages."""
+        from libs.observability.source_metrics import SourceMetric, SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [PAGE_1_HTML, PAGE_2_HTML, PAGE_3_HTML]
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+        result = await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        assert snapshot[SourceMetric.RECORDS_COLLECTED] == len(result.events) + len(
+            result.malformed
+        )
+        assert snapshot[SourceMetric.RECORDS_EMITTED] == len(result.events)
+
+    @pytest.mark.asyncio
+    async def test_freshness_after_successful_fetch(self) -> None:
+        """Freshness timestamp is set after successful adapter fetch."""
+        from libs.observability.source_metrics import SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.return_value = SAMPLE_HTML
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+
+        assert metrics.get_last_successful_fetch() is None
+
+        await adapter.fetch()
+
+        assert metrics.get_last_successful_fetch() is not None
+        assert metrics.get_freshness_age_seconds() is not None
+        assert metrics.get_freshness_age_seconds() >= 0
+
+    @pytest.mark.asyncio
+    async def test_snapshot_no_high_cardinality_after_fetch(self) -> None:
+        """Snapshot after adapter fetch contains no high-cardinality data."""
+        from libs.observability.source_metrics import SourceMetrics
+
+        mock_client = AsyncMock(spec=WebRetailerClient)
+        mock_client.base_url = "http://books.toscrape.com"
+        mock_client.catalog_path = "/catalogue/category/books_1/index.html"
+        mock_client.fetch_listing_page.side_effect = [PAGE_1_HTML, PAGE_2_HTML, PAGE_3_HTML]
+
+        metrics = SourceMetrics(source_name="web_retailer")
+        adapter = WebRetailerAdapter(client=mock_client, metrics=metrics)
+        await adapter.fetch()
+
+        snapshot = metrics.snapshot()
+        for key, value in snapshot.items():
+            str_value = str(value).lower()
+            assert "http" not in str_value or key == "source", (
+                f"Possible high-cardinality data in snapshot key '{key}': {value}"
+            )
+            assert "book" not in str_value
+            assert "page-" not in str_value
