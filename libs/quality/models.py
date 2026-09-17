@@ -143,6 +143,7 @@ class QualityCheck(Protocol):
     a ``QualityResult`` satisfies this protocol.
     """
 
-    name: str
+    @property
+    def name(self) -> str: ...
 
     def run(self, df: Any) -> QualityResult: ...
