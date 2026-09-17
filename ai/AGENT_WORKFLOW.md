@@ -21,7 +21,7 @@ Qoder implementation
       ↓
 Automated tests + local validation
       ↓
-Independent Qwen review
+Independent OCR code review
       ↓
 Fix findings
       ↓
@@ -104,24 +104,28 @@ Use Qoder for:
 
 Qoder should work from focused tasks rather than broad prompts such as "build the whole platform".
 
-### 3.3 Qwen Code — Independent Reviewer
+### 3.3 Open Code Review (OCR) — Structured Code Review
 
-Qwen Code should normally review without modifying files.
+The Open Code Review skill performs structured code review inline using the agent's own LLM. No external CLI or separate model is required.
 
-Typical review prompt intent:
+Review methodology (see `.qoder/skills/open-code-review/SKILL.md`):
 
 ```text
-Review TASK-xxx implementation against:
+Analyze the diff for TASK-xxx against:
 - PROJECT.md
 - SPECIFICATION.md
 - ROADMAP.md
 - TASK-xxx.md
 
-Do not modify files.
-Report correctness issues, missed requirements, edge cases, security risks, architecture violations, and missing tests.
+Classify findings as:
+- High: bugs, security issues, clear mistakes (blocking)
+- Medium: reasonable concerns, style/perf suggestions (non-blocking)
+- Low: false positives, nitpicks (discard silently)
+
+Verdict: any High findings → CHANGES REQUIRED; no High → APPROVED.
 ```
 
-The purpose of the second model is independence, not consensus.
+The review is structured and inline — the agent analyzes its own diff following the OCR classification scheme.
 
 ### 3.4 DeepSeek / Qwen Models — Cost-Efficient Implementation
 
@@ -237,18 +241,17 @@ Qoder reviews the git diff against the task and asks:
 
 ### Step 7 — Independent Review
 
-Qwen Code reviews the finished diff without editing it.
+OCR code review analyzes the finished diff using the Open Code Review skill methodology.
 
-Review findings should be classified approximately as:
+Review findings are classified as:
 
 ```text
-BLOCKER
-MAJOR
-MINOR
-SUGGESTION
+High      (blocking — must fix before PR)
+Medium    (non-blocking — note for future improvement)
+Low       (discard silently — false positives, nitpicks)
 ```
 
-BLOCKER and MAJOR findings must be resolved or explicitly rejected with a documented reason before merge.
+High findings must be resolved or explicitly rejected with a documented reason before merge.
 
 ### Step 8 — Escalate if Needed
 
@@ -316,13 +319,13 @@ when its dependency gate permits. Do not create five or more active lanes.
 Codex/Qoder install the project-managed hooks during checkout setup as documented
 in `scripts/README.md`. Pre-commit runs Ruff lint and format checks; pre-push runs
 pytest and mypy. The Git process must inherit the active Python environment.
-Qwen selectively reruns critical or suspicious tests rather than duplicating CI.
+The reviewer selectively reruns critical or suspicious tests rather than duplicating CI.
 
 Builders run focused tests during development and `scripts/task_check.ps1` or
 `bash scripts/task_check.sh` before committing, plus `python -m pytest -m integration`
 when Docker prerequisites are running.
 Reviewers inspect test quality and selectively rerun critical or suspicious tests
-according to `ai/REVIEWER.md`. Complete Qwen review and resolve blocking findings
+according to the OCR skill methodology. Complete OCR review and resolve blocking findings
 before pushing to origin, then open the PR to start CI. Follow the commands in
 `docs/TASK_WORKFLOW.md`. Review can overlap another task's implementation when
 dependency gates permit. CI is the authoritative full merge gate for its configured
@@ -536,7 +539,7 @@ Repo-wide implementation / debugging
         → stronger Qoder model
 
 Independent review
-        → Qwen Code
+        → OCR skill (inline)
 
 Architecture / distributed systems / hard failure
         → Claude Code
