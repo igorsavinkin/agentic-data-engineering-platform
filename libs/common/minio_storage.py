@@ -235,6 +235,31 @@ class MinIOStorage:
         )
         return keys
 
+    def delete_object(self, bucket: str, key: str) -> None:
+        """Delete a single object from the store.
+
+        Parameters
+        ----------
+        bucket:
+            Target bucket name.
+        key:
+            Object key to delete.
+
+        Raises
+        ------
+        StorageError
+            If the delete operation fails.
+        """
+        self._assert_open()
+        try:
+            self._client.delete_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            raise StorageError(f"delete_object failed: bucket={bucket!r} key={key!r}") from exc
+        except BotoCoreError as exc:
+            raise StorageError(f"delete_object failed: bucket={bucket!r} key={key!r}") from exc
+
+        logger.debug("object_deleted", extra={"bucket": bucket, "key": key})
+
     def check_health(self) -> HealthStatus:
         """Probe whether the object store is reachable and authenticated.
 
