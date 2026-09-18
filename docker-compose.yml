@@ -145,8 +145,11 @@ services:
       AIRFLOW_VAR_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       AIRFLOW_VAR_MINIO_ENDPOINT: http://minio:9000
       AIRFLOW_VAR_WAREHOUSE_DB_HOST: postgres
+      # DAGs import business logic from libs/ (TASK-059).
+      PYTHONPATH: /opt/airflow
     volumes:
       - ./airflow/dags:/opt/airflow/dags:ro
+      - ./libs:/opt/airflow/libs:ro
       - airflow_logs:/opt/airflow/logs
     networks:
       - platform
@@ -169,8 +172,10 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-airflow-local-secret-key}
+      PYTHONPATH: /opt/airflow
     volumes:
       - ./airflow/dags:/opt/airflow/dags:ro
+      - ./libs:/opt/airflow/libs:ro
       - airflow_logs:/opt/airflow/logs
     networks:
       - platform
