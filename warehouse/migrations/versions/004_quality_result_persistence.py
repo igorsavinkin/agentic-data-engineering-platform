@@ -34,7 +34,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "data_quality_results",
-        sa.Column("details", sa.JSON()),
+        sa.Column("details", sa.dialects.postgresql.JSONB()),
     )
     op.add_column(
         "data_quality_results",

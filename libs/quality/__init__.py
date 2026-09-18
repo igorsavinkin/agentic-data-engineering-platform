@@ -31,15 +31,29 @@ from libs.quality.models import (
     QualityResult,
     QualitySuiteResult,
 )
-from libs.quality.persistence import (
-    QualityPersistenceConfig,
-    QualityResultReader,
-    QualityResultRow,
-    QualityResultWriter,
-    WriteResult,
-    make_replay_key,
-)
 from libs.quality.runner import QualitySuite, run_checks
+
+_PERSISTENCE_NAMES = frozenset(
+    {
+        "QualityPersistenceConfig",
+        "QualityResultReader",
+        "QualityResultRow",
+        "QualityResultWriter",
+        "WriteResult",
+        "make_replay_key",
+    }
+)
+
+
+def __getattr__(name: str) -> object:
+    if name in _PERSISTENCE_NAMES:
+        from libs.quality import persistence
+
+        attr = getattr(persistence, name)
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AllowedValuesCheck",

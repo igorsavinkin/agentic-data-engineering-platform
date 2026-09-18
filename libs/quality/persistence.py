@@ -37,19 +37,29 @@ def make_replay_key(
     pipeline_run_id: int | None = None,
     observation_id: int | None = None,
     source: str | None = None,
+    checked_at: datetime | None = None,
 ) -> str:
     """Build a deterministic replay key for idempotent writes.
 
     The key combines the check identity with its scoping context. Two
     results with the same key represent the same logical check execution
     and should not be duplicated.
+
+    When no context is provided (all None), includes ``checked_at`` to
+    prevent collision between distinct executions of the same check.
     """
+    has_context = pipeline_run_id is not None or observation_id is not None or source is not None
+
     parts = [
         check_name,
         str(pipeline_run_id) if pipeline_run_id is not None else "_",
         str(observation_id) if observation_id is not None else "_",
         source or "_",
     ]
+
+    if not has_context and checked_at is not None:
+        parts.append(checked_at.isoformat())
+
     return ":".join(parts)
 
 
@@ -169,6 +179,7 @@ class QualityResultWriter:
                     pipeline_run_id=pipeline_run_id,
                     observation_id=observation_id,
                     source=r.source,
+                    checked_at=r.checked_at,
                 )
                 values.append(
                     (
