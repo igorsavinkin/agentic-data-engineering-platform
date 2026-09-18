@@ -36,13 +36,20 @@ class TestReadiness:
         assert body["database"] == "connected"
 
     def test_readiness_without_db(self) -> None:
+        from unittest.mock import MagicMock
+
         app = create_app(db_settings=DatabaseSettings(url="sqlite://"))
 
+        failing_session = MagicMock()
+        failing_session.execute.side_effect = Exception("connection refused")
+
         def _failing_db() -> Generator[Session, None, None]:
-            raise RuntimeError("db unavailable")
+            yield failing_session
 
         app.dependency_overrides[get_db] = _failing_db
-        client = TestClient(app, raise_server_exceptions=False)
+        client = TestClient(app)
 
         response = client.get("/api/v1/ready")
-        assert response.status_code == 500
+        assert response.status_code == 503
+        body = response.json()
+        assert body["error"]["code"] == "SERVICE_UNAVAILABLE"

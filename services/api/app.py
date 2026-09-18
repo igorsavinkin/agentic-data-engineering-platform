@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
-from contextlib import contextmanager
 
 from fastapi import FastAPI
 from sqlalchemy.orm import Session
@@ -31,7 +30,6 @@ def create_app(
     engine = create_db_engine(db_settings.url)
     session_factory = create_session_factory(engine)
 
-    @contextmanager
     def _db_session() -> Generator[Session, None, None]:
         session = session_factory()
         try:

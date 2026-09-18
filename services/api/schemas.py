@@ -5,11 +5,9 @@ All responses use typed models — no raw dicts at the boundary.
 
 from __future__ import annotations
 
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
-
-T = TypeVar("T")
 
 
 class APIResponse(BaseModel):
@@ -32,7 +30,7 @@ class ErrorResponse(BaseModel):
     error: ErrorDetail
 
 
-class PaginatedResponse(APIResponse, Generic[T]):
+class PaginatedResponse(APIResponse):
     """Typed paginated response envelope."""
 
     items: list[Any]

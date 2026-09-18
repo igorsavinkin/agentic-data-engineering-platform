@@ -31,3 +31,4 @@ tenacity>=8.0.0
 # FastAPI web framework for the API service (TASK-063).
 fastapi>=0.115,<1
 uvicorn>=0.32,<1
+sqlalchemy>=2.0
