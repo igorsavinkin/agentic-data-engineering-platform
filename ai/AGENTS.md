@@ -167,7 +167,7 @@ Use environment/configuration and least privilege.
 Default role assignment:
 
 - **Codex or Qoder:** primary implementation environment
-- **Open Code Review (OCR):** structured code review using the OCR skill (High/Medium/Low classification)
+- **Qwen Code:** independent reviewer, preferably review-only
 - **DeepSeek/Qwen models:** high-volume straightforward implementation where appropriate
 - **Claude Code:** difficult architecture, distributed-systems reasoning, debugging, Kubernetes, Terraform/AWS, security, and performance analysis
 - **Human owner:** final architecture and merge decisions

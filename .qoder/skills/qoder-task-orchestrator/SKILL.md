@@ -1,6 +1,6 @@
 ---
 name: qoder-task-orchestrator
-description: Executes one TASK-xxx specification end to end in the current session - prepare worktree, implement, mandatory OCR code review, PR, CI monitoring, and automatic merge to main. Use when the user asks to "run task XXX", "implement TASK-xxx", or "automate the task workflow". Invoke with @qoder-task-orchestrator. For several sequential or dependent tasks, use @qoder-task-batch-runner instead.
+description: Executes one TASK-xxx specification end to end in the current session - prepare worktree, implement, mandatory Qwen review, PR, CI monitoring, and automatic merge to main. Use when the user asks to "run task XXX", "implement TASK-xxx", or automate the task workflow. Invoke with @qoder-task-orchestrator. For several sequential or dependent tasks, use @qoder-task-batch-runner instead.
 ---
 
 # Qoder Task Orchestrator
@@ -20,7 +20,7 @@ Before invoking, verify:
 1. Main branch is clean (`git status` shows nothing)
 2. Task specification exists at `ai/tasks/TASK-xxx-specification.md`
 3. Python 3.12+, Git, GitHub CLI are available
-4. Open Code Review skill is available (`.qoder/skills/open-code-review/`)
+4. Qwen Code CLI is installed (auto-detected from common locations if not in PATH)
 5. Project hooks (`.githooks/`) are merged into main
 6. At most one other task worktree is active
 
@@ -32,7 +32,7 @@ Single-session linear workflow — no child sessions, no delegation:
 One Agent Session
     ├─ Phase 1: Prepare (create worktree)
     ├─ Phase 2: Implement (edit files, commit)
-    ├─ Phase 3: Review (quality checks + OCR code review)
+    ├─ Phase 3: Review (quality checks + Qwen review)
     ├─ Phase 4: Publish (push + create PR)
     ├─ Phase 5: Monitor CI (poll until pass/fail)
     └─ Phase 6: Cleanup (remove worktree)
@@ -47,15 +47,16 @@ A full run takes a long time and should not require watching the terminal. When 
 ```bash
 python .qoder/notify/notify.py --level blocked \
   --subject "TASK-040 review BLOCKED" \
-  --detail "OCR review found unresolvable High findings on round 3; owner decision needed" \
+  --detail "Qwen verdict BLOCKED on round 3; owner decision needed" \
   --ref "https://github.com/<owner>/<repo>/pull/53"
 ```
 
-**Send an alert at exactly these five points:**
+**Send an alert at exactly these six points:**
 
 | When | `--level` |
 |---|---|
-| OCR review finds `BLOCKED` findings (Phase 3) | `blocked` |
+| Qwen CLI not detectable (Phase 2.5) | `blocked` |
+| Qwen verdict `BLOCKED` (Phase 3) | `blocked` |
 | `rounds >= 3` without approval (Phase 3) | `blocked` |
 | Any Phase 4 review-gate guard fails | `blocked` |
 | CI checks fail (Phase 5) | `failed` |
@@ -67,7 +68,7 @@ Do not alert on routine phase transitions. The value of this channel is that eve
 
 ## CRITICAL: Review Phase is MANDATORY
 
-**DO NOT STOP AFTER IMPLEMENTATION.** The OCR review phase (Phase 3) is a mandatory gate that must complete before proceeding to PR creation. Skipping review is a critical failure.
+**DO NOT STOP AFTER IMPLEMENTATION.** The Qwen review phase (Phase 3) is a mandatory gate that must complete before proceeding to PR creation. Skipping review is a critical failure.
 
 The workflow has these **mandatory sequential phases**:
 1. Prepare → 2. Implement → **3. Review (MANDATORY)** → 4. Publish → 5. CI Monitor → 6. Cleanup
@@ -85,7 +86,7 @@ You MUST execute ALL phases. Never stop after Phase 2.
 ### Correct Workflow
 
 ```
-✅ RIGHT: Implement → Commit → Quality Checks → OCR Review → Save Report → Push → Create PR
+✅ RIGHT: Implement → Commit → Quality Checks → Qwen Review → Save Report → Push → Create PR
 ```
 
 ### Phase State Transitions
@@ -181,7 +182,7 @@ write_json(f"task-workflow/TASK-xxx/state.json", state)
 
 You have completed Phase 2 (Implementation). The workflow is NOT complete.
 
-**MANDATORY NEXT STEP:** Execute Phase 3 (OCR Review) immediately.
+**MANDATORY NEXT STEP:** Execute Phase 3 (Qwen Review) immediately.
 
 Skipping the review phase is a **CRITICAL WORKFLOW FAILURE**. The review must complete before any PR can be created.
 
@@ -189,11 +190,78 @@ Proceed to Phase 3 now.
 
 ---
 
+### Phase 2.5: Detect and Configure Qwen Code CLI
+
+**Run this BEFORE Phase 3.** The orchestrator must locate the Qwen Code CLI executable and prepare it for review.
+
+The repository provides a wrapper script `scripts/qwen_review.sh` that handles Git Bash stdin issues automatically by detecting whether stdin is a terminal or piped, and using the appropriate Qwen invocation mode.
+
+```python
+import os
+from pathlib import Path
+
+# Verify wrapper script exists
+wrapper_script = Path("scripts/qwen_review.sh")
+if not wrapper_script.exists():
+    raise RuntimeError("Qwen review wrapper script not found at scripts/qwen_review.sh")
+
+print(f"Qwen review wrapper ready: {wrapper_script.resolve()}")
+print("This script handles Git Bash stdin piping issues automatically.")
+```
+
+Store this path for use in Phase 3. The wrapper script will:
+1. Auto-detect Qwen using cross-platform fallback paths (Windows %LOCALAPPDATA%, %APPDATA%, etc.)
+2. Find spec files using glob pattern matching (handles kebab-case naming like TASK-023-partitioning-strategy.md)
+3. Detect if stdin is a terminal or piped:
+   - Interactive (terminal): Uses `-i` flag for interactive mode with tool approvals
+   - Non-interactive (piped): Uses `--prompt` with `-y` (YOLO) for auto-approval
+4. Build the review prompt with git diff and commit information
+5. Invoke Qwen appropriately and verify the review report was created
+
+---
+
+#### Qwen Auto-Detection Logic (used by wrapper script)
+
+The wrapper script (`scripts/qwen_review.sh`) implements cross-platform Qwen detection:
+
+```bash
+detect_qwen() {
+    # Try PATH first
+    if command -v qwen &>/dev/null; then
+        echo "$(command -v qwen)"
+        return 0
+    fi
+
+    # Windows fallback paths
+    local home="$HOME"
+    local candidates=(
+        "$home/AppData/Local/qwen-code/bin/qwen.cmd"
+        "$home/AppData/Roaming/npm/qwen.cmd"
+        "$home/AppData/Local/Programs/qwen-code/bin/qwen.cmd"
+        "$home/AppData/Local/qwen-code/qwen-code/bin/qwen.cmd"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    echo "ERROR: Qwen Code CLI not found" >&2
+    return 1
+}
+```
+
+If detection fails, STOP and inform the user — do NOT proceed to self-review. Send a `--level blocked` alert first: this stop needs the owner to install or locate the CLI, and they may be away from the terminal.
+
+---
+
 ### Phase 3: Automated Review (MANDATORY - DO NOT SKIP)
 
 **THIS PHASE IS REQUIRED.** After implementation completes, you MUST immediately execute the review phase. Never stop after Phase 2.
 
-Run quality checks and perform OCR code review using the Open Code Review skill methodology:
+Run quality checks and invoke Qwen for review:
 
 ```python
 # STEP 1: Verify implementation completed
@@ -222,82 +290,80 @@ print("Quality checks passed")
 diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{head}")
 spec_content = read_file(spec_path)
 
-# STEP 4: Perform OCR code review (inline, using Open Code Review skill)
-#
-# The agent analyzes the diff following the OCR skill methodology:
-# 1. Gather business context from the task spec and project docs
-# 2. Analyze each changed file in the diff
-# 3. Classify findings by severity:
-#    - High: bugs, security issues, clear mistakes, well-founded fix proposals
-#    - Medium: reasonable concerns, style/perf suggestions, context-dependent
-#    - Low: false positives, nitpicks, lacking context (discard silently)
-# 4. Determine verdict:
-#    - Any High findings → CHANGES REQUIRED
-#    - No High findings → APPROVED
-#
-# Business context for the review:
+# STEP 4: Launch Qwen Code CLI for review using wrapper script (MANDATORY)
+
+print("Performing independent code review with Qwen Code CLI...")
+
+# Extract task ID from spec path (e.g., "ai/tasks/TASK-010-specification.md" -> "TASK-010")
 task_id = Path(spec_path).stem.split("-")[0] + "-" + Path(spec_path).stem.split("-")[1]
-background = f"Implementing {task_id}. Spec: {spec_path}. Branch: feature/{task_id}."
 
-print(f"Performing OCR code review for {task_id}...")
-print(f"Background: {background}")
+# Use the repository's wrapper script which handles Git Bash stdin issues
+wrapper_script = "scripts/qwen_review.sh"
+base_commit = base  # e.g., "main" or specific commit hash
 
-# Analyze the diff — the agent reads each changed file and the diff,
-# then produces structured findings following the OCR classification scheme.
-# See .qoder/skills/open-code-review/SKILL.md for the full methodology.
+print(f"Invoking Qwen review wrapper: {wrapper_script}")
+print(f"Task: {task_id}, Base: {base_commit}")
 
-review_findings = ocr_analyze_diff(
-    diff=diff,
-    background=background,
-    spec_content=spec_content,
+# Execute wrapper script - it handles /dev/tty redirection automatically
+result = subprocess.run(
+    ["bash", wrapper_script, task_id, base_commit],
+    cwd=worktree_path,
+    timeout=600,  # 10 minute timeout for review
 )
 
-# STEP 5: Determine verdict from findings
-high_findings = [f for f in review_findings if f.severity == "High"]
-medium_findings = [f for f in review_findings if f.severity == "Medium"]
+if result.returncode != 0:
+    raise RuntimeError(f"Qwen review wrapper exited with code {result.returncode}")
 
-if high_findings:
-    verdict = "CHANGES REQUIRED"
-elif medium_findings:
-    verdict = "APPROVED"  # Medium findings are non-blocking
-else:
-    verdict = "APPROVED"
+# Read the generated report
+report_path = Path(worktree_path) / "docs" / "reviews" / f"{task_id}-review.md"
+if not report_path.exists():
+    raise RuntimeError(f"Review wrapper did not create report at {report_path}")
 
-print(f"OCR review: {verdict} ({len(high_findings)} high, {len(medium_findings)} medium)")
+review_output = report_path.read_text(encoding="utf-8")
+print(f"Review report loaded from: {report_path}")
 
-# STEP 6: Generate and save review report
-report_content = format_ocr_report(
-    task_id=task_id,
-    verdict=verdict,
-    findings=review_findings,
-    files_reviewed=len(get_changed_files()),
-    head=head,
-)
+# STEP 5: Parse verdict and handle non-APPROVED cases
 
-review_report_path = f"{worktree_path}/docs/reviews/{task_id}-review.md"
-write_file(review_report_path, report_content)
-git_add("docs/reviews/{task_id}-review.md")
-git_commit("-m", f"docs: Record {task_id} OCR review ({verdict})")
+verdict = parse_workflow_review(review_output, head)
 
-# STEP 7: Handle non-APPROVED cases
-if verdict == "CHANGES REQUIRED":
+if verdict == "APPROVED":
+    print("Review APPROVED")
+    # Continue to save report and proceed to Phase 4
+elif verdict == "BLOCKED":
+    print(f"Review BLOCKED: {verdict}")
+    # Save report first so owner can inspect
+    write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", review_output)
+    git_add("docs/reviews/TASK-xxx-review.md")
+    git_commit("-m", f"docs: Record TASK-xxx Qwen review (BLOCKED)")
+    raise Error(
+        f"Qwen marked the task BLOCKED; owner intervention required. "
+        f"See docs/reviews/TASK-xxx-review.md"
+    )
+else:  # CHANGES REQUIRED - enter fix-and-re-review loop
+    print(f"Review requires changes: {verdict}")
+    # Save initial review report
+    write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", review_output)
+    git_add("docs/reviews/TASK-xxx-review.md")
+    git_commit("-m", f"docs: Record TASK-xxx Qwen review (CHANGES REQUIRED)")
+
     # Enter fix loop (up to max_rounds total attempts including initial implementation)
     max_fix_rounds = 3
-    current_round = state.get("rounds", 1)
+    current_round = state.get("rounds", 1)  # Already counted initial implementation
     final_verdict = verdict
+    final_review_output = review_output
     final_head = head
 
     while current_round < max_fix_rounds:
         current_round += 1
         state.update(rounds=current_round)
 
-        print(f"Fix attempt {current_round}/{max_fix_rounds}: addressing OCR findings...")
+        print(f"Fix attempt {current_round}/{max_fix_rounds}: addressing review findings...")
 
-        # Fix High findings in worktree based on review feedback
-        for finding in high_findings:
-            # Apply fix based on finding.path, finding.line, finding.recommendation
-            apply_fix(worktree_path, finding)
+        # Read review report for specific issues
+        review_content = read_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md")
 
+        # Fix blocking findings in worktree based on review feedback
+        # Edit files in worktree as needed
         # Run quality checks to verify fixes
         run_in_worktree(
             worktree_path,
@@ -310,72 +376,93 @@ if verdict == "CHANGES REQUIRED":
         )
 
         # Commit fixes
-        changed_files = get_changed_files()
+        changed_files = get_changed_files()  # From your git status/diff logic
         if changed_files:
             git_add(*changed_files)
-            git_commit("-m", f"fix({task_id}): Address OCR review findings (round {current_round})")
+            git_commit("-m", f"fix(TASK-xxx): Address review findings (round {current_round})")
 
-        # Re-run OCR review with updated code
+        # Re-run review with updated code
         new_head = git_rev_parse("HEAD")
-        new_diff = git_diff("--no-ext-diff", "--no-textconv", f"{base}...{new_head}")
 
-        print(f"Re-running OCR review (round {current_round})...")
-        new_findings = ocr_analyze_diff(
-            diff=new_diff,
-            background=background,
-            spec_content=spec_content,
-        )
-
-        new_high = [f for f in new_findings if f.severity == "High"]
-        new_medium = [f for f in new_findings if f.severity == "Medium"]
-
-        if new_high:
-            final_verdict = "CHANGES REQUIRED"
-            high_findings = new_high
-        else:
-            final_verdict = "APPROVED"
-
-        # Update review report
-        report_content = format_ocr_report(
+        print(f"Re-running Qwen review (round {current_round})...")
+        new_review_output = run_qwen_review_interactive(
+            qwen_executable=QWEN_EXECUTABLE,
+            worktree_path=worktree_path,
             task_id=task_id,
-            verdict=final_verdict,
-            findings=new_findings,
-            files_reviewed=len(get_changed_files()),
+            base=base,
             head=new_head,
+            spec_path=spec_path,
         )
-        write_file(review_report_path, report_content)
-        git_add("docs/reviews/{task_id}-review.md")
-        git_commit("-m", f"docs: Update {task_id} OCR review ({final_verdict})")
 
+        # Parse new verdict
+        new_verdict = parse_workflow_review(new_review_output, new_head)
+        final_verdict = new_verdict
+        final_review_output = new_review_output
         final_head = new_head
 
-        if final_verdict == "APPROVED":
+        if new_verdict == "APPROVED":
             print(f"Re-review APPROVED on round {current_round}")
+            # Update review report with latest version
+            write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", new_review_output)
+            git_add("docs/reviews/TASK-xxx-review.md")
+            git_commit("-m", f"docs: Update TASK-xxx Qwen review (APPROVED)")
             break
-    else:
-        if final_verdict != "APPROVED":
+        elif new_verdict == "BLOCKED":
+            print(f"Re-review BLOCKED on round {current_round}")
+            write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", new_review_output)
+            git_add("docs/reviews/TASK-xxx-review.md")
+            git_commit("-m", f"docs: Update TASK-xxx Qwen review (BLOCKED)")
             raise Error(
-                f"OCR review fix loop exhausted after {max_fix_rounds} rounds. "
-                f"Final verdict: {final_verdict}. Owner must intervene. "
-                f"See {review_report_path}"
+                f"Re-review on round {current_round} returned BLOCKED; "
+                f"owner intervention required. See docs/reviews/TASK-xxx-review.md"
             )
+        else:  # Still CHANGES REQUIRED
+            print(f"Re-review still requires changes (round {current_round})")
+            write_file(f"{worktree_path}/docs/reviews/TASK-xxx-review.md", new_review_output)
+            git_add("docs/reviews/TASK-xxx-review.md")
+            git_commit("-m", f"docs: Update TASK-xxx Qwen review (still CHANGES REQUIRED)")
+            # Continue loop for another fix attempt
 
+    # Check if we exhausted rounds without approval
+    if current_round >= max_fix_rounds and final_verdict != "APPROVED":
+        raise Error(
+            f"Review fix loop exhausted after {max_fix_rounds} rounds. "
+            f"Final verdict: {final_verdict}. Owner must intervene. "
+            f"See docs/reviews/TASK-xxx-review.md"
+        )
+
+    # Final validation: must be APPROVED to proceed
+    if final_verdict != "APPROVED":
+        raise Error(
+            f"Final review verdict is {final_verdict}, cannot proceed to PR creation. "
+            f"See docs/reviews/TASK-xxx-review.md"
+        )
+
+    # Use the final approved head for state tracking
     head = final_head
+    review_output = final_review_output
 
 print("Review APPROVED")
 
-# STEP 8: Update state to mark review complete
+# STEP 6: Update state to mark review complete
 state.update(phase="review-complete", reviewed=head, approved_head=head, rounds=current_round)
-write_json(f"task-workflow/{task_id}/state.json", state)
+write_json(f"task-workflow/TASK-xxx/state.json", state)
 print(f"State updated: phase='review-complete', reviewed='{head}', rounds={current_round}")
+
+# STEP 7: Save review report (if not already saved during fix loop)
+review_report_path = f"{worktree_path}/docs/reviews/TASK-xxx-review.md"
+if not os.path.exists(review_report_path):
+    write_file(review_report_path, review_output)
+    git_add("docs/reviews/TASK-xxx-review.md")
+    git_commit("-m", f"docs: Record TASK-xxx Qwen review")
 
 print("Review phase complete. Proceeding to Phase 4...")
 ```
 
 **Validation Checklist Before Proceeding:**
 - [ ] Quality checks passed (ruff, mypy, pytest)
-- [ ] OCR review completed (diff analyzed, findings classified)
-- [ ] Verdict is "APPROVED" (no unresolved High findings)
+- [ ] Qwen review invoked and completed
+- [ ] Verdict is exactly "APPROVED"
 - [ ] Review report saved to `docs/reviews/TASK-xxx-review.md`
 - [ ] Review commit created
 
@@ -395,7 +482,7 @@ review_report_path = f"{worktree_path}/docs/reviews/TASK-xxx-review.md"
 if not os.path.exists(review_report_path):
     raise Error(
         f"BLOCKED: Review report not found at {review_report_path}\n"
-        "You MUST complete Phase 3 (OCR Review) before creating a PR.\n"
+        "You MUST complete Phase 3 (Qwen Review) before creating a PR.\n"
         "Go back and execute the review phase now."
     )
 
@@ -442,7 +529,7 @@ else:
     pr_body = f"""
 Implements TASK-xxx according to `{spec_path}`.
 
-OCR review passed for implementation `{reviewed_head}`; see
+Qwen approved implementation `{reviewed_head}`; see
 `docs/reviews/TASK-xxx-review.md`. Local repository checks passed.
 """
     pr_number = gh_pr_create(
@@ -564,7 +651,7 @@ Error: No commits made — implementation failed
 
 **Review Requires Changes:**
 ```
-Error: OCR review found High findings (CHANGES REQUIRED)
+Error: Review requires changes (CHANGES REQUIRED)
 ```
 → Read `docs/reviews/TASK-xxx-review.md` for specific findings
 → The orchestrator automatically enters a fix-and-re-review loop (up to 3 rounds total)
@@ -572,7 +659,7 @@ Error: OCR review found High findings (CHANGES REQUIRED)
 
 **Review Blocked:**
 ```
-Error: OCR review found unresolvable High findings
+Error: Qwen marked the task BLOCKED
 ```
 → Read `docs/reviews/TASK-xxx-review.md` immediately — this is a hard stop with no automatic retry
 → Send a `blocked` alert before reporting it; the owner must manually assess and decide whether to proceed or abandon the task
@@ -616,7 +703,7 @@ A task workflow is **only complete** when ALL of these are true:
 
 1. Implementation committed to feature branch
 2. Quality checks pass (ruff, mypy, pytest)
-3. **OCR review completed and APPROVED** (no unresolved High findings)
+3. **Qwen review invoked and APPROVED**
 4. Review report saved to `docs/reviews/TASK-xxx-review.md`
 5. Review report committed to git
 6. State file updated with `phase: "review-complete"` and `reviewed` hash
@@ -656,4 +743,4 @@ Most commonly, agents stop after implementation. This is WRONG. The review phase
 - `scripts/qoder_task_workflow.py` - Original workflow implementation
 - `docs/AUTOMATED_TASK_WORKFLOW.md` - Detailed workflow documentation
 - `ai/AGENT_WORKFLOW.md` - Agent development conventions
-- `.qoder/skills/open-code-review/SKILL.md` - OCR review methodology and classification scheme
+- `ai/REVIEWER.md` - Qwen review criteria
