@@ -97,6 +97,7 @@ def clean_database(db_connection):
     cur = db_connection.cursor()
 
     # Drop tables in reverse dependency order
+    cur.execute("DROP TABLE IF EXISTS daily_metrics CASCADE")
     cur.execute("DROP TABLE IF EXISTS ingestion_health_results CASCADE")
     cur.execute("DROP TABLE IF EXISTS data_quality_results CASCADE")
     cur.execute("DROP TABLE IF EXISTS pipeline_runs CASCADE")
@@ -144,6 +145,7 @@ def test_resulting_schema_matches_task027(db_connection, alembic_cfg):
         "pipeline_runs",
         "data_quality_results",
         "ingestion_health_results",
+        "daily_metrics",
         "alembic_version",
     }
     assert expected_tables.issubset(tables), f"Missing tables: {expected_tables - tables}"
@@ -233,7 +235,7 @@ def test_migration_version_inspectable(db_connection, alembic_cfg):
     # Check version value
     cur.execute("SELECT version_num FROM alembic_version")
     version = cur.fetchone()[0]
-    assert version == "005"
+    assert version == "006"
 
     cur.close()
 
@@ -250,7 +252,7 @@ def test_downgrade_upgrade_cycle(db_connection, alembic_cfg):
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
     """)
     table_count_after_upgrade = cur.fetchone()[0]
-    assert table_count_after_upgrade >= 7  # Our 7 tables + alembic_version
+    assert table_count_after_upgrade >= 8  # Our 8 tables + alembic_version
 
     # Downgrade to base (remove all migrations)
     command.downgrade(alembic_cfg, "base")
@@ -272,7 +274,7 @@ def test_downgrade_upgrade_cycle(db_connection, alembic_cfg):
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
     """)
     table_count_after_reupgrade = cur.fetchone()[0]
-    assert table_count_after_reupgrade >= 7
+    assert table_count_after_reupgrade >= 8
 
     cur.close()
 
@@ -295,7 +297,7 @@ def test_rerun_is_safe(db_connection, alembic_cfg):
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
     """)
     table_count = cur.fetchone()[0]
-    assert table_count >= 7
+    assert table_count >= 8
 
     cur.close()
 
