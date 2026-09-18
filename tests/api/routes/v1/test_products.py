@@ -220,7 +220,7 @@ class TestProductDetail:
 
 class TestProductObservations:
     def test_list_observations_for_product(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get("/api/v1/products/1/observations")
+        response = seeded_client.get("/api/v1/products/1/history")
         assert response.status_code == 200
         body = response.json()
         assert body["total"] == 3
@@ -231,27 +231,25 @@ class TestProductObservations:
         assert collected_dates == sorted(collected_dates, reverse=True)
 
     def test_observations_source_traceability(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get("/api/v1/products/1/observations")
+        response = seeded_client.get("/api/v1/products/1/history")
         body = response.json()
         sources = {item["source"] for item in body["items"]}
         assert "fake_store" in sources
         assert "best_buy" in sources
 
     def test_observations_pagination(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get("/api/v1/products/1/observations?page=1&page_size=2")
+        response = seeded_client.get("/api/v1/products/1/history?page=1&page_size=2")
         assert response.status_code == 200
         body = response.json()
         assert body["total"] == 3
         assert len(body["items"]) == 2
 
-        response2 = seeded_client.get("/api/v1/products/1/observations?page=2&page_size=2")
+        response2 = seeded_client.get("/api/v1/products/1/history?page=2&page_size=2")
         body2 = response2.json()
         assert len(body2["items"]) == 1
 
     def test_observations_date_filter_from(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get(
-            "/api/v1/products/1/observations?from_date=2025-06-10T00:00:00Z"
-        )
+        response = seeded_client.get("/api/v1/products/1/history?from_date=2025-06-10T00:00:00Z")
         assert response.status_code == 200
         body = response.json()
         assert body["total"] == 2
@@ -259,7 +257,7 @@ class TestProductObservations:
             assert item["collected_at"] >= "2025-06-10"
 
     def test_observations_date_filter_to(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get("/api/v1/products/1/observations?to_date=2025-06-10T00:00:00Z")
+        response = seeded_client.get("/api/v1/products/1/history?to_date=2025-06-10T00:00:00Z")
         assert response.status_code == 200
         body = response.json()
         assert body["total"] == 1
@@ -267,25 +265,24 @@ class TestProductObservations:
 
     def test_observations_date_filter_range(self, seeded_client: TestClient) -> None:
         response = seeded_client.get(
-            "/api/v1/products/1/observations"
-            "?from_date=2025-06-01T00:00:00Z&to_date=2025-06-15T23:59:59Z"
+            "/api/v1/products/1/history?from_date=2025-06-01T00:00:00Z&to_date=2025-06-15T23:59:59Z"
         )
         assert response.status_code == 200
         body = response.json()
         assert body["total"] == 2
 
     def test_observations_product_not_found(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get("/api/v1/products/999/observations")
+        response = seeded_client.get("/api/v1/products/999/history")
         assert response.status_code == 404
         body = response.json()
         assert body["error"]["code"] == "PRODUCT_NOT_FOUND"
 
     def test_observations_invalid_page(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get("/api/v1/products/1/observations?page=0")
+        response = seeded_client.get("/api/v1/products/1/history?page=0")
         assert response.status_code == 422
 
     def test_observations_single_product(self, seeded_client: TestClient) -> None:
-        response = seeded_client.get("/api/v1/products/2/observations")
+        response = seeded_client.get("/api/v1/products/2/history")
         assert response.status_code == 200
         body = response.json()
         assert body["total"] == 1

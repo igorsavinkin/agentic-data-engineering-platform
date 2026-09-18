@@ -71,7 +71,7 @@ def get_product(
     )
 
 
-@router.get("/{product_id}/observations", response_model=ObservationListResponse)
+@router.get("/{product_id}/history", response_model=ObservationListResponse)
 def list_observations(
     product_id: int,
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
@@ -87,7 +87,7 @@ def list_observations(
     """Return paginated historical observations for a product."""
     repo = ProductRepository(db)
 
-    if repo.get_product(product_id) is None:
+    if not repo.product_exists(product_id):
         raise APIError(
             status_code=404,
             error_code="PRODUCT_NOT_FOUND",

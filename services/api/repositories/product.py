@@ -80,6 +80,13 @@ class ProductRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def product_exists(self, product_id: int) -> bool:
+        """Return True if a product with the given ID exists."""
+        row = self._session.execute(
+            select(Product.id).where(Product.id == product_id)
+        ).one_or_none()
+        return row is not None
+
     def list_products(
         self,
         page: int = 1,
