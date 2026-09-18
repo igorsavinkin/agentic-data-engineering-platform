@@ -103,27 +103,43 @@ def _ensure_schema(config: QualityPersistenceConfig) -> None:
         conn.close()
 
 
-def _cleanup_results(config: QualityPersistenceConfig, replay_keys: list[str]) -> None:
-    """Remove test rows by replay_key."""
+def _cleanup_results(
+    config: QualityPersistenceConfig,
+    replay_keys: list[str],
+    check_names: list[str] | None = None,
+) -> None:
+    """Remove test rows by replay_key and/or check_name."""
     import psycopg2
 
-    if not replay_keys:
+    if not replay_keys and not check_names:
         return
     db_url = config.db_url.replace("postgresql+psycopg2://", "postgresql://")
     conn = psycopg2.connect(db_url)
     conn.autocommit = True
     try:
         cur = conn.cursor()
-        placeholders = ", ".join(["%s"] * len(replay_keys))
+        conditions: list[str] = []
+        params: list[object] = []
+        if replay_keys:
+            placeholders = ", ".join(["%s"] * len(replay_keys))
+            conditions.append(f"replay_key IN ({placeholders})")
+            params.extend(replay_keys)
+        if check_names:
+            placeholders = ", ".join(["%s"] * len(check_names))
+            conditions.append(f"check_name IN ({placeholders})")
+            params.extend(check_names)
         cur.execute(
-            f"DELETE FROM data_quality_results WHERE replay_key IN ({placeholders})",
-            replay_keys,
+            f"DELETE FROM data_quality_results WHERE {' OR '.join(conditions)}",
+            params,
         )
     finally:
         conn.close()
 
 
 pytestmark = pytest.mark.skipif(not _db_available(), reason=SKIP_REASON)
+
+
+_FIXED_CHECKED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def _make_result(
@@ -146,24 +162,56 @@ def _make_result(
         failed_records=failed_records,
         details=details or {},
         message=message,
-        checked_at=checked_at or datetime.now(timezone.utc),
+        checked_at=checked_at or _FIXED_CHECKED_AT,
     )
+
+
+_ALL_TEST_CHECK_NAMES = [
+    "required_fields",
+    "price_validity",
+    "check_a",
+    "check_b",
+    "check_c",
+    "replay_test",
+    "pipeline_test",
+    "suite_check_a",
+    "suite_check_b",
+    "fail_test",
+    "pass_test",
+    "details_test",
+    "counts_test",
+    "filter_a",
+    "filter_b",
+    "old_failure",
+    "new_failure",
+    "latest_a",
+    "latest_b",
+    "latest_time",
+    "limit_test_0",
+    "limit_test_1",
+    "limit_test_2",
+    "limit_test_3",
+    "limit_test_4",
+]
 
 
 class TestQualityResultWriter:
     def setup_method(self) -> None:
         self._config = _build_test_config()
         self._written_keys: list[str] = []
+        self._check_names: list[str] = []
         _ensure_schema(self._config)
+        _cleanup_results(self._config, [], _ALL_TEST_CHECK_NAMES)
 
     def teardown_method(self) -> None:
-        _cleanup_results(self._config, self._written_keys)
+        _cleanup_results(self._config, self._written_keys, self._check_names or None)
 
     def test_write_single_result(self) -> None:
         writer = QualityResultWriter(self._config)
         result = _make_result(check_name="required_fields")
-        key = make_replay_key("required_fields", source=None)
+        key = make_replay_key("required_fields", source=None, checked_at=result.checked_at)
         self._written_keys.append(key)
+        self._check_names.append("required_fields")
 
         write_result = writer.write_result(result)
         assert write_result.success
@@ -185,6 +233,7 @@ class TestQualityResultWriter:
         )
         key = make_replay_key("price_validity", source="bestbuy")
         self._written_keys.append(key)
+        self._check_names.append("price_validity")
 
         write_result = writer.write_result(result)
         assert write_result.success
@@ -197,8 +246,9 @@ class TestQualityResultWriter:
             _make_result(check_name="check_b"),
             _make_result(check_name="check_c"),
         ]
-        keys = [make_replay_key(r.check_name) for r in results]
+        keys = [make_replay_key(r.check_name, checked_at=r.checked_at) for r in results]
         self._written_keys.extend(keys)
+        self._check_names.extend([r.check_name for r in results])
 
         write_result = writer.write_results(results)
         assert write_result.success
@@ -214,8 +264,9 @@ class TestQualityResultWriter:
         """Writing the same result twice should not duplicate rows."""
         writer = QualityResultWriter(self._config)
         result = _make_result(check_name="replay_test")
-        key = make_replay_key("replay_test")
+        key = make_replay_key("replay_test", checked_at=result.checked_at)
         self._written_keys.append(key)
+        self._check_names.append("replay_test")
 
         writer.write_result(result)
         write_result2 = writer.write_result(result)
@@ -230,6 +281,7 @@ class TestQualityResultWriter:
         result = _make_result(check_name="pipeline_test")
         key = make_replay_key("pipeline_test", pipeline_run_id=999)
         self._written_keys.append(key)
+        self._check_names.append("pipeline_test")
 
         write_result = writer.write_result(result, pipeline_run_id=999)
         assert write_result.success
@@ -246,8 +298,11 @@ class TestQualityResultWriter:
             started_at=now,
             finished_at=now,
         )
-        keys = [make_replay_key(r.check_name) for r in suite_result.results]
+        keys = [
+            make_replay_key(r.check_name, checked_at=r.checked_at) for r in suite_result.results
+        ]
         self._written_keys.extend(keys)
+        self._check_names.extend([r.check_name for r in suite_result.results])
 
         write_result = writer.write_suite_result(suite_result)
         assert write_result.success
@@ -258,20 +313,24 @@ class TestQualityResultReader:
     def setup_method(self) -> None:
         self._config = _build_test_config()
         self._written_keys: list[str] = []
+        self._check_names: list[str] = []
         self._writer = QualityResultWriter(self._config)
         self._reader = QualityResultReader(self._config)
         _ensure_schema(self._config)
+        _cleanup_results(self._config, [], _ALL_TEST_CHECK_NAMES)
 
     def teardown_method(self) -> None:
-        _cleanup_results(self._config, self._written_keys)
+        _cleanup_results(self._config, self._written_keys, self._check_names or None)
 
     def _write_and_track(self, result: QualityResult, **kwargs: object) -> None:
         key = make_replay_key(
             result.check_name,
             pipeline_run_id=kwargs.get("pipeline_run_id"),  # type: ignore[arg-type]
             source=result.source,
+            checked_at=result.checked_at,
         )
         self._written_keys.append(key)
+        self._check_names.append(result.check_name)
         self._writer.write_result(result, **kwargs)  # type: ignore[arg-type]
 
     def test_recent_failures_returns_failed(self) -> None:
