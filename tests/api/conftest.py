@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from services.api.app import create_app
 from services.api.config import DatabaseSettings
 from services.api.dependencies import get_db
+from services.api.models import Base
 
 
 @pytest.fixture()
@@ -23,6 +24,7 @@ def db_session() -> Generator[Session, None, None]:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
     try:
