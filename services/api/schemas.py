@@ -54,3 +54,41 @@ class ReadinessStatus(BaseModel):
     service: str
     version: str
     database: str
+
+
+class ProductSummaryResponse(BaseModel):
+    """Single product row in a paginated list."""
+
+    id: int
+    canonical_name: Optional[str] = None
+    category: Optional[str] = None
+    latest_name: Optional[str] = None
+    latest_price: Optional[float] = None
+    latest_currency: Optional[str] = None
+    latest_availability: Optional[str] = None
+    latest_collected_at: Optional[str] = None
+
+
+class ProductListResponse(BaseModel):
+    """Paginated product list envelope."""
+
+    items: list[ProductSummaryResponse]
+    total: int
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+
+
+class ProductDetailResponse(BaseModel):
+    """Full product detail response."""
+
+    id: int
+    canonical_name: Optional[str] = None
+    category: Optional[str] = None
+    source_count: int
+    latest_name: Optional[str] = None
+    latest_price: Optional[float] = None
+    latest_currency: Optional[str] = None
+    latest_availability: Optional[str] = None
+    latest_collected_at: Optional[str] = None
+    latest_source: Optional[str] = None
+    latest_url: Optional[str] = None
