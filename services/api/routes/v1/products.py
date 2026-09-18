@@ -1,7 +1,8 @@
-"""Product list and detail endpoints."""
+"""Product list, detail, and history endpoints."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -12,6 +13,8 @@ from services.api.dependencies import get_db
 from services.api.errors import APIError
 from services.api.repositories.product import ProductRepository, ProductSummary
 from services.api.schemas import (
+    ObservationListResponse,
+    ObservationResponse,
     ProductDetailResponse,
     ProductListResponse,
     ProductSummaryResponse,
@@ -65,6 +68,56 @@ def get_product(
         latest_collected_at=detail.latest_collected_at,
         latest_source=detail.latest_source,
         latest_url=detail.latest_url,
+    )
+
+
+@router.get("/{product_id}/observations", response_model=ObservationListResponse)
+def list_observations(
+    product_id: int,
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(default=20, ge=1, le=100, description="Items per page (max 100)"),
+    from_date: Optional[datetime] = Query(
+        default=None, description="Filter observations collected on or after this ISO timestamp"
+    ),
+    to_date: Optional[datetime] = Query(
+        default=None, description="Filter observations collected on or before this ISO timestamp"
+    ),
+    db: Session = Depends(get_db),
+) -> ObservationListResponse:
+    """Return paginated historical observations for a product."""
+    repo = ProductRepository(db)
+
+    if repo.get_product(product_id) is None:
+        raise APIError(
+            status_code=404,
+            error_code="PRODUCT_NOT_FOUND",
+            message=f"Product {product_id} not found",
+        )
+
+    result = repo.list_observations(
+        product_id=product_id,
+        page=page,
+        page_size=page_size,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    return ObservationListResponse(
+        items=[
+            ObservationResponse(
+                id=item.id,
+                name=item.name,
+                price=_decimal_to_float(item.price),
+                currency=item.currency,
+                availability=item.availability,
+                collected_at=item.collected_at,
+                source=item.source,
+                url=item.url,
+            )
+            for item in result.items
+        ],
+        total=result.total,
+        page=page,
+        page_size=page_size,
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -48,6 +49,28 @@ class ProductListResult:
     """Paginated product list with total count."""
 
     items: list[ProductSummary]
+    total: int
+
+
+@dataclass(frozen=True)
+class ObservationSummary:
+    """Single historical observation with source traceability."""
+
+    id: int
+    name: Optional[str]
+    price: Optional[Decimal]
+    currency: Optional[str]
+    availability: str
+    collected_at: str
+    source: Optional[str]
+    url: Optional[str]
+
+
+@dataclass(frozen=True)
+class ObservationListResult:
+    """Paginated observation list with total count."""
+
+    items: list[ObservationSummary]
     total: int
 
 
@@ -211,3 +234,62 @@ class ProductRepository:
             latest_source=row.latest_source,
             latest_url=row.latest_url,
         )
+
+    def list_observations(
+        self,
+        product_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
+    ) -> ObservationListResult:
+        """Return paginated historical observations for a product."""
+        sp_ids = select(SourceProduct.id).where(SourceProduct.product_id == product_id)
+
+        base_q = (
+            select(
+                ProductObservation.id,
+                ProductObservation.name,
+                ProductObservation.price,
+                ProductObservation.currency,
+                ProductObservation.availability,
+                ProductObservation.collected_at,
+                Source.name.label("source"),
+                SourceProduct.url,
+            )
+            .join(SourceProduct, SourceProduct.id == ProductObservation.source_product_id)
+            .join(Source, Source.id == SourceProduct.source_id)
+            .where(ProductObservation.source_product_id.in_(sp_ids))
+        )
+
+        if from_date is not None:
+            base_q = base_q.where(ProductObservation.collected_at >= from_date)
+        if to_date is not None:
+            base_q = base_q.where(ProductObservation.collected_at <= to_date)
+
+        count_q = select(func.count()).select_from(base_q.subquery())
+        total = self._session.execute(count_q).scalar() or 0
+
+        offset = (page - 1) * page_size
+        rows_q = (
+            base_q.order_by(ProductObservation.collected_at.desc(), ProductObservation.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        rows = self._session.execute(rows_q).all()
+
+        items = [
+            ObservationSummary(
+                id=row.id,
+                name=row.name,
+                price=row.price,
+                currency=row.currency,
+                availability=row.availability,
+                collected_at=row.collected_at.isoformat(),
+                source=row.source,
+                url=row.url,
+            )
+            for row in rows
+        ]
+
+        return ObservationListResult(items=items, total=total)

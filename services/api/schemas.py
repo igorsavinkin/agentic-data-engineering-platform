@@ -92,3 +92,25 @@ class ProductDetailResponse(BaseModel):
     latest_collected_at: Optional[str] = None
     latest_source: Optional[str] = None
     latest_url: Optional[str] = None
+
+
+class ObservationResponse(BaseModel):
+    """Single historical observation with source traceability."""
+
+    id: int
+    name: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    availability: str
+    collected_at: str
+    source: Optional[str] = None
+    url: Optional[str] = None
+
+
+class ObservationListResponse(BaseModel):
+    """Paginated observation list envelope."""
+
+    items: list[ObservationResponse]
+    total: int
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
