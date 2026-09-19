@@ -548,9 +548,9 @@ class TestKafkaService:
     def test_kafka_service_exposes_internal_port_with_nodeport(self) -> None:
         manifest = _load_yaml(KAFKA_SERVICE)
         ports = manifest["spec"]["ports"]
-        internal_port = next((p for p in ports if p["port"] == 29092), None)
-        assert internal_port is not None
-        assert internal_port["nodePort"] == 30092
+        external_port = next((p for p in ports if p["port"] == 9092), None)
+        assert external_port is not None
+        assert external_port["nodePort"] == 30092
 
 
 class TestKafkaTopicsJob:

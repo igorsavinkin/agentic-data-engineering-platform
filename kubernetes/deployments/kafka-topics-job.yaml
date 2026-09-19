@@ -25,8 +25,15 @@ spec:
             - -c
             - |
               echo "Waiting for Kafka to be ready..."
+              TIMEOUT=120
+              ELAPSED=0
               until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1; do
+                if [ $ELAPSED -ge $TIMEOUT ]; then
+                  echo "Timed out waiting for Kafka after ${TIMEOUT}s"
+                  exit 1
+                fi
                 sleep 2
+                ELAPSED=$((ELAPSED + 2))
               done
               echo "Kafka is ready. Creating topics..."
 
