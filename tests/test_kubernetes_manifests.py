@@ -450,3 +450,132 @@ class TestAPIService:
         manifest = _load_yaml(API_SERVICE)
         ports = manifest["spec"]["ports"]
         assert any(p["port"] == 8000 for p in ports)
+
+
+KAFKA_DEPLOYMENT = REPO_ROOT / "kubernetes" / "deployments" / "kafka-deployment.yaml"
+KAFKA_SERVICE = REPO_ROOT / "kubernetes" / "deployments" / "kafka-service.yaml"
+KAFKA_TOPICS_JOB = REPO_ROOT / "kubernetes" / "deployments" / "kafka-topics-job.yaml"
+
+
+class TestKafkaDeployment:
+    def test_kafka_deployment_exists(self) -> None:
+        assert KAFKA_DEPLOYMENT.exists(), f"kafka deployment not found at {KAFKA_DEPLOYMENT}"
+
+    def test_kafka_deployment_is_deployment_resource(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "Deployment"
+
+    def test_kafka_deployment_namespace(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_kafka_deployment_labels(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "kafka"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_kafka_deployment_selector_matches_template(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_kafka_deployment_uses_kraft_mode(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = [e["name"] for e in container["env"]]
+        assert "KAFKA_PROCESS_ROLES" in env_names
+        assert "KAFKA_NODE_ID" in env_names
+        roles = next(e["value"] for e in container["env"] if e["name"] == "KAFKA_PROCESS_ROLES")
+        assert "broker" in roles and "controller" in roles
+
+    def test_kafka_deployment_auto_create_disabled(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        auto_create = next(
+            (
+                e["value"]
+                for e in container["env"]
+                if e["name"] == "KAFKA_AUTO_CREATE_TOPICS_ENABLE"
+            ),
+            None,
+        )
+        assert auto_create == "false"
+
+    def test_kafka_deployment_exposes_ports(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "ports" in container
+        ports = container["ports"]
+        assert any(p["containerPort"] == 29092 for p in ports)
+        assert any(p["containerPort"] == 9092 for p in ports)
+
+
+class TestKafkaService:
+    def test_kafka_service_exists(self) -> None:
+        assert KAFKA_SERVICE.exists(), f"kafka service not found at {KAFKA_SERVICE}"
+
+    def test_kafka_service_is_service_resource(self) -> None:
+        manifest = _load_yaml(KAFKA_SERVICE)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "Service"
+
+    def test_kafka_service_namespace(self) -> None:
+        manifest = _load_yaml(KAFKA_SERVICE)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_kafka_service_labels(self) -> None:
+        manifest = _load_yaml(KAFKA_SERVICE)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "kafka"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_kafka_service_selector_matches_deployment(self) -> None:
+        manifest = _load_yaml(KAFKA_SERVICE)
+        selector = manifest["spec"]["selector"]
+        deployment = _load_yaml(KAFKA_DEPLOYMENT)
+        template_labels = deployment["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_kafka_service_is_nodeport(self) -> None:
+        manifest = _load_yaml(KAFKA_SERVICE)
+        assert manifest["spec"]["type"] == "NodePort"
+
+    def test_kafka_service_exposes_internal_port_with_nodeport(self) -> None:
+        manifest = _load_yaml(KAFKA_SERVICE)
+        ports = manifest["spec"]["ports"]
+        internal_port = next((p for p in ports if p["port"] == 29092), None)
+        assert internal_port is not None
+        assert internal_port["nodePort"] == 30092
+
+
+class TestKafkaTopicsJob:
+    def test_kafka_topics_job_exists(self) -> None:
+        assert KAFKA_TOPICS_JOB.exists(), f"kafka topics job not found at {KAFKA_TOPICS_JOB}"
+
+    def test_kafka_topics_job_is_job_resource(self) -> None:
+        manifest = _load_yaml(KAFKA_TOPICS_JOB)
+        assert manifest["apiVersion"] == "batch/v1"
+        assert manifest["kind"] == "Job"
+
+    def test_kafka_topics_job_namespace(self) -> None:
+        manifest = _load_yaml(KAFKA_TOPICS_JOB)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_kafka_topics_job_creates_all_topics(self) -> None:
+        manifest = _load_yaml(KAFKA_TOPICS_JOB)
+        command = manifest["spec"]["template"]["spec"]["containers"][0]["command"]
+        script = " ".join(command)
+        expected_topics = [
+            "products.raw.v1",
+            "products.validated.v1",
+            "products.invalid.v1",
+            "pipeline.events.v1",
+            "data-quality.events.v1",
+        ]
+        for topic in expected_topics:
+            assert topic in script, f"topic {topic} not found in kafka-topics-job script"
