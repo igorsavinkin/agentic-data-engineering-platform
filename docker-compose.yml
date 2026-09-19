@@ -215,12 +215,40 @@ services:
       retries: 6
       start_period: 10s
 
+  # Grafana (TASK-085): metrics visualization and dashboards.
+  # Connects to Prometheus as the default datasource. Provisioning files
+  # configure datasources and dashboard loading automatically.
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - platform
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
 volumes:
   kafka_data:
   minio_data:
   postgres_data:
   airflow_logs:
   prometheus_data:
+  grafana_data:
 
 networks:
   # Fixed name so application services (later tasks) and other Compose

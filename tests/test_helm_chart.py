@@ -94,6 +94,8 @@ class TestChartStructure:
             "ingress",
             "hpa",
             "networkPolicy",
+            "prometheus",
+            "grafana",
         ]:
             assert section in values, f"Missing values section: {section}"
 
@@ -126,6 +128,13 @@ class TestChartStructure:
             "services/minio.yaml",
             "services/postgresql.yaml",
             "jobs/kafka-topics.yaml",
+            "monitoring/prometheus-configmap.yaml",
+            "monitoring/prometheus-deployment.yaml",
+            "monitoring/prometheus-service.yaml",
+            "monitoring/grafana-deployment.yaml",
+            "monitoring/grafana-service.yaml",
+            "monitoring/grafana-configmap.yaml",
+            "monitoring/grafana-secret.yaml",
         ]
         for template in expected:
             path = TEMPLATES_DIR / template
@@ -217,6 +226,14 @@ class TestOptionalResourcesDisabledByDefault:
     def test_network_policy_disabled(self) -> None:
         values = _load_yaml(VALUES_YAML)
         assert values["networkPolicy"]["enabled"] is False
+
+    def test_prometheus_disabled(self) -> None:
+        values = _load_yaml(VALUES_YAML)
+        assert values["prometheus"]["enabled"] is False
+
+    def test_grafana_disabled(self) -> None:
+        values = _load_yaml(VALUES_YAML)
+        assert values["grafana"]["enabled"] is False
 
 
 class TestHelmLint:
@@ -342,3 +359,58 @@ class TestHelmTemplate:
             if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "platform-config"
         ][0]
         assert cm["data"]["APP_ENVIRONMENT"] == "production"
+
+    def test_default_has_no_grafana(self) -> None:
+        docs = _helm_template()
+        kinds_names = {(d["kind"], d["metadata"]["name"]) for d in docs}
+        assert ("Deployment", "grafana") not in kinds_names
+        assert ("Service", "grafana") not in kinds_names
+
+    def test_grafana_renders_when_enabled(self) -> None:
+        docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
+        kinds = {d["kind"] for d in docs}
+        assert "Deployment" in kinds
+        grafana_deps = [
+            d
+            for d in docs
+            if d["metadata"]["name"] in ("grafana", "grafana-provisioning", "grafana-credentials")
+        ]
+        names = {d["metadata"]["name"] for d in grafana_deps}
+        assert "grafana" in names
+        assert "grafana-provisioning" in names
+        assert "grafana-credentials" in names
+
+    def test_grafana_deployment_has_probes_and_resources(self) -> None:
+        docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
+        dep = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "grafana"][
+            0
+        ]
+        container = dep["spec"]["template"]["spec"]["containers"][0]
+        assert "livenessProbe" in container
+        assert "readinessProbe" in container
+        assert "resources" in container
+        assert container["image"].startswith("grafana/grafana:")
+
+    def test_grafana_secret_contains_admin_credentials(self) -> None:
+        docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
+        secret = [
+            d
+            for d in docs
+            if d["kind"] == "Secret" and d["metadata"]["name"] == "grafana-credentials"
+        ][0]
+        data = secret["data"]
+        assert "admin-user" in data
+        assert "admin-password" in data
+        decoded_user = base64.b64decode(data["admin-user"]).decode("utf-8")
+        assert decoded_user == "admin"
+
+    def test_grafana_configmap_has_datasource(self) -> None:
+        docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
+        cm = [
+            d
+            for d in docs
+            if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "grafana-provisioning"
+        ][0]
+        datasources = yaml.safe_load(cm["data"]["datasources.yml"])
+        assert datasources["datasources"][0]["type"] == "prometheus"
+        assert datasources["datasources"][0]["url"] == "http://prometheus:9090"

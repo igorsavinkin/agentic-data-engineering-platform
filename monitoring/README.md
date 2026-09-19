@@ -54,5 +54,54 @@ All metrics carry a `service` label. Source metrics also carry a `source` label.
 
 ## Planned
 
-- Grafana dashboards (TASK-085+)
 - OpenTelemetry integration (TASK-090+)
+
+## Grafana (TASK-085)
+
+Grafana provides visualization of platform metrics collected by Prometheus.
+
+### Architecture
+
+- **Datasource**: Prometheus at `http://prometheus:9090` (auto-provisioned)
+- **Dashboards**: loaded from `monitoring/grafana/dashboards/` (TASK-086+ adds platform dashboards)
+- **Credentials**: externalized via environment variables (`GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD`)
+
+### Local development
+
+Start Grafana alongside the rest of the stack:
+
+```bash
+docker compose up -d grafana
+```
+
+Access the Grafana UI at http://localhost:3000 (default credentials: `admin` / `admin`).
+
+Override credentials via environment variables:
+
+```bash
+GRAFANA_ADMIN_USER=myuser GRAFANA_ADMIN_PASSWORD=mysecret docker compose up -d grafana
+```
+
+### Kubernetes
+
+Enable Grafana in the Helm values:
+
+```bash
+helm upgrade --install ai-data-platform helm/ai-data-platform \
+  --set grafana.enabled=true
+```
+
+Admin credentials are stored in a Kubernetes Secret (`grafana-credentials`). Override with `--set grafana.adminUser=<base64>` and `--set grafana.adminPassword=<base64>`.
+
+Port-forward for local access:
+
+```bash
+kubectl port-forward svc/grafana 3000:3000 -n ai-data-platform
+```
+
+### Provisioning
+
+Both Docker Compose and Helm use file-based provisioning:
+
+- **Datasources** — `monitoring/grafana/datasources/prometheus.yml` (Compose) or `grafana-configmap` ConfigMap (Helm)
+- **Dashboards** — JSON files in `monitoring/grafana/dashboards/` (Compose) or mounted via ConfigMap (Helm)

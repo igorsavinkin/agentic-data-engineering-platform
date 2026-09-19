@@ -1,0 +1,14 @@
+# Grafana datasource provisioning for local development (TASK-085).
+#
+# Prometheus is the default (and only) datasource. The URL points to the
+# Prometheus container on the shared Docker Compose network.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
