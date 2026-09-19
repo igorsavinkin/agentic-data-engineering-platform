@@ -28,12 +28,20 @@ from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
 from libs.observability.kafka_metrics import LagSample
 from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
-from libs.observability.otel_config import OTelSettings, setup_opentelemetry
+from libs.observability.otel_config import (
+    OTelSettings,
+    extract_trace_context,
+    get_current_trace_id,
+    get_tracer,
+    safe_attributes,
+    setup_opentelemetry,
+)
 from libs.observability.processor_metrics import ProcessorMetrics
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from services.processor.pipeline import ProcessorPipeline
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 RAW_TOPIC = "products.raw.v1"
 
@@ -62,16 +70,36 @@ def process_batch(
     Raises PublishError if any output publication fails, so the caller
     does NOT commit the offset.
     """
-    result = pipeline.process_batch(messages)
-    logger.info(
-        "processor_batch_complete",
-        extra={
-            "valid": result.published_valid,
-            "invalid": result.published_invalid,
-            "duplicates": result.duplicates_skipped,
-            "conflicts": result.conflicts,
-        },
-    )
+    parent_ctx = None
+    if messages and messages[0].headers:
+        parent_ctx = extract_trace_context(messages[0].headers)
+
+    with tracer.start_as_current_span("processor.process_batch", context=parent_ctx) as span:
+        span.set_attributes(
+            safe_attributes(
+                {
+                    "message_count": len(messages),
+                    "topic": messages[0].topic if messages else "",
+                }
+            )
+        )
+        trace_id = get_current_trace_id()
+        if trace_id:
+            from libs.observability.logging_config import set_correlation_id
+
+            set_correlation_id(trace_id)
+
+        result = pipeline.process_batch(messages)
+        logger.info(
+            "processor_batch_complete",
+            extra={
+                "valid": result.published_valid,
+                "invalid": result.published_invalid,
+                "duplicates": result.duplicates_skipped,
+                "conflicts": result.conflicts,
+                "trace_id": trace_id,
+            },
+        )
 
 
 def run_consumer() -> None:

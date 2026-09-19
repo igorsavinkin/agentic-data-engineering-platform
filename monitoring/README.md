@@ -144,9 +144,114 @@ except Exception:
 
 The `exception` field contains the formatted traceback.
 
-## Planned
+## Distributed Tracing (TASK-091)
 
-- Distributed tracing instrumentation (TASK-091)
+Distributed tracing propagates W3C Trace Context across service and Kafka boundaries, enabling end-to-end request tracking through the platform pipeline.
+
+### Architecture
+
+- **Trace context propagation**: `libs/observability/otel_config.py` provides `inject_trace_context()` / `extract_trace_context()` for W3C Trace Context via Kafka headers
+- **Service spans**: Each service creates spans at processing boundaries (publish, consume, HTTP request)
+- **Kafka headers**: Trace context is carried as Kafka message headers (`traceparent`, `tracestate`)
+- **Jaeger**: Local trace viewing at http://localhost:16686
+- **OTel Collector**: Forwards traces from services to Jaeger via OTLP gRPC
+
+### Trace propagation flow
+
+```
+ingestion (producer)
+  → creates span "ingestion.publish"
+  → injects traceparent into Kafka headers
+  → publishes to products.raw.v1
+
+processor (consumer)
+  → extracts traceparent from Kafka headers
+  → creates child span "processor.process_batch"
+  → sets correlation_id = trace_id for log-trace correlation
+
+raw-writer (consumer)
+  → extracts traceparent from Kafka headers
+  → creates child span "raw-writer.process_message"
+
+lake-writer (consumer)
+  → extracts traceparent from Kafka headers
+  → creates child span "lake-writer.process_message"
+
+api (HTTP)
+  → creates span per HTTP request "api.<METHOD> <path>"
+  → returns X-Trace-Id response header
+```
+
+### Representative trace
+
+A single product observation flowing through the platform produces a trace like:
+
+```
+Trace: abc123def456...
+├── ingestion.publish (source=bestbuy, event_id=evt-001)
+│   └── Kafka → products.raw.v1 (traceparent header)
+├── processor.process_batch (topic=products.raw.v1, message_count=1)
+│   └── Kafka → products.validated.v1
+├── raw-writer.process_message (topic=products.raw.v1, partition=0, offset=42)
+│   └── MinIO Bronze write
+└── lake-writer.process_message (topic=products.validated.v1, partition=0, offset=15)
+    └── MinIO Silver write
+```
+
+### Log-trace correlation
+
+Processor, raw-writer, and lake-writer set the structured log `correlation_id` field to the current trace ID. This allows correlating log entries with traces:
+
+```json
+{
+  "timestamp": "2026-09-19T22:00:00Z",
+  "level": "INFO",
+  "message": "processor_batch_complete",
+  "service": "processor",
+  "correlation_id": "abc123def456...",
+  "trace_id": "abc123def456...",
+  "valid": 1,
+  "invalid": 0
+}
+```
+
+### Local development
+
+Start Jaeger and the OTel collector:
+
+```bash
+docker compose up -d jaeger otel-collector
+```
+
+Enable tracing in a service:
+
+```bash
+APP_OTEL_ENABLED=true APP_OTEL_EXPORTER_ENDPOINT=http://localhost:4317 \
+  python -m services.ingestion
+```
+
+Access the Jaeger UI at http://localhost:16686 to view traces.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_OTEL_ENABLED` | `false` | Enable trace export |
+| `APP_OTEL_EXPORTER_ENDPOINT` | `None` | OTLP gRPC endpoint (e.g., `http://localhost:4317`) |
+| `JAEGER_UI_PORT` | `16686` | Jaeger UI host port |
+
+### Implementation
+
+- `libs/observability/otel_config.py` — `inject_trace_context()`, `extract_trace_context()`, `get_current_trace_id()`
+- `libs/common/kafka_consumer.py` — `ConsumerMessage.headers` field for header extraction
+- `libs/common/kafka_producer.py` — `publish(headers=...)` for header injection
+- `services/ingestion/runner.py` — span + header injection at publish boundary
+- `services/processor/__main__.py` — header extraction + child span at consume boundary
+- `services/raw-writer/consumer.py` — header extraction + child span
+- `services/lake-writer/consumer.py` — header extraction + child span
+- `services/api/app.py` — HTTP request tracing middleware with `X-Trace-Id` response header
+- `monitoring/otel-collector-config.yaml` — OTLP → Jaeger export pipeline
+- `monitoring/grafana/datasources/prometheus.yml` — Jaeger datasource provisioning
 
 ## OpenTelemetry (TASK-090)
 

@@ -84,7 +84,7 @@ def test_publish_preserves_wire_identity_and_key(
             assert producer.publish(event) == DeliveryReceipt("products.raw.v1", 2, 42)
             assert producer.publish(event).offset == 42
     for call in client.produce.call_args_list:
-        assert call.args == ("products.raw.v1",)
+        assert call.kwargs["topic"] == "products.raw.v1"
         assert call.kwargs["value"] == original.encode("utf-8")
         assert call.kwargs["key"] == b"test-source:product-1"
         assert deserialize_event(call.kwargs["value"].decode()) == event
@@ -118,7 +118,7 @@ def test_environment_configures_actual_publish(
     assert settings.kafka_bootstrap_servers == "broker:19092,[::1]:9092"
     assert settings.kafka_client_id == "custom-ingestion"
     KafkaEventProducer(settings).publish(event)
-    assert client.produce.call_args.args == ("custom.raw.v1",)
+    assert client.produce.call_args.kwargs["topic"] == "custom.raw.v1"
     client.flush.assert_called_once_with(3.0)
 
 

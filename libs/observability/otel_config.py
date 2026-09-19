@@ -146,6 +146,75 @@ def get_tracer(name: str) -> Any:
         return _NoOpTracer()
 
 
+def inject_trace_context(carrier: dict[str, bytes]) -> None:
+    """Inject current trace context into a carrier dict for propagation.
+
+    Uses W3C Trace Context propagator. The carrier dict is modified in place.
+    Typically used to inject trace context into Kafka message headers.
+    """
+    try:
+        from opentelemetry import propagate
+
+        headers: dict[str, str] = {}
+        propagate.inject(headers, setter=_DictSetter())
+        for key, value in headers.items():
+            carrier[key] = value.encode("utf-8")
+    except ImportError:
+        logger.debug("opentelemetry_not_installed_for_injection")
+
+
+def extract_trace_context(carrier: dict[str, bytes]) -> Any:
+    """Extract trace context from a carrier dict.
+
+    Uses W3C Trace Context propagator. Returns the extracted context object
+    that can be used with opentelemetry.context.attach() or as context for
+    span creation. Returns None if extraction fails or OTel is not installed.
+    """
+    try:
+        from opentelemetry import propagate
+
+        headers: dict[str, str] = {}
+        for key, value in carrier.items():
+            if isinstance(value, bytes):
+                headers[key] = value.decode("utf-8")
+            else:
+                headers[key] = str(value)
+        return propagate.extract(headers, getter=_DictGetter())
+    except ImportError:
+        logger.debug("opentelemetry_not_installed_for_extraction")
+        return None
+
+
+def get_current_trace_id() -> str | None:
+    """Get the current trace ID as a hex string, or None if no active span."""
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        if span and span.get_span_context().trace_id:
+            return format(span.get_span_context().trace_id, "032x")
+        return None
+    except ImportError:
+        return None
+
+
+class _DictSetter:
+    """Setter for injecting trace context into a dict."""
+
+    def set(self, carrier: dict[str, str], key: str, value: str) -> None:
+        carrier[key] = value
+
+
+class _DictGetter:
+    """Getter for extracting trace context from a dict."""
+
+    def get(self, carrier: dict[str, str], key: str) -> list[str]:
+        value = carrier.get(key)
+        if value is None:
+            return []
+        return [value]
+
+
 class _NoOpTracer:
     """Fallback tracer when OpenTelemetry is not installed or disabled."""
 

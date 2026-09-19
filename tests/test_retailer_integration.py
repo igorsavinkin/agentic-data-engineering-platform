@@ -149,7 +149,11 @@ class MockProducer:
         self.metrics = MagicMock()
         self.metrics.increment = MagicMock()
 
-    def publish(self, event: ProductObservationEvent) -> DeliveryReceipt:
+    def publish(
+        self,
+        event: ProductObservationEvent,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> DeliveryReceipt:
         self.published.append(event)
         return DeliveryReceipt(topic="products.raw.v1", partition=0, offset=len(self.published) - 1)
 

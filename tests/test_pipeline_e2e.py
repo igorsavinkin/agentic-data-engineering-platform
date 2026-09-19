@@ -65,7 +65,11 @@ class MockKafkaProducer:
         self.metrics = MagicMock()
         self.metrics.increment = MagicMock()
 
-    def publish(self, event: ProductObservationEvent) -> DeliveryReceipt:
+    def publish(
+        self,
+        event: ProductObservationEvent,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> DeliveryReceipt:
         self.published_by_topic.setdefault(self.default_topic, []).append(event)
         return DeliveryReceipt(
             topic=self.default_topic,
