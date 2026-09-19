@@ -194,7 +194,7 @@ kubectl get service kafka -n ai-data-platform
 kubectl logs deployment/kafka -n ai-data-platform
 ```
 
-Kafka runs in single-broker KRaft mode (combined broker + controller, no ZooKeeper) using the `apache/kafka:4.3.1` image. The NodePort Service exposes port 29092 internally (for in-cluster pod-to-pod communication via `kafka:29092`) and maps to host port 9092 via the kind port mapping (host 9092 → node 30092 → pod 29092).
+Kafka runs in single-broker KRaft mode (combined broker + controller, no ZooKeeper) using the `apache/kafka:4.3.1` image. The NodePort Service exposes port 29092 for in-cluster pod-to-pod communication via `kafka:29092`, and maps host port 9092 via the kind port mapping (host 9092 → node 30092 → pod 9092 via PLAINTEXT_HOST listener).
 
 After Kafka is ready, create the required topics:
 
