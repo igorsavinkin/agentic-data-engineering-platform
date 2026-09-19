@@ -272,3 +272,72 @@ class TestLakeWriterDeployment:
         manifest = _load_yaml(LAKE_WRITER_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert container["command"] == ["python", "-m", "services.lake-writer.consumer"]
+
+
+WAREHOUSE_LOADER_DEPLOYMENT = (
+    REPO_ROOT / "kubernetes" / "deployments" / "warehouse-loader-deployment.yaml"
+)
+
+
+class TestWarehouseLoaderDeployment:
+    def test_warehouse_loader_deployment_exists(self) -> None:
+        assert WAREHOUSE_LOADER_DEPLOYMENT.exists(), (
+            f"warehouse-loader deployment not found at {WAREHOUSE_LOADER_DEPLOYMENT}"
+        )
+
+    def test_warehouse_loader_deployment_is_deployment_resource(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "Deployment"
+
+    def test_warehouse_loader_deployment_namespace(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_warehouse_loader_deployment_labels(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "warehouse-loader"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_warehouse_loader_deployment_selector_matches_template(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_warehouse_loader_deployment_has_db_and_minio_env(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = [e["name"] for e in container["env"]]
+        assert "WAREHOUSE_DB_HOST" in env_names
+        assert "WAREHOUSE_DB_PORT" in env_names
+        assert "WAREHOUSE_DB_NAME" in env_names
+        assert "APP_MINIO_ENDPOINT" in env_names
+
+    def test_warehouse_loader_deployment_has_no_kafka_env(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = [e["name"] for e in container["env"]]
+        assert "APP_KAFKA_BOOTSTRAP_SERVERS" not in env_names
+        assert "APP_KAFKA_GROUP_ID" not in env_names
+
+    def test_warehouse_loader_deployment_secrets_are_optional(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        secret_envs = [
+            e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
+        ]
+        for env in secret_envs:
+            assert env["valueFrom"]["secretKeyRef"].get("optional") is True
+
+    def test_warehouse_loader_deployment_no_inbound_ports(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "ports" not in container, "warehouse-loader should not expose inbound ports"
+
+    def test_warehouse_loader_deployment_command_uses_module_invocation(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == ["python", "-m", "services.warehouse-loader.runner"]

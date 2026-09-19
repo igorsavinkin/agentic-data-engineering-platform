@@ -1,0 +1,81 @@
+# Warehouse Loader Deployment (TASK-075).
+#
+# Runs the warehouse loader service which reads Silver Parquet from MinIO
+# and loads curated data into PostgreSQL with idempotent upserts. Unlike
+# the Kafka-consuming services, this deployment connects to PostgreSQL and
+# object storage only.
+#
+# No inbound Service is created — warehouse loader is a batch-style service
+# that periodically reads from the lake and writes to the warehouse.
+# Configuration is externalized via environment variables. Database and
+# MinIO credentials are sourced from Secrets (created by TASK-078); until
+# then the optional env vars are left unset and the service uses defaults.
+#
+# This deployment does NOT run Alembic migrations. Schema management is a
+# separate concern.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: warehouse-loader
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: warehouse-loader
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: warehouse-loader
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: warehouse-loader
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: warehouse-loader
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: warehouse-loader
+    spec:
+      containers:
+        - name: warehouse-loader
+          image: ai-data-platform/warehouse-loader:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "services.warehouse-loader.runner"]
+          env:
+            - name: APP_ENVIRONMENT
+              value: "production"
+            - name: APP_MINIO_ENDPOINT
+              value: "http://minio:9000"
+            - name: APP_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: warehouse-loader-secrets
+                  key: minio-access-key
+                  optional: true
+            - name: APP_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: warehouse-loader-secrets
+                  key: minio-secret-key
+                  optional: true
+            - name: WAREHOUSE_DB_HOST
+              value: "postgresql"
+            - name: WAREHOUSE_DB_PORT
+              value: "5432"
+            - name: WAREHOUSE_DB_NAME
+              value: "warehouse"
+            - name: WAREHOUSE_DB_USER
+              value: "postgres"
+            - name: WAREHOUSE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: warehouse-loader-secrets
+                  key: db-password
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
