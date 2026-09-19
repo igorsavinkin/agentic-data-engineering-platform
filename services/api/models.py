@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import TIMESTAMP, BigInteger, Float, ForeignKey, Integer, Numeric, Text
+from sqlalchemy import TIMESTAMP, BigInteger, Boolean, Float, ForeignKey, Integer, Numeric, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -119,4 +119,27 @@ class IngestionHealthResult(Base):
     assessed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     logical_date: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    replay_key: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+
+
+class DataQualityResult(Base):
+    """Results of data quality checks applied during warehouse loading."""
+
+    __tablename__ = "data_quality_results"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    pipeline_run_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("pipeline_runs.id", ondelete="SET NULL")
+    )
+    observation_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("product_observations.id", ondelete="SET NULL")
+    )
+    check_name: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(Text)
+    checked_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    records_checked: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    failed_records: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    details: Mapped[Optional[dict]] = mapped_column(JSON)
     replay_key: Mapped[str] = mapped_column(Text, nullable=False, server_default="")

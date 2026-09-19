@@ -220,3 +220,45 @@ class SourceHealthListResponse(BaseModel):
     """Source health overview."""
 
     items: list[SourceHealthResponse]
+
+
+class QualityCheckResponse(BaseModel):
+    """Single data quality check result."""
+
+    id: int
+    check_name: str
+    severity: str
+    passed: bool
+    message: Optional[str] = None
+    checked_at: str
+    records_checked: int
+    failed_records: int
+    pipeline_run_id: Optional[int] = None
+    observation_id: Optional[int] = None
+    details: Optional[dict[str, Any]] = None
+
+
+class QualityCheckListResponse(BaseModel):
+    """Paginated quality check list envelope."""
+
+    items: list[QualityCheckResponse]
+    total: int
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+
+
+class QualitySummaryResponse(BaseModel):
+    """Aggregate quality summary per check name."""
+
+    check_name: str
+    total_runs: int
+    passed_runs: int
+    failed_runs: int
+    last_checked_at: str
+    severity: str
+
+
+class QualitySummaryListResponse(BaseModel):
+    """Quality summary list."""
+
+    items: list[QualitySummaryResponse]
