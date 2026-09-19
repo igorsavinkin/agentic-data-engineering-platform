@@ -11,7 +11,8 @@ kubernetes/
 ├── namespaces/
 │   └── platform-namespace.yaml # Platform namespace definition
 ├── deployments/
-│   └── ingestion-deployment.yaml # Ingestion service Deployment (TASK-071)
+│   ├── ingestion-deployment.yaml # Ingestion service Deployment (TASK-071)
+│   └── processor-deployment.yaml # Processor service Deployment (TASK-072)
 └── README.md                   # This file
 ```
 
@@ -107,6 +108,16 @@ kubectl logs deployment/ingestion -n ai-data-platform
 ```
 
 The ingestion Deployment runs the source adapter fetch-publish loop. It does not expose inbound ports — it is a Kafka producer only. Configuration is externalized via environment variables; `BESTBUY_API_KEY` references a Secret (optional until TASK-078 creates it).
+
+### Processor (TASK-072)
+
+```bash
+kubectl apply -f kubernetes/deployments/processor-deployment.yaml
+kubectl get deployment processor -n ai-data-platform
+kubectl logs deployment/processor -n ai-data-platform
+```
+
+The processor Deployment consumes raw events from Kafka, validates and normalizes them, applies deduplication, and publishes valid records to the validated topic. Invalid records are routed to the invalid topic with diagnostic context. Like ingestion, it does not expose inbound ports — it is a Kafka consumer/producer only. Configuration uses `APP_KAFKA_GROUP_ID` to identify the consumer group.
 
 ## Port Mappings
 
