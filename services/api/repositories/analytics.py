@@ -24,6 +24,7 @@ class PriceChangeEntry:
     currency: Optional[str]
     collected_at: str
     prev_price: Optional[Decimal]
+    prev_currency: Optional[str]
     price_change_absolute: Optional[Decimal]
     price_change_percent: Optional[Decimal]
     external_id: str
@@ -69,7 +70,7 @@ class PriceStatistics:
     source_name: str
     currency: Optional[str]
     observation_count: int
-    listings_with_price: int
+    observations_with_price: int
     min_price: Optional[Decimal]
     max_price: Optional[Decimal]
     avg_price: Optional[Decimal]
@@ -90,16 +91,21 @@ class AnalyticsRepository:
     ) -> PriceChangeResult:
         """Return paginated price changes using LAG window function.
 
-        The LAG is partitioned by source_product_id so the "previous price"
-        is always from the same source-product listing (and thus the same
-        currency).
+        LAG is computed over the full observation history per source-product,
+        then ``from_date`` is applied as an outer filter so the first in-window
+        observation retains its correct predecessor delta.  Deltas are only
+        computed when the current and previous currencies match.
         """
         prev_price = func.lag(ProductObservation.price).over(
             partition_by=ProductObservation.source_product_id,
             order_by=ProductObservation.collected_at.asc(),
         )
+        prev_currency = func.lag(ProductObservation.currency).over(
+            partition_by=ProductObservation.source_product_id,
+            order_by=ProductObservation.collected_at.asc(),
+        )
 
-        q = (
+        base_q = (
             select(
                 ProductObservation.id.label("observation_id"),
                 ProductObservation.source_product_id,
@@ -108,6 +114,7 @@ class AnalyticsRepository:
                 ProductObservation.currency,
                 ProductObservation.collected_at,
                 prev_price.label("prev_price"),
+                prev_currency.label("prev_currency"),
                 SourceProduct.external_id,
                 Source.name.label("source_name"),
             )
@@ -116,22 +123,22 @@ class AnalyticsRepository:
         )
 
         if source_product_id is not None:
-            q = q.where(ProductObservation.source_product_id == source_product_id)
-        if from_date is not None:
-            q = q.where(ProductObservation.collected_at >= from_date)
+            base_q = base_q.where(ProductObservation.source_product_id == source_product_id)
 
-        q = q.order_by(ProductObservation.collected_at.desc())
-        base_subq = q.subquery()
+        base_subq = base_q.subquery()
 
+        same_currency = (base_subq.c.prev_currency != None) & (  # noqa: E711
+            base_subq.c.currency == base_subq.c.prev_currency
+        )
         change_abs = case(
             (
-                (base_subq.c.prev_price != None) & (base_subq.c.prev_price > 0),  # noqa: E711
+                (base_subq.c.prev_price != None) & same_currency,  # noqa: E711
                 base_subq.c.price - base_subq.c.prev_price,
             ),
         )
         change_pct = case(
             (
-                (base_subq.c.prev_price != None) & (base_subq.c.prev_price > 0),  # noqa: E711
+                (base_subq.c.prev_price != None) & (base_subq.c.prev_price > 0) & same_currency,  # noqa: E711
                 func.round(
                     (base_subq.c.price - base_subq.c.prev_price) / base_subq.c.prev_price * 100,
                     2,
@@ -139,24 +146,24 @@ class AnalyticsRepository:
             ),
         )
 
-        total = self._session.execute(select(func.count()).select_from(base_subq)).scalar() or 0
+        enriched_q = select(
+            base_subq,
+            change_abs.label("price_change_absolute"),
+            change_pct.label("price_change_percent"),
+        )
+        enriched_subq = enriched_q.subquery()
+
+        filtered = select(enriched_subq)
+        if from_date is not None:
+            filtered = filtered.where(enriched_subq.c.collected_at >= from_date)
+        filtered_subq = filtered.subquery()
+
+        total = self._session.execute(select(func.count()).select_from(filtered_subq)).scalar() or 0
 
         offset = (page - 1) * page_size
         rows = self._session.execute(
-            select(
-                base_subq.c.observation_id,
-                base_subq.c.source_product_id,
-                base_subq.c.name,
-                base_subq.c.price,
-                base_subq.c.currency,
-                base_subq.c.collected_at,
-                base_subq.c.prev_price,
-                base_subq.c.external_id,
-                base_subq.c.source_name,
-                change_abs.label("price_change_absolute"),
-                change_pct.label("price_change_percent"),
-            )
-            .order_by(base_subq.c.collected_at.desc())
+            select(filtered_subq)
+            .order_by(filtered_subq.c.collected_at.desc())
             .offset(offset)
             .limit(page_size)
         ).all()
@@ -168,8 +175,9 @@ class AnalyticsRepository:
                 name=row.name,
                 price=row.price,
                 currency=row.currency,
-                collected_at=row.collected_at.isoformat() if row.collected_at else "",
+                collected_at=row.collected_at.isoformat(),
                 prev_price=row.prev_price,
+                prev_currency=row.prev_currency,
                 price_change_absolute=row.price_change_absolute,
                 price_change_percent=row.price_change_percent,
                 external_id=row.external_id,
@@ -189,10 +197,10 @@ class AnalyticsRepository:
     ) -> PriceMoverResult:
         """Return top products ranked by price change percentage.
 
-        First/last prices are taken from the chronologically earliest and
-        latest observations per source-product, so price drops are reported
-        correctly.  Each source-product is treated as a single currency
-        listing; cross-currency aggregation does not occur.
+        Uses a two-phase approach: an aggregate query identifies candidate
+        source-products, then two batched queries fetch chronological
+        first/last prices.  Only source-products where the first and last
+        observations share the same currency are included.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
@@ -200,7 +208,6 @@ class AnalyticsRepository:
             select(
                 ProductObservation.source_product_id,
                 func.count().label("obs_count"),
-                func.min(ProductObservation.currency).label("currency"),
             )
             .join(SourceProduct, SourceProduct.id == ProductObservation.source_product_id)
             .where(ProductObservation.collected_at >= cutoff)
@@ -217,59 +224,73 @@ class AnalyticsRepository:
         if not agg_rows:
             return PriceMoverResult(items=[])
 
-        sp_data: dict[int, dict] = {}
-        for row in agg_rows:
-            sp_id = row.source_product_id
-            first_obs = self._session.execute(
-                select(ProductObservation.price, ProductObservation.currency)
-                .where(ProductObservation.source_product_id == sp_id)
-                .where(ProductObservation.collected_at >= cutoff)
-                .where(ProductObservation.price.is_not(None))
-                .order_by(ProductObservation.collected_at.asc())
-                .limit(1)
-            ).one_or_none()
-            last_obs = self._session.execute(
-                select(ProductObservation.price)
-                .where(ProductObservation.source_product_id == sp_id)
-                .where(ProductObservation.collected_at >= cutoff)
-                .where(ProductObservation.price.is_not(None))
-                .order_by(ProductObservation.collected_at.desc())
-                .limit(1)
-            ).one_or_none()
-            if first_obs and last_obs and first_obs.price and last_obs.price:
-                fp: Decimal = first_obs.price
-                lp: Decimal = last_obs.price
-                abs_change = lp - fp
-                pct = float(abs_change / fp * 100) if fp > 0 else 0.0
-                sp_data[sp_id] = {
-                    "first_price": fp,
-                    "last_price": lp,
-                    "abs_change": abs_change,
-                    "pct": Decimal(str(round(pct, 2))),
-                    "obs_count": row.obs_count,
-                    "currency": row.currency,
-                }
+        counts = {row.source_product_id: row.obs_count for row in agg_rows}
+        sp_ids = list(counts.keys())
 
-        movers = [
-            PriceMoverEntry(
-                source_product_id=sp_id,
-                external_id="",
-                source_name="",
-                canonical_name=None,
-                currency=d["currency"],
-                first_price=d["first_price"],
-                last_price=d["last_price"],
-                price_change_absolute=d["abs_change"],
-                price_change_percent=d["pct"],
-                observation_count=d["obs_count"],
+        first_q = (
+            select(
+                ProductObservation.source_product_id,
+                ProductObservation.price,
+                ProductObservation.currency,
             )
-            for sp_id, d in sp_data.items()
-        ]
+            .where(ProductObservation.source_product_id.in_(sp_ids))
+            .where(ProductObservation.collected_at >= cutoff)
+            .where(ProductObservation.price.is_not(None))
+            .order_by(ProductObservation.source_product_id, ProductObservation.collected_at.asc())
+        )
+        first_prices: dict[int, tuple[Decimal, str]] = {}
+        for row in self._session.execute(first_q).all():
+            if row.source_product_id not in first_prices:
+                first_prices[row.source_product_id] = (row.price, row.currency)
+
+        last_q = (
+            select(
+                ProductObservation.source_product_id,
+                ProductObservation.price,
+                ProductObservation.currency,
+            )
+            .where(ProductObservation.source_product_id.in_(sp_ids))
+            .where(ProductObservation.collected_at >= cutoff)
+            .where(ProductObservation.price.is_not(None))
+            .order_by(ProductObservation.source_product_id, ProductObservation.collected_at.desc())
+        )
+        last_prices: dict[int, tuple[Decimal, str]] = {}
+        for row in self._session.execute(last_q).all():
+            if row.source_product_id not in last_prices:
+                last_prices[row.source_product_id] = (row.price, row.currency)
+
+        movers: list[PriceMoverEntry] = []
+        for sp_id in sp_ids:
+            if sp_id not in first_prices or sp_id not in last_prices:
+                continue
+            fp, fc = first_prices[sp_id]
+            lp, lc = last_prices[sp_id]
+            if fc != lc:
+                continue
+            abs_change = lp - fp
+            pct = float(abs_change / fp * 100) if fp > 0 else 0.0
+            movers.append(
+                PriceMoverEntry(
+                    source_product_id=sp_id,
+                    external_id="",
+                    source_name="",
+                    canonical_name=None,
+                    currency=fc,
+                    first_price=fp,
+                    last_price=lp,
+                    price_change_absolute=abs_change,
+                    price_change_percent=Decimal(str(round(pct, 2))),
+                    observation_count=counts[sp_id],
+                )
+            )
 
         movers.sort(key=lambda m: float(m.price_change_percent), reverse=True)
         movers = movers[:limit]
 
-        sp_ids = [m.source_product_id for m in movers]
+        if not movers:
+            return PriceMoverResult(items=[])
+
+        sp_ids_top = [m.source_product_id for m in movers]
         meta_q = (
             select(
                 SourceProduct.id,
@@ -279,7 +300,7 @@ class AnalyticsRepository:
             )
             .join(Source, Source.id == SourceProduct.source_id)
             .join(Product, Product.id == SourceProduct.product_id)
-            .where(SourceProduct.id.in_(sp_ids))
+            .where(SourceProduct.id.in_(sp_ids_top))
         )
         meta = {
             row.id: {
@@ -354,7 +375,7 @@ class AnalyticsRepository:
                 source_name=row.source_name,
                 currency=row.currency,
                 observation_count=row.obs_count,
-                listings_with_price=row.with_price,
+                observations_with_price=row.with_price,
                 min_price=row.min_p,
                 max_price=row.max_p,
                 avg_price=row.avg_p,

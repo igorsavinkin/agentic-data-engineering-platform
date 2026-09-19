@@ -126,6 +126,7 @@ class PriceChangeResponse(BaseModel):
     currency: Optional[str] = None
     collected_at: str
     prev_price: Optional[float] = None
+    prev_currency: Optional[str] = None
     price_change_absolute: Optional[float] = None
     price_change_percent: Optional[float] = None
     external_id: str
@@ -169,7 +170,7 @@ class PriceStatisticsItemResponse(BaseModel):
     source_name: str
     currency: Optional[str] = None
     observation_count: int
-    listings_with_price: int
+    observations_with_price: int
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     avg_price: Optional[float] = None

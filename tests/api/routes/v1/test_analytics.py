@@ -182,6 +182,67 @@ class TestPriceChanges:
         response = client.get("/api/v1/analytics/price-changes?page_size=200")
         assert response.status_code == 422
 
+    def test_from_date_preserves_lag_from_full_history(self, seeded_client: TestClient) -> None:
+        response = seeded_client.get(
+            "/api/v1/analytics/price-changes?source_product_id=1"
+            f"&from_date={_ts(12).strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 2
+        items_by_id = {item["observation_id"]: item for item in body["items"]}
+        obs2 = items_by_id[2]
+        assert obs2["prev_price"] == pytest.approx(10.00)
+        assert obs2["price_change_absolute"] == pytest.approx(2.00)
+
+    def test_currency_change_produces_null_delta(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        src = Source(id=1, name="s", description="s")
+        src.created_at = _ts(60)
+        src.updated_at = _ts(60)
+        p = Product(id=1, canonical_name="P", category="c")
+        p.created_at = _ts(60)
+        p.updated_at = _ts(60)
+        sp = SourceProduct(id=1, source_id=1, product_id=1, external_id="X")
+        sp.created_at = _ts(60)
+        sp.updated_at = _ts(60)
+        db_session.add_all([src, p, sp])
+        db_session.add_all(
+            [
+                ProductObservation(
+                    id=1,
+                    source_product_id=1,
+                    name="P",
+                    price=Decimal("10.00"),
+                    currency="USD",
+                    availability="in_stock",
+                    collected_at=_ts(10),
+                    ingested_at=_ts(10),
+                    event_id="e1",
+                ),
+                ProductObservation(
+                    id=2,
+                    source_product_id=1,
+                    name="P",
+                    price=Decimal("12.00"),
+                    currency="EUR",
+                    availability="in_stock",
+                    collected_at=_ts(5),
+                    ingested_at=_ts(5),
+                    event_id="e2",
+                ),
+            ]
+        )
+        db_session.commit()
+        response = client.get("/api/v1/analytics/price-changes")
+        body = response.json()
+        items_by_id = {item["observation_id"]: item for item in body["items"]}
+        assert items_by_id[2]["prev_price"] == pytest.approx(10.00)
+        assert items_by_id[2]["prev_currency"] == "USD"
+        assert items_by_id[2]["price_change_absolute"] is None
+        assert items_by_id[2]["price_change_percent"] is None
+
 
 class TestPriceMovers:
     def test_empty(self, client: TestClient) -> None:
