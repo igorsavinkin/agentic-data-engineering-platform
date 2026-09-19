@@ -311,21 +311,6 @@ class TestExtractTraceContext:
         headers_arg = call_args[0][0]
         assert headers_arg["traceparent"] == "00-abc123-def456-01"
 
-    def test_extract_handles_string_values(self) -> None:
-        carrier = {"traceparent": "00-abc123-def456-01"}
-        mock_propagate = MagicMock()
-        mock_propagate.extract.return_value = MagicMock()
-
-        with patch.dict(
-            "sys.modules",
-            {"opentelemetry": MagicMock(propagate=mock_propagate)},
-        ):
-            extract_trace_context(carrier)
-
-        call_args = mock_propagate.extract.call_args
-        headers_arg = call_args[0][0]
-        assert headers_arg["traceparent"] == "00-abc123-def456-01"
-
 
 class TestGetCurrentTraceId:
     def test_returns_none_without_otel(self) -> None:
