@@ -8,6 +8,7 @@ incremented by the middleware installed in ``app.py``.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 
 from fastapi import APIRouter, Request, Response
 from prometheus_client import Counter, Summary
@@ -43,7 +44,7 @@ async def metrics() -> Response:
     )
 
 
-async def metrics_middleware(request: Request, call_next) -> Response:
+async def metrics_middleware(request: Request, call_next: Callable) -> Response:
     """Track request count and latency for Prometheus."""
     start = time.perf_counter()
     response: Response = await call_next(request)

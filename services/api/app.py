@@ -47,7 +47,7 @@ def create_app(
     )
 
     @app.middleware("http")
-    async def _prometheus_middleware(request, call_next):
+    async def _prometheus_middleware(request, call_next):  # type: ignore[no-untyped-def]
         return await metrics_middleware(request, call_next)
 
     app.dependency_overrides[get_db] = _db_session
