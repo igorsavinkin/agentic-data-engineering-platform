@@ -9,9 +9,36 @@
   "links": [],
   "panels": [
     {
+      "title": "Service Availability",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "up",
+          "legendFormat": "{{ job }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        }
+      }
+    },
+    {
       "title": "Service Event Rates",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -33,7 +60,7 @@
     {
       "title": "Error Rates",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -69,18 +96,14 @@
       }
     },
     {
-      "title": "Processor Latency (p50/p95)",
+      "title": "Processor Latency (avg)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, rate(processor_processing_seconds_bucket[5m]))",
-          "legendFormat": "p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(processor_processing_seconds_bucket[5m]))",
-          "legendFormat": "p95"
+          "expr": "rate(processor_processing_seconds_sum[5m]) / rate(processor_processing_seconds_count[5m])",
+          "legendFormat": "avg"
         }
       ],
       "fieldConfig": {
@@ -138,18 +161,14 @@
       }
     },
     {
-      "title": "API Latency (p50/p95)",
+      "title": "API Latency (avg)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(api_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(api_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "p95"
+          "expr": "rate(api_request_duration_seconds_sum[5m]) / rate(api_request_duration_seconds_count[5m])",
+          "legendFormat": "avg"
         }
       ],
       "fieldConfig": {
@@ -240,13 +259,13 @@
       }
     },
     {
-      "title": "Source Fetch Latency (p95)",
+      "title": "Source Fetch Latency (avg)",
       "type": "stat",
       "gridPos": { "h": 4, "w": 12, "x": 12, "y": 32 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(source_fetch_latency_seconds_bucket[5m]))",
+          "expr": "rate(source_fetch_latency_seconds_sum[5m]) / rate(source_fetch_latency_seconds_count[5m])",
           "legendFormat": "{{ source }}"
         }
       ],

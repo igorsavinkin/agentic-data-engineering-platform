@@ -37,6 +37,7 @@ KNOWN_METRICS = {
     "source_freshness_age_seconds",
     "api_requests_total",
     "api_request_duration_seconds",
+    "up",
 }
 
 PANEL_TYPES = {
@@ -165,6 +166,7 @@ class TestPanelDefinitions:
             assert "datasource" in panel, f"Panel '{panel['title']}' missing datasource"
             ds = panel["datasource"]
             assert ds["type"] == "prometheus"
+            assert ds["uid"] == "prometheus"
 
     def test_every_target_has_expr(self) -> None:
         dashboard = _load_dashboard(DASHBOARD_JSON)
@@ -197,8 +199,19 @@ class TestPromQLReferencesRealMetrics:
 
     def test_dashboard_covers_service_availability(self) -> None:
         dashboard = _load_dashboard(DASHBOARD_JSON)
-        titles = [p["title"].lower() for p in dashboard["panels"]]
-        assert any("rate" in t or "event" in t for t in titles)
+        all_exprs = [t["expr"] for p in dashboard["panels"] for t in p.get("targets", [])]
+        assert any("up" in expr for expr in all_exprs), (
+            "Dashboard must include a panel querying the 'up' metric for availability"
+        )
+
+    def test_no_histogram_quantile_queries(self) -> None:
+        dashboard = _load_dashboard(DASHBOARD_JSON)
+        for panel in dashboard["panels"]:
+            for target in panel["targets"]:
+                assert "histogram_quantile" not in target["expr"], (
+                    f"Panel '{panel['title']}' uses histogram_quantile but all "
+                    f"platform latency metrics are summaries (no _bucket series)"
+                )
 
     def test_dashboard_covers_latency(self) -> None:
         dashboard = _load_dashboard(DASHBOARD_JSON)

@@ -417,6 +417,7 @@ class TestHelmTemplate:
         datasources = yaml.safe_load(cm["data"]["datasources.yml"])
         assert datasources["datasources"][0]["type"] == "prometheus"
         assert datasources["datasources"][0]["url"] == "http://prometheus:9090"
+        assert datasources["datasources"][0]["uid"] == "prometheus"
 
     def test_grafana_dashboards_configmap_contains_dashboard_json(self) -> None:
         docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])

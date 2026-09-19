@@ -115,16 +115,17 @@ The `platform-overview.json` dashboard provides a single-pane view of platform h
 
 | Panel | Type | Key metrics |
 |-------|------|-------------|
+| Service Availability | stat | `up` |
 | Service Event Rates | timeseries | `kafka_events_processed_total`, `kafka_events_consumed_total` |
 | Error Rates | timeseries | `kafka_consumer_errors_total`, `kafka_processing_errors_total`, `kafka_dead_letter_events_total`, `events_invalid_total` |
-| Processor Latency (p50/p95) | timeseries | `processor_processing_seconds` |
+| Processor Latency (avg) | timeseries | `processor_processing_seconds` (summary: sum/count) |
 | Processor Throughput | stat | `processor_events_valid_total`, `processor_events_invalid_total` |
 | API Request Rate | timeseries | `api_requests_total` |
-| API Latency (p50/p95) | timeseries | `api_request_duration_seconds` |
+| API Latency (avg) | timeseries | `api_request_duration_seconds` (summary: sum/count) |
 | Source Freshness | timeseries | `source_freshness_age_seconds` |
 | Source Fetch Success Rate | gauge | `source_fetch_success_total`, `source_fetch_attempts_total` |
 | Ingestion Events | stat | `ingestion_events_total`, `ingestion_errors_total` |
-| Source Fetch Latency (p95) | stat | `source_fetch_latency_seconds` |
+| Source Fetch Latency (avg) | stat | `source_fetch_latency_seconds` (summary: sum/count) |
 
 ### Adding dashboards
 
