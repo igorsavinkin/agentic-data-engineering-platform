@@ -37,7 +37,7 @@ When a message cannot be deserialized or processed, the dead-letter sink logs th
 ## Running
 
 ```bash
-python -m services.lake_writer.consumer
+python -m services.lake-writer.consumer
 ```
 
 ## Configuration

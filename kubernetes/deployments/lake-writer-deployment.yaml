@@ -1,0 +1,68 @@
+# Lake Writer Deployment (TASK-074).
+#
+# Runs the lake writer service which consumes validated events from Kafka and
+# persists them to Silver (MinIO) as Parquet files. Implements at-least-once
+# delivery with idempotent processing using deterministic S3 keys derived
+# from event_id.
+#
+# No inbound Service is created — lake writer is a Kafka consumer and object
+# storage writer only. Configuration is externalized via environment
+# variables. MinIO credentials are sourced from a Secret (created by
+# TASK-078); until then the optional env vars are left unset and the
+# service uses defaults.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lake-writer
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: lake-writer
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: lake-writer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lake-writer
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lake-writer
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: lake-writer
+    spec:
+      containers:
+        - name: lake-writer
+          image: ai-data-platform/lake-writer:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "services.lake-writer.consumer"]
+          env:
+            - name: APP_ENVIRONMENT
+              value: "production"
+            - name: APP_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:29092"
+            - name: APP_KAFKA_GROUP_ID
+              value: "lake-writer"
+            - name: APP_MINIO_ENDPOINT
+              value: "http://minio:9000"
+            - name: APP_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lake-writer-secrets
+                  key: minio-access-key
+                  optional: true
+            - name: APP_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lake-writer-secrets
+                  key: minio-secret-key
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
