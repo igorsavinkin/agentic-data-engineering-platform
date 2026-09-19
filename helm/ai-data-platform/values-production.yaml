@@ -114,8 +114,7 @@ kafka:
 ingress:
   enabled: true
   className: "nginx"
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+  annotations: {}
   tls:
     - secretName: api-tls
       hosts:

@@ -81,10 +81,11 @@ api:
 
 kafka:
   replicas: 1
+  heapOpts: "-Xmx256M -Xms128M"
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 384Mi
     limits:
       cpu: 500m
       memory: 512Mi
