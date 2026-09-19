@@ -27,6 +27,7 @@ from libs.lake_writer import SilverWriter
 from libs.observability.kafka_metrics import LagSample
 from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.otel_config import OTelSettings, setup_opentelemetry
 from libs.observability.prometheus_exporter import create_prometheus_registry
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ def process_message(
 def run_consumer() -> None:
     """Main entry point: initialise components and start consuming."""
     setup_logging(service_name="lake-writer")
+    setup_opentelemetry(OTelSettings(service_name="lake-writer"))
 
     settings = load_settings(KafkaConsumerSettings)
     minio_settings = load_settings(MinIOSettings)

@@ -242,6 +242,20 @@ services:
       retries: 6
       start_period: 15s
 
+  # OpenTelemetry Collector (TASK-090): receives OTLP traces from platform
+  # services and exports to configured backends. Default config logs to
+  # stdout for local development.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    restart: unless-stopped
+    ports:
+      - "${OTEL_COLLECTOR_GRPC_PORT:-4317}:4317"
+      - "${OTEL_COLLECTOR_HTTP_PORT:-4318}:4318"
+    volumes:
+      - ./monitoring/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      - platform
+
 volumes:
   kafka_data:
   minio_data:

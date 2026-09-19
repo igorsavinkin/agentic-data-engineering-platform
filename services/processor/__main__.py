@@ -28,6 +28,7 @@ from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
 from libs.observability.kafka_metrics import LagSample
 from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.otel_config import OTelSettings, setup_opentelemetry
 from libs.observability.processor_metrics import ProcessorMetrics
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from services.processor.pipeline import ProcessorPipeline
@@ -76,6 +77,7 @@ def process_batch(
 def run_consumer() -> None:
     """Main entry point: initialize components and start consuming."""
     setup_logging(service_name="processor")
+    setup_opentelemetry(OTelSettings(service_name="processor"))
 
     consumer_settings = load_settings(KafkaConsumerSettings)
     producer_settings = load_settings(KafkaProducerSettings)
