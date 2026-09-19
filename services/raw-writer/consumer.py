@@ -24,6 +24,7 @@ from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaCons
 from libs.common.kafka_errors import DeadLetterSink, RetryPolicy
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.observability.kafka_metrics import LagSample
+from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from libs.raw_writer import BronzeWriter
@@ -89,10 +90,7 @@ def process_message(
 
 def run_consumer() -> None:
     """Main entry point: initialise components and start consuming."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    setup_logging(service_name="raw-writer")
 
     settings = load_settings(KafkaConsumerSettings)
     minio_settings = load_settings(MinIOSettings)

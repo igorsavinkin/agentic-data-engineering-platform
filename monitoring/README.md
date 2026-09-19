@@ -62,6 +62,88 @@ All metrics carry a `service` label. Source metrics also carry a `source` label.
 - `libs/observability/metrics_http_server.py` — HTTP server for background services
 - `services/api/routes/v1/metrics.py` — FastAPI `/metrics` endpoint
 
+## Structured Logging (TASK-089)
+
+All platform services use structured JSON logging for machine-readable, searchable log output.
+
+### Architecture
+
+- **Centralized configuration**: `libs/observability/logging_config.py` provides `setup_logging()` for consistent log format across services
+- **JSON format**: Every log record is a JSON object with standardized fields
+- **Correlation IDs**: Optional request correlation via `set_correlation_id()` for tracing requests across services
+
+### Log Format
+
+Every log entry includes:
+
+```json
+{
+  "timestamp": "2026-09-19T21:30:45.123456+00:00",
+  "level": "INFO",
+  "logger": "services.processor.__main__",
+  "message": "processor_batch_complete",
+  "service": "processor",
+  "environment": "dev",
+  "valid": 42,
+  "invalid": 3,
+  "duplicates": 1
+}
+```
+
+**Standard fields:**
+- `timestamp` — ISO 8601 UTC timestamp
+- `level` — Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- `logger` — Logger name (module path)
+- `message` — Log message
+- `service` — Service name (processor, raw-writer, lake-writer, ingestion, warehouse-loader)
+- `environment` — Deployment environment (dev, test, prod)
+- `correlation_id` — (optional) Request correlation ID for tracing
+
+**Extra fields:** Any fields passed via `logger.info("msg", extra={...})` are included in the JSON output. Non-JSON-serializable values are converted to strings.
+
+### Usage
+
+Services initialize logging at startup:
+
+```python
+from libs.observability.logging_config import setup_logging
+
+setup_logging(service_name="processor")
+```
+
+Set correlation ID for request tracing:
+
+```python
+from libs.observability.logging_config import set_correlation_id
+
+set_correlation_id("req-123-abc")
+logger.info("processing_request", extra={"event_id": "evt-456"})
+```
+
+Clear correlation ID:
+
+```python
+set_correlation_id(None)
+```
+
+### Implementation
+
+- `libs/observability/logging_config.py` — StructuredFormatter, setup_logging(), correlation ID management
+- All services updated to use `setup_logging()` instead of `logging.basicConfig()`
+
+### Exception Handling
+
+Exceptions are automatically included in log output with full stack traces:
+
+```python
+try:
+    risky_operation()
+except Exception:
+    logger.exception("operation_failed")
+```
+
+The `exception` field contains the formatted traceback.
+
 ## Planned
 
 - OpenTelemetry integration (TASK-090+)
