@@ -43,6 +43,15 @@ Access the Prometheus UI at http://localhost:9090.
 | `source_fetch_failure_total` | Counter | SourceMetrics |
 | `source_fetch_latency_seconds` | Summary | SourceMetrics |
 | `source_freshness_age_seconds` | Gauge | SourceMetrics |
+| `source_records_collected_total` | Counter | SourceMetrics |
+| `source_records_emitted_total` | Counter | SourceMetrics |
+| `source_zero_record_fetches_total` | Counter | SourceMetrics |
+| `source_pages_fetched_total` | Counter | SourceMetrics |
+| `source_retry_attempts_total` | Counter | SourceMetrics |
+| `source_malformed_records_total` | Counter | SourceMetrics |
+| `source_partial_failures_total` | Counter | SourceMetrics |
+| `processor_events_duplicate_total` | Counter | ProcessorMetrics |
+| `processor_events_failed_total` | Counter | ProcessorMetrics |
 
 All metrics carry a `service` label. Source metrics also carry a `source` label.
 
@@ -132,3 +141,24 @@ The `platform-overview.json` dashboard provides a single-pane view of platform h
 1. Create a JSON file in `monitoring/grafana/dashboards/` (for Compose)
 2. Copy the same file to `helm/ai-data-platform/dashboards/` (for Helm)
 3. The dashboard provider auto-detects new JSON files on the next 30-second polling cycle
+
+## Data Quality Dashboard (TASK-087)
+
+The `data-quality.json` dashboard focuses on data-quality signals: validation outcomes, freshness, deduplication, failure rates, and source collection health.
+
+### Panels
+
+| Panel | Type | Key metrics |
+|-------|------|-------------|
+| Validation Pass Rate | gauge | `processor_events_valid_total`, `processor_events_invalid_total` |
+| Source Freshness | timeseries | `source_freshness_age_seconds` |
+| Source Fetch Success Rate | gauge | `source_fetch_success_total`, `source_fetch_attempts_total` |
+| Invalid Event Rate | timeseries | `processor_events_invalid_total`, `events_invalid_total` |
+| Deduplication Rate | timeseries | `processor_events_duplicate_total` |
+| Processing Failure Rate | timeseries | `processor_events_failed_total`, `kafka_processing_errors_total` |
+| Dead Letter Queue Rate | timeseries | `kafka_dead_letter_events_total` |
+| Source Malformed Records | timeseries | `source_malformed_records_total` |
+| Source Zero-Record Fetches | timeseries | `source_zero_record_fetches_total` |
+| Source Partial Failures & Retries | timeseries | `source_partial_failures_total`, `source_retry_attempts_total` |
+| Records Collected vs Emitted | timeseries | `source_records_collected_total`, `source_records_emitted_total` |
+| Source Fetch Failure Rate | stat | `source_fetch_failure_total` |
