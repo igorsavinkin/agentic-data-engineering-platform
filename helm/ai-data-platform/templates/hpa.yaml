@@ -11,7 +11,7 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "ai-data-platform.fullname" . }}-{{ .Values.hpa.targetDeployment }}
+    name: {{ .Values.hpa.targetDeployment }}
   minReplicas: {{ .Values.hpa.minReplicas }}
   maxReplicas: {{ .Values.hpa.maxReplicas }}
   metrics:

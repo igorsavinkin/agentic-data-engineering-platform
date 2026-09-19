@@ -29,7 +29,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "ai-data-platform.fullname" $ }}-api
+                name: api
                 port:
                   number: {{ $.Values.api.service.port }}
           {{- end }}
