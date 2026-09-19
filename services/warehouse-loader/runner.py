@@ -19,6 +19,7 @@ import time
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.otel_config import OTelSettings, setup_opentelemetry
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from libs.parquet_reader.reader import PartitionFilter
 from libs.partitioning import LakeLayer
@@ -85,4 +86,5 @@ def run() -> None:
 
 if __name__ == "__main__":
     setup_logging(service_name="warehouse-loader")
+    setup_opentelemetry(OTelSettings(service_name="warehouse-loader"))
     run()

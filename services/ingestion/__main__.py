@@ -27,10 +27,12 @@ from libs.adapters.fake_store.adapter import FakeStoreAdapter
 from libs.common.kafka_producer import KafkaEventProducer, KafkaProducerSettings
 from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.otel_config import OTelSettings, setup_opentelemetry
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from services.ingestion.runner import IngestionRunner
 
 setup_logging(service_name="ingestion")
+setup_opentelemetry(OTelSettings(service_name="ingestion"))
 logger = logging.getLogger("ingestion")
 
 

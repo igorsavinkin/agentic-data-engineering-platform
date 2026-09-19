@@ -22,6 +22,13 @@ from libs.observability.health_persistence import (
     IngestionHealthResultWriter,
 )
 from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.otel_config import (
+    OTelSettings,
+    get_tracer,
+    safe_attributes,
+    setup_opentelemetry,
+    truncate_attribute,
+)
 from libs.observability.prometheus_exporter import (
     PlatformMetricsCollector,
     create_prometheus_registry,
@@ -42,6 +49,7 @@ __all__ = [
     "IngestionHealthResultRow",
     "IngestionHealthResultWriter",
     "MetricsHTTPServer",
+    "OTelSettings",
     "PlatformMetricsCollector",
     "SourceDegradationState",
     "SourceFreshness",
@@ -54,4 +62,8 @@ __all__ = [
     "SourceMetrics",
     "SourceObservation",
     "create_prometheus_registry",
+    "get_tracer",
+    "safe_attributes",
+    "setup_opentelemetry",
+    "truncate_attribute",
 ]

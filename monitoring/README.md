@@ -146,7 +146,77 @@ The `exception` field contains the formatted traceback.
 
 ## Planned
 
-- OpenTelemetry integration (TASK-090+)
+- Distributed tracing instrumentation (TASK-091)
+
+## OpenTelemetry (TASK-090)
+
+OpenTelemetry provides the foundation for distributed tracing across platform services.
+
+### Architecture
+
+- **SDK**: `libs/observability/otel_config.py` — shared configuration with consistent resource identity
+- **Resource attributes**: `service.name`, `service.version`, `deployment.environment`
+- **Exporters**: OTLP gRPC (default), Console (debug), or None
+- **Safe attributes**: bounded string truncation (256 chars), sensitive key filtering, max 128 attributes
+- **Collector**: OpenTelemetry Collector receives OTLP and exports to configured backends
+
+### Configuration
+
+Services initialize OpenTelemetry via `setup_opentelemetry(OTelSettings(...))`. Configuration is read from environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `APP_OTEL_EXPORTER_ENDPOINT` | `None` | OTLP exporter endpoint (e.g., `http://localhost:4317`) |
+| `APP_OTEL_EXPORTER_TYPE` | `otlp` | Exporter type: `otlp`, `console`, or `none` |
+| `APP_SERVICE_VERSION` | `0.1.0` | Service version for resource identity |
+
+### Local development
+
+Start the OTLP collector alongside the rest of the stack:
+
+```bash
+docker compose up -d otel-collector
+```
+
+The collector listens on gRPC port 4317 and HTTP port 4318. Default configuration logs traces to stdout for debugging.
+
+Enable OTel in a service:
+
+```bash
+APP_OTEL_ENABLED=true APP_OTEL_EXPORTER_ENDPOINT=http://localhost:4317 python -m services.processor
+```
+
+### Kubernetes
+
+Enable the OTel collector in Helm values:
+
+```bash
+helm upgrade --install ai-data-platform helm/ai-data-platform \
+  --set opentelemetry.enabled=true \
+  --set opentelemetry.config.enabled=true
+```
+
+Services will automatically export traces to `http://otel-collector:4317` when `APP_OTEL_ENABLED=true`.
+
+### Implementation
+
+- `libs/observability/otel_config.py` — OTel setup, resource identity, safe attributes
+- `monitoring/otel-collector-config.yaml` — Collector configuration (Compose)
+- `helm/ai-data-platform/values.yaml` — `opentelemetry:` section (Helm)
+
+### Service integration
+
+All platform services initialize OpenTelemetry on startup:
+
+- `services/ingestion/__main__.py`
+- `services/processor/__main__.py`
+- `services/raw-writer/consumer.py`
+- `services/lake-writer/consumer.py`
+- `services/warehouse-loader/runner.py`
+- `services/api/app.py`
+
+Each service calls `setup_opentelemetry(OTelSettings(service_name="<service>"))` after `setup_logging()`.
 
 ## Grafana (TASK-085)
 

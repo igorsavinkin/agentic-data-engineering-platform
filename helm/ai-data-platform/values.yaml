@@ -429,3 +429,29 @@ grafana:
     limits:
       cpu: 500m
       memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# OpenTelemetry — distributed tracing infrastructure (TASK-090)
+# ---------------------------------------------------------------------------
+# Disabled by default. Enable to deploy an OpenTelemetry Collector for
+# receiving OTLP traces from platform services.
+opentelemetry:
+  enabled: false
+  collector:
+    image:
+      repository: otel/opentelemetry-collector-contrib
+      tag: "0.115.1"
+    grpcPort: 4317
+    httpPort: 4318
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+  # Per-service OTel configuration. Services read these via APP_ env vars.
+  config:
+    enabled: false
+    exporterEndpoint: "http://otel-collector:4317"
+    exporterType: "otlp"

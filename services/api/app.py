@@ -46,6 +46,10 @@ def create_app(
         openapi_url="/api/openapi.json",
     )
 
+    from libs.observability.otel_config import OTelSettings, setup_opentelemetry
+
+    setup_opentelemetry(OTelSettings(service_name="api"))
+
     @app.middleware("http")
     async def _prometheus_middleware(request, call_next):  # type: ignore[no-untyped-def]
         return await metrics_middleware(request, call_next)
