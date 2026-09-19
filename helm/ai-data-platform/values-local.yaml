@@ -1,0 +1,101 @@
+# values-local.yaml — kind / local development overrides
+# Usage:
+#   helm upgrade --install ai-platform helm/ai-data-platform \
+#     -f helm/ai-data-platform/values.yaml \
+#     -f helm/ai-data-platform/values-local.yaml
+#
+# This file overrides only the values that differ from the base defaults
+# for a local kind cluster. Secrets remain placeholder base64 values —
+# never use in production.
+
+global:
+  imagePullPolicy: IfNotPresent
+
+platform:
+  environment: local
+  kafkaBootstrapServers: "kafka:29092"
+  minioEndpoint: "http://minio:9000"
+
+# Local development uses minimal resources suitable for a single-node
+# kind cluster. The base values are already kind-friendly; these overrides
+# make the intent explicit and reduce resource pressure further.
+ingestion:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+processor:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+rawWriter:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+lakeWriter:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+warehouseLoader:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+api:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+kafka:
+  replicas: 1
+  heapOpts: "-Xmx256M -Xms128M"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Optional resources remain disabled in local development.
+ingress:
+  enabled: false
+
+hpa:
+  enabled: false
+
+networkPolicy:
+  enabled: false
