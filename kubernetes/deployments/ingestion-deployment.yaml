@@ -1,0 +1,58 @@
+# Ingestion Deployment (TASK-071).
+#
+# Runs the ingestion service which fetches from source adapters and
+# publishes canonical product observation events to Kafka.
+#
+# No inbound Service is created — ingestion is a Kafka producer only.
+# Configuration is externalized via environment variables. The
+# BESTBUY_API_KEY is sourced from a Secret (created by TASK-078);
+# until then the optional env var is left unset and the adapter logs
+# a warning.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: ingestion
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: ingestion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingestion
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingestion
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: ingestion
+    spec:
+      containers:
+        - name: ingestion
+          image: ai-data-platform/ingestion:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "services.ingestion"]
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:29092"
+            - name: KAFKA_RAW_TOPIC
+              value: "products.raw.v1"
+            - name: INGESTION_INTERVAL_SECONDS
+              value: "60"
+            - name: BESTBUY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ingestion-secrets
+                  key: bestbuy-api-key
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

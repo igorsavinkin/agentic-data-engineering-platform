@@ -67,3 +67,46 @@ class TestNamespaceManifest:
         manifest = _load_yaml(NAMESPACE_MANIFEST)
         labels = manifest["metadata"]["labels"]
         assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+
+INGESTION_DEPLOYMENT = REPO_ROOT / "kubernetes" / "deployments" / "ingestion-deployment.yaml"
+
+
+class TestIngestionDeployment:
+    def test_ingestion_deployment_exists(self) -> None:
+        assert INGESTION_DEPLOYMENT.exists(), (
+            f"ingestion deployment not found at {INGESTION_DEPLOYMENT}"
+        )
+
+    def test_ingestion_deployment_is_deployment_resource(self) -> None:
+        manifest = _load_yaml(INGESTION_DEPLOYMENT)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "Deployment"
+
+    def test_ingestion_deployment_namespace(self) -> None:
+        manifest = _load_yaml(INGESTION_DEPLOYMENT)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_ingestion_deployment_labels(self) -> None:
+        manifest = _load_yaml(INGESTION_DEPLOYMENT)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "ingestion"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_ingestion_deployment_selector_matches_template(self) -> None:
+        manifest = _load_yaml(INGESTION_DEPLOYMENT)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_ingestion_deployment_has_kafka_env(self) -> None:
+        manifest = _load_yaml(INGESTION_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = [e["name"] for e in container["env"]]
+        assert "KAFKA_BOOTSTRAP_SERVERS" in env_names
+
+    def test_ingestion_deployment_no_inbound_ports(self) -> None:
+        manifest = _load_yaml(INGESTION_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "ports" not in container, "ingestion should not expose inbound ports"
