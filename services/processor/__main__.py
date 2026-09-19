@@ -79,6 +79,7 @@ def run_consumer() -> None:
 
     registry, collector = create_prometheus_registry(service_name="processor")
     collector.register_processor(proc_metrics)
+    collector.register_kafka(consumer.metrics)
     metrics_server = MetricsHTTPServer(registry=registry, port=9100)
     metrics_server.start()
     logger.info("prometheus_metrics_server_started", extra={"port": 9100})

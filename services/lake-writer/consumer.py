@@ -92,7 +92,8 @@ def run_consumer() -> None:
     consumer.subscribe([VALIDATED_TOPIC])
     logger.info("lake_writer_started", extra={"topic": VALIDATED_TOPIC})
 
-    registry, _collector = create_prometheus_registry(service_name="lake-writer")
+    registry, collector = create_prometheus_registry(service_name="lake-writer")
+    collector.register_kafka(consumer.metrics)
     metrics_server = MetricsHTTPServer(registry=registry, port=9100)
     metrics_server.start()
     logger.info("prometheus_metrics_server_started", extra={"port": 9100})

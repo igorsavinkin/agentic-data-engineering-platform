@@ -54,7 +54,7 @@ def run() -> None:
 
     logger.info("Warehouse loader started (interval=%ds)", interval)
 
-    registry, _collector = create_prometheus_registry(service_name="warehouse-loader")
+    registry, collector = create_prometheus_registry(service_name="warehouse-loader")
     metrics_server = MetricsHTTPServer(registry=registry, port=9100)
     metrics_server.start()
     logger.info("prometheus_metrics_server_started (port=%d)", 9100)

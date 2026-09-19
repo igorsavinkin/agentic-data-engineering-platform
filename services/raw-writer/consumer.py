@@ -92,7 +92,8 @@ def run_consumer() -> None:
     consumer.subscribe([RAW_TOPIC])
     logger.info("raw_writer_started", extra={"topic": RAW_TOPIC})
 
-    registry, _collector = create_prometheus_registry(service_name="raw-writer")
+    registry, collector = create_prometheus_registry(service_name="raw-writer")
+    collector.register_kafka(consumer.metrics)
     metrics_server = MetricsHTTPServer(registry=registry, port=9100)
     metrics_server.start()
     logger.info("prometheus_metrics_server_started", extra={"port": 9100})
