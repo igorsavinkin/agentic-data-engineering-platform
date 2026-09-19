@@ -25,6 +25,7 @@ KNOWN_METRICS = {
     "kafka_processing_errors_total",
     "kafka_dead_letter_events_total",
     "kafka_lag_errors_total",
+    "kafka_consumer_lag",
     "ingestion_events_total",
     "ingestion_errors_total",
     "processor_events_processed_total",

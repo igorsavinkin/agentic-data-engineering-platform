@@ -1,5 +1,6 @@
 """Instance-local, bounded Kafka counters for a future Prometheus collector."""
 
+from dataclasses import dataclass
 from enum import StrEnum
 from threading import Lock
 
@@ -16,6 +17,15 @@ class KafkaMetric(StrEnum):
     LAG_ERRORS = "kafka_lag_errors_total"
 
 
+@dataclass(frozen=True)
+class LagSample:
+    """Point-in-time consumer lag for a topic/partition."""
+
+    topic: str
+    partition: int
+    lag: int
+
+
 class KafkaMetrics:
     """Thread-safe counters with no payload, exception, or configuration labels.
 
@@ -26,11 +36,21 @@ class KafkaMetrics:
     def __init__(self) -> None:
         self._lock = Lock()
         self._counts = dict.fromkeys(KafkaMetric, 0)
+        self._lag_samples: list[LagSample] = []
 
     def increment(self, metric: KafkaMetric) -> None:
         with self._lock:
             self._counts[metric] += 1
 
+    def update_lag(self, samples: list[LagSample]) -> None:
+        """Replace current lag samples with fresh point-in-time values."""
+        with self._lock:
+            self._lag_samples = list(samples)
+
     def snapshot(self) -> dict[str, int]:
         with self._lock:
             return {metric.value: count for metric, count in self._counts.items()}
+
+    def lag_snapshot(self) -> list[LagSample]:
+        with self._lock:
+            return list(self._lag_samples)

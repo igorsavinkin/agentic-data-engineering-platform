@@ -24,6 +24,7 @@ from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaCons
 from libs.common.kafka_errors import DeadLetterSink, RetryPolicy
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.lake_writer import SilverWriter
+from libs.observability.kafka_metrics import KafkaMetric, LagSample
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.prometheus_exporter import create_prometheus_registry
 
@@ -53,6 +54,21 @@ def _build_dead_letter_sink() -> DeadLetterSink:
         )
 
     return sink
+
+
+def _sample_lag(consumer: KafkaConsumer) -> None:
+    """Sample consumer lag and update metrics."""
+    try:
+        lag_records = consumer.sample_lag(timeout=2.0)
+        samples = [
+            LagSample(topic=r.topic, partition=r.partition, lag=r.lag)
+            for r in lag_records
+            if r.lag is not None
+        ]
+        consumer.metrics.update_lag(samples)
+    except Exception:
+        consumer.metrics.increment(KafkaMetric.LAG_ERRORS)
+        logger.debug("lag_sample_failed", exc_info=True)
 
 
 def process_message(
@@ -99,6 +115,7 @@ def run_consumer() -> None:
     logger.info("prometheus_metrics_server_started", extra={"port": 9100})
 
     try:
+        iteration = 0
         while not consumer.is_shutdown_requested():
             processed = consumer.process_next(
                 process=lambda msg: process_message(msg, writer),
@@ -110,6 +127,9 @@ def run_consumer() -> None:
                 import time
 
                 time.sleep(0.1)
+            iteration += 1
+            if iteration % 50 == 0:
+                _sample_lag(consumer)
     except KeyboardInterrupt:
         logger.info("lake_writer_interrupted")
     finally:

@@ -52,6 +52,7 @@ Access the Prometheus UI at http://localhost:9090.
 | `source_partial_failures_total` | Counter | SourceMetrics |
 | `processor_events_duplicate_total` | Counter | ProcessorMetrics |
 | `processor_events_failed_total` | Counter | ProcessorMetrics |
+| `kafka_consumer_lag` | Gauge | KafkaMetrics |
 
 All metrics carry a `service` label. Source metrics also carry a `source` label.
 
@@ -172,7 +173,7 @@ The `kafka-processing.json` dashboard focuses on Kafka consumer throughput, lag 
 | Panel | Type | Key metrics |
 |-------|------|-------------|
 | Consumer Throughput | timeseries | `kafka_events_consumed_total`, `kafka_events_processed_total` |
-| Consumer Lag Indicator | timeseries | consumed rate - processed rate (gap indicator) |
+| Consumer Lag Indicator | timeseries | `kafka_consumer_lag` |
 | Kafka Error Rates | timeseries | `kafka_consumer_errors_total`, `kafka_processing_errors_total` |
 | Dead Letter Queue Rate | timeseries | `kafka_dead_letter_events_total` |
 | Invalid Event Rate | timeseries | `events_invalid_total` |
@@ -183,3 +184,35 @@ The `kafka-processing.json` dashboard focuses on Kafka consumer throughput, lag 
 | Ingestion Rate | timeseries | `ingestion_events_total` |
 | Ingestion Errors | stat | `ingestion_errors_total` |
 | Processor Pipeline Health | gauge | `processor_events_valid_total` / `processor_events_processed_total` |
+
+### Consumer Lag Metric
+
+The `kafka_consumer_lag` gauge reports per-topic, per-partition consumer lag, sampled periodically by each consumer service (processor, raw-writer, lake-writer). Labels: `service`, `topic`, `partition`.
+
+Lag is sampled every 50 consumer loop iterations via `KafkaConsumer.sample_lag()` and stored in `KafkaMetrics` for Prometheus scraping.
+
+### Backlog Test Procedure
+
+This procedure demonstrates the lag metric responding to a controlled backlog and subsequent recovery.
+
+**Prerequisites**: Platform running with Docker Compose, Grafana accessible at http://localhost:3000.
+
+1. **Baseline**: Open the "Kafka & Processing" dashboard in Grafana. Verify the "Consumer Lag Indicator" panel shows near-zero lag across all partitions.
+
+2. **Create backlog**: Stop the processor service to allow messages to accumulate:
+   ```bash
+   docker compose stop processor
+   ```
+   Continue producing test events (or let the ingestion service run). Wait 2-3 minutes for lag to build.
+
+3. **Observe lag increase**: The "Consumer Lag Indicator" panel should show rising `kafka_consumer_lag` values for the `products.raw.v1` topic. The "Consumer Throughput" panel will show consumption dropping to zero while production continues.
+
+4. **Recover**: Restart the processor:
+   ```bash
+   docker compose start processor
+   ```
+   The processor will consume the backlog. Watch the lag panel decrease back toward zero as the processor catches up.
+
+5. **Verify recovery**: Once lag returns to near-zero, confirm the "Consumer Throughput" panel shows consumption rate matching production rate again.
+
+**Expected outcome**: Lag increases while processor is stopped, decreases after restart, returns to baseline. This validates the end-to-end lag metric pipeline: `KafkaConsumer.sample_lag()` → `KafkaMetrics.update_lag()` → Prometheus scrape → Grafana panel.

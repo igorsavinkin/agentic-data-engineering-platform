@@ -25,6 +25,7 @@ from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaCons
 from libs.common.kafka_errors import KafkaDeadLetterProducer, RetryPolicy
 from libs.common.kafka_producer import KafkaProducerSettings
 from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
+from libs.observability.kafka_metrics import KafkaMetric, LagSample
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.processor_metrics import ProcessorMetrics
 from libs.observability.prometheus_exporter import create_prometheus_registry
@@ -33,6 +34,21 @@ from services.processor.pipeline import ProcessorPipeline
 logger = logging.getLogger(__name__)
 
 RAW_TOPIC = "products.raw.v1"
+
+
+def _sample_lag(consumer: KafkaConsumer) -> None:
+    """Sample consumer lag and update metrics."""
+    try:
+        lag_records = consumer.sample_lag(timeout=2.0)
+        samples = [
+            LagSample(topic=r.topic, partition=r.partition, lag=r.lag)
+            for r in lag_records
+            if r.lag is not None
+        ]
+        consumer.metrics.update_lag(samples)
+    except Exception:
+        consumer.metrics.increment(KafkaMetric.LAG_ERRORS)
+        logger.debug("lag_sample_failed", exc_info=True)
 
 
 def process_batch(
@@ -94,6 +110,7 @@ def run_consumer() -> None:
     )
 
     try:
+        iteration = 0
         while not consumer.is_shutdown_requested():
             processed = consumer.process_next(
                 process=lambda msg: process_batch([msg], pipeline),
@@ -102,6 +119,9 @@ def run_consumer() -> None:
             )
             if not processed:
                 time.sleep(0.1)
+            iteration += 1
+            if iteration % 50 == 0:
+                _sample_lag(consumer)
     except KeyboardInterrupt:
         logger.info("processor_interrupted")
     finally:
