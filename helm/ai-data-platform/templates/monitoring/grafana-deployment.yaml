@@ -60,6 +60,9 @@ spec:
             - name: provisioning-dashboards
               mountPath: /etc/grafana/provisioning/dashboards
               readOnly: true
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
             - name: data
               mountPath: /var/lib/grafana
       volumes:
@@ -75,6 +78,9 @@ spec:
             items:
               - key: dashboards.yml
                 path: dashboards.yml
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
         - name: data
           emptyDir: {}
 {{- end }}

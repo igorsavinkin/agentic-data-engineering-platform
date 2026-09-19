@@ -89,6 +89,7 @@ class TestGrafanaProvisioningFiles:
         assert prom["type"] == "prometheus"
         assert prom["url"] == "http://prometheus:9090"
         assert prom["isDefault"] is True
+        assert prom["uid"] == "prometheus"
 
     def test_dashboard_provider_points_to_correct_path(self) -> None:
         dash = _load_yaml(GRAFANA_DASHBOARDS / "dashboard.yml")
