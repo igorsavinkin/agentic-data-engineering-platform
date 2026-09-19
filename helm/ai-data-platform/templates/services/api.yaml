@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: ai-data-platform
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: {{ .Values.api.port }}
+      protocol: TCP
+      name: http

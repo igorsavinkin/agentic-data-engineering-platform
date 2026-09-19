@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: platform-config
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: configuration
+data:
+  APP_ENVIRONMENT: {{ .Values.platform.environment | quote }}
+  APP_KAFKA_BOOTSTRAP_SERVERS: {{ .Values.platform.kafkaBootstrapServers | quote }}
+  APP_MINIO_ENDPOINT: {{ .Values.platform.minioEndpoint | quote }}

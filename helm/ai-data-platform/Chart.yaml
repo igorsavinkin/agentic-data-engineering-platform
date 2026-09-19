@@ -1,0 +1,12 @@
+apiVersion: v2
+name: ai-data-platform
+description: Event-driven AI data platform — ingestion, processing, data lake, warehouse, and API
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - data-platform
+  - kafka
+  - parquet
+  - event-driven
+home: https://github.com/igorsavinkin/agentic-data-engineering-platform

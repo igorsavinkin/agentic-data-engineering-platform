@@ -1,0 +1,240 @@
+# Default values for ai-data-platform.
+# Environment-specific overrides live in values-local.yaml / values-production.yaml.
+
+global:
+  namespace: ai-data-platform
+  imagePullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Common labels applied to every resource
+commonLabels: {}
+
+# ---------------------------------------------------------------------------
+# Images
+# ---------------------------------------------------------------------------
+images:
+  ingestion:
+    repository: ai-data-platform/ingestion
+    tag: dev
+  processor:
+    repository: ai-data-platform/processor
+    tag: dev
+  rawWriter:
+    repository: ai-data-platform/raw-writer
+    tag: dev
+  lakeWriter:
+    repository: ai-data-platform/lake-writer
+    tag: dev
+  warehouseLoader:
+    repository: ai-data-platform/warehouse-loader
+    tag: dev
+  api:
+    repository: ai-data-platform/api
+    tag: dev
+  kafka:
+    repository: apache/kafka
+    tag: "4.3.1"
+
+# ---------------------------------------------------------------------------
+# Platform configuration (ConfigMap: platform-config)
+# ---------------------------------------------------------------------------
+platform:
+  environment: production
+  kafkaBootstrapServers: "kafka:29092"
+  minioEndpoint: "http://minio:9000"
+
+# ---------------------------------------------------------------------------
+# Database configuration (ConfigMap: database-config)
+# ---------------------------------------------------------------------------
+database:
+  host: postgresql
+  port: "5432"
+  name: warehouse
+  user: postgres
+
+# ---------------------------------------------------------------------------
+# Secrets — local-dev placeholder values only; never use in production
+# ---------------------------------------------------------------------------
+secrets:
+  minio:
+    accessKey: bWluaW9hZG1pbg==
+    secretKey: bWluaW9hZG1pbi1sb2NhbA==
+  database:
+    password: cG9zdGdyZXM=
+  ingestion:
+    bestbuyApiKey: cGxhY2Vob2xkZXItcmVwbGFjZS1tZQ==
+
+# ---------------------------------------------------------------------------
+# Service components
+# ---------------------------------------------------------------------------
+ingestion:
+  replicas: 1
+  rawTopic: products.raw.v1
+  intervalSeconds: 60
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+processor:
+  replicas: 1
+  groupId: processor
+  autoOffsetReset: earliest
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+rawWriter:
+  replicas: 1
+  groupId: raw-writer
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+lakeWriter:
+  replicas: 1
+  groupId: lake-writer
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+warehouseLoader:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+api:
+  replicas: 1
+  host: "0.0.0.0"
+  port: 8000
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+kafka:
+  replicas: 1
+  nodeId: 1
+  heapOpts: "-Xmx512M -Xms256M"
+  service:
+    type: NodePort
+    internalPort: 29092
+    externalPort: 9092
+    nodePort: 30092
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 15
+  readinessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  topics:
+    backoffLimit: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Infrastructure services (no Deployment — external or Compose-managed)
+# ---------------------------------------------------------------------------
+minio:
+  service:
+    type: ClusterIP
+    apiPort: 9000
+    consolePort: 9001
+
+postgresql:
+  service:
+    type: ClusterIP
+    port: 5432
+
+# ---------------------------------------------------------------------------
+# Optional resources — disabled by default, enabled per environment
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+
+hpa:
+  enabled: false
+
+networkPolicy:
+  enabled: false
