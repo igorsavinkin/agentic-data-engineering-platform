@@ -1,4 +1,4 @@
-# Lake Writer Deployment (TASK-074).
+# Lake Writer Deployment (TASK-074, updated TASK-078).
 #
 # Runs the lake writer service which consumes validated events from Kafka and
 # persists them to Silver (MinIO) as Parquet files. Implements at-least-once
@@ -6,10 +6,9 @@
 # from event_id.
 #
 # No inbound Service is created — lake writer is a Kafka consumer and object
-# storage writer only. Configuration is externalized via environment
-# variables. MinIO credentials are sourced from a Secret (created by
-# TASK-078); until then the optional env vars are left unset and the
-# service uses defaults.
+# storage writer only. Shared configuration is sourced from the
+# platform-config ConfigMap; MinIO credentials from the shared
+# minio-credentials Secret.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -40,25 +39,32 @@ spec:
           command: ["python", "-m", "services.lake-writer.consumer"]
           env:
             - name: APP_ENVIRONMENT
-              value: "production"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
             - name: APP_KAFKA_BOOTSTRAP_SERVERS
-              value: "kafka:29092"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_KAFKA_BOOTSTRAP_SERVERS
             - name: APP_KAFKA_GROUP_ID
               value: "lake-writer"
             - name: APP_MINIO_ENDPOINT
-              value: "http://minio:9000"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_MINIO_ENDPOINT
             - name: APP_MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: lake-writer-secrets
+                  name: minio-credentials
                   key: minio-access-key
-                  optional: true
             - name: APP_MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: lake-writer-secrets
+                  name: minio-credentials
                   key: minio-secret-key
-                  optional: true
           resources:
             requests:
               cpu: 100m

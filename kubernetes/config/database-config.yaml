@@ -1,0 +1,20 @@
+# Database ConfigMap (TASK-078).
+#
+# PostgreSQL connection parameters shared by the warehouse-loader and
+# API services. Contains only non-sensitive connection metadata; the
+# password lives in the database-credentials Secret.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-config
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: database-config
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: configuration
+data:
+  WAREHOUSE_DB_HOST: "postgresql"
+  WAREHOUSE_DB_PORT: "5432"
+  WAREHOUSE_DB_NAME: "warehouse"
+  WAREHOUSE_DB_USER: "postgres"

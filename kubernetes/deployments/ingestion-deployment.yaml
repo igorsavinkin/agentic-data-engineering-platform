@@ -1,13 +1,11 @@
-# Ingestion Deployment (TASK-071).
+# Ingestion Deployment (TASK-071, updated TASK-078).
 #
 # Runs the ingestion service which fetches from source adapters and
 # publishes canonical product observation events to Kafka.
 #
 # No inbound Service is created — ingestion is a Kafka producer only.
-# Configuration is externalized via environment variables. The
-# BESTBUY_API_KEY is sourced from a Secret (created by TASK-078);
-# until then the optional env var is left unset and the adapter logs
-# a warning.
+# Configuration is externalized via ConfigMap (platform-config) and
+# Secret (ingestion-api-keys).
 
 apiVersion: apps/v1
 kind: Deployment
@@ -38,9 +36,15 @@ spec:
           command: ["python", "-m", "services.ingestion"]
           env:
             - name: APP_ENVIRONMENT
-              value: "production"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
             - name: APP_KAFKA_BOOTSTRAP_SERVERS
-              value: "kafka:29092"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_KAFKA_BOOTSTRAP_SERVERS
             - name: APP_KAFKA_RAW_TOPIC
               value: "products.raw.v1"
             - name: INGESTION_INTERVAL_SECONDS
@@ -48,7 +52,7 @@ spec:
             - name: BESTBUY_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: ingestion-secrets
+                  name: ingestion-api-keys
                   key: bestbuy-api-key
                   optional: true
           resources:

@@ -195,14 +195,16 @@ class TestRawWriterDeployment:
         assert "APP_KAFKA_GROUP_ID" in env_names
         assert "APP_MINIO_ENDPOINT" in env_names
 
-    def test_raw_writer_deployment_minio_secrets_are_optional(self) -> None:
+    def test_raw_writer_deployment_uses_shared_minio_secret(self) -> None:
         manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         secret_envs = [
             e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
         ]
         for env in secret_envs:
-            assert env["valueFrom"]["secretKeyRef"].get("optional") is True
+            ref = env["valueFrom"]["secretKeyRef"]
+            assert ref["name"] == "minio-credentials"
+            assert ref.get("optional") is not True
 
     def test_raw_writer_deployment_no_inbound_ports(self) -> None:
         manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
@@ -254,14 +256,16 @@ class TestLakeWriterDeployment:
         assert "APP_KAFKA_GROUP_ID" in env_names
         assert "APP_MINIO_ENDPOINT" in env_names
 
-    def test_lake_writer_deployment_minio_secrets_are_optional(self) -> None:
+    def test_lake_writer_deployment_uses_shared_minio_secret(self) -> None:
         manifest = _load_yaml(LAKE_WRITER_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         secret_envs = [
             e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
         ]
         for env in secret_envs:
-            assert env["valueFrom"]["secretKeyRef"].get("optional") is True
+            ref = env["valueFrom"]["secretKeyRef"]
+            assert ref["name"] == "minio-credentials"
+            assert ref.get("optional") is not True
 
     def test_lake_writer_deployment_no_inbound_ports(self) -> None:
         manifest = _load_yaml(LAKE_WRITER_DEPLOYMENT)
@@ -323,14 +327,17 @@ class TestWarehouseLoaderDeployment:
         assert "APP_KAFKA_BOOTSTRAP_SERVERS" not in env_names
         assert "APP_KAFKA_GROUP_ID" not in env_names
 
-    def test_warehouse_loader_deployment_secrets_are_optional(self) -> None:
+    def test_warehouse_loader_deployment_uses_shared_secrets(self) -> None:
         manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         secret_envs = [
             e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
         ]
+        secret_names = {e["valueFrom"]["secretKeyRef"]["name"] for e in secret_envs}
+        assert "minio-credentials" in secret_names
+        assert "database-credentials" in secret_names
         for env in secret_envs:
-            assert env["valueFrom"]["secretKeyRef"].get("optional") is True
+            assert env["valueFrom"]["secretKeyRef"].get("optional") is not True
 
     def test_warehouse_loader_deployment_no_inbound_ports(self) -> None:
         manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
@@ -404,14 +411,16 @@ class TestAPIDeployment:
         assert probe["httpGet"]["path"] == "/api/v1/ready"
         assert probe["httpGet"]["port"] == 8000
 
-    def test_api_deployment_secrets_are_optional(self) -> None:
+    def test_api_deployment_uses_shared_database_secret(self) -> None:
         manifest = _load_yaml(API_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         secret_envs = [
             e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
         ]
         for env in secret_envs:
-            assert env["valueFrom"]["secretKeyRef"].get("optional") is True
+            ref = env["valueFrom"]["secretKeyRef"]
+            assert ref["name"] == "database-credentials"
+            assert ref.get("optional") is not True
 
     def test_api_deployment_command_uses_module_invocation(self) -> None:
         manifest = _load_yaml(API_DEPLOYMENT)
@@ -579,3 +588,249 @@ class TestKafkaTopicsJob:
         ]
         for topic in expected_topics:
             assert topic in script, f"topic {topic} not found in kafka-topics-job script"
+
+
+PLATFORM_CONFIG = REPO_ROOT / "kubernetes" / "config" / "platform-config.yaml"
+DATABASE_CONFIG = REPO_ROOT / "kubernetes" / "config" / "database-config.yaml"
+
+
+class TestPlatformConfigMap:
+    def test_platform_config_exists(self) -> None:
+        assert PLATFORM_CONFIG.exists(), f"platform config not found at {PLATFORM_CONFIG}"
+
+    def test_platform_config_is_configmap(self) -> None:
+        manifest = _load_yaml(PLATFORM_CONFIG)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "ConfigMap"
+
+    def test_platform_config_namespace(self) -> None:
+        manifest = _load_yaml(PLATFORM_CONFIG)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_platform_config_has_required_keys(self) -> None:
+        manifest = _load_yaml(PLATFORM_CONFIG)
+        data = manifest["data"]
+        assert "APP_ENVIRONMENT" in data
+        assert "APP_KAFKA_BOOTSTRAP_SERVERS" in data
+        assert "APP_MINIO_ENDPOINT" in data
+
+    def test_platform_config_kafka_endpoint(self) -> None:
+        manifest = _load_yaml(PLATFORM_CONFIG)
+        assert manifest["data"]["APP_KAFKA_BOOTSTRAP_SERVERS"] == "kafka:29092"
+
+    def test_platform_config_minio_endpoint(self) -> None:
+        manifest = _load_yaml(PLATFORM_CONFIG)
+        assert manifest["data"]["APP_MINIO_ENDPOINT"] == "http://minio:9000"
+
+    def test_platform_config_labels(self) -> None:
+        manifest = _load_yaml(PLATFORM_CONFIG)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+
+class TestDatabaseConfigMap:
+    def test_database_config_exists(self) -> None:
+        assert DATABASE_CONFIG.exists(), f"database config not found at {DATABASE_CONFIG}"
+
+    def test_database_config_is_configmap(self) -> None:
+        manifest = _load_yaml(DATABASE_CONFIG)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "ConfigMap"
+
+    def test_database_config_namespace(self) -> None:
+        manifest = _load_yaml(DATABASE_CONFIG)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_database_config_has_required_keys(self) -> None:
+        manifest = _load_yaml(DATABASE_CONFIG)
+        data = manifest["data"]
+        assert "WAREHOUSE_DB_HOST" in data
+        assert "WAREHOUSE_DB_PORT" in data
+        assert "WAREHOUSE_DB_NAME" in data
+        assert "WAREHOUSE_DB_USER" in data
+
+    def test_database_config_host_matches_service_name(self) -> None:
+        manifest = _load_yaml(DATABASE_CONFIG)
+        assert manifest["data"]["WAREHOUSE_DB_HOST"] == "postgresql"
+
+
+MINIO_SECRET = REPO_ROOT / "kubernetes" / "secrets" / "minio-credentials.yaml"
+DATABASE_SECRET = REPO_ROOT / "kubernetes" / "secrets" / "database-credentials.yaml"
+INGESTION_SECRET = REPO_ROOT / "kubernetes" / "secrets" / "ingestion-api-keys.yaml"
+
+
+class TestMinioCredentialsSecret:
+    def test_minio_secret_exists(self) -> None:
+        assert MINIO_SECRET.exists(), f"minio secret not found at {MINIO_SECRET}"
+
+    def test_minio_secret_is_secret_resource(self) -> None:
+        manifest = _load_yaml(MINIO_SECRET)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "Secret"
+
+    def test_minio_secret_namespace(self) -> None:
+        manifest = _load_yaml(MINIO_SECRET)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_minio_secret_has_required_keys(self) -> None:
+        manifest = _load_yaml(MINIO_SECRET)
+        assert "minio-access-key" in manifest["data"]
+        assert "minio-secret-key" in manifest["data"]
+
+    def test_minio_secret_is_opaque(self) -> None:
+        manifest = _load_yaml(MINIO_SECRET)
+        assert manifest["type"] == "Opaque"
+
+
+class TestDatabaseCredentialsSecret:
+    def test_database_secret_exists(self) -> None:
+        assert DATABASE_SECRET.exists(), f"database secret not found at {DATABASE_SECRET}"
+
+    def test_database_secret_is_secret_resource(self) -> None:
+        manifest = _load_yaml(DATABASE_SECRET)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "Secret"
+
+    def test_database_secret_namespace(self) -> None:
+        manifest = _load_yaml(DATABASE_SECRET)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_database_secret_has_db_password_key(self) -> None:
+        manifest = _load_yaml(DATABASE_SECRET)
+        assert "db-password" in manifest["data"]
+
+
+class TestIngestionApiKeysSecret:
+    def test_ingestion_secret_exists(self) -> None:
+        assert INGESTION_SECRET.exists(), f"ingestion secret not found at {INGESTION_SECRET}"
+
+    def test_ingestion_secret_is_secret_resource(self) -> None:
+        manifest = _load_yaml(INGESTION_SECRET)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "Secret"
+
+    def test_ingestion_secret_has_bestbuy_key(self) -> None:
+        manifest = _load_yaml(INGESTION_SECRET)
+        assert "bestbuy-api-key" in manifest["data"]
+
+
+MINIO_SERVICE = REPO_ROOT / "kubernetes" / "deployments" / "minio-service.yaml"
+POSTGRESQL_SERVICE = REPO_ROOT / "kubernetes" / "deployments" / "postgresql-service.yaml"
+
+
+class TestMinioService:
+    def test_minio_service_exists(self) -> None:
+        assert MINIO_SERVICE.exists(), f"minio service not found at {MINIO_SERVICE}"
+
+    def test_minio_service_is_service_resource(self) -> None:
+        manifest = _load_yaml(MINIO_SERVICE)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "Service"
+
+    def test_minio_service_namespace(self) -> None:
+        manifest = _load_yaml(MINIO_SERVICE)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_minio_service_is_clusterip(self) -> None:
+        manifest = _load_yaml(MINIO_SERVICE)
+        assert manifest["spec"]["type"] == "ClusterIP"
+
+    def test_minio_service_exposes_api_port(self) -> None:
+        manifest = _load_yaml(MINIO_SERVICE)
+        ports = manifest["spec"]["ports"]
+        assert any(p["port"] == 9000 for p in ports)
+
+    def test_minio_service_labels(self) -> None:
+        manifest = _load_yaml(MINIO_SERVICE)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "minio"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+
+class TestPostgreSQLService:
+    def test_postgresql_service_exists(self) -> None:
+        assert POSTGRESQL_SERVICE.exists(), f"postgresql service not found at {POSTGRESQL_SERVICE}"
+
+    def test_postgresql_service_is_service_resource(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_SERVICE)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "Service"
+
+    def test_postgresql_service_namespace(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_SERVICE)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_postgresql_service_is_clusterip(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_SERVICE)
+        assert manifest["spec"]["type"] == "ClusterIP"
+
+    def test_postgresql_service_exposes_port_5432(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_SERVICE)
+        ports = manifest["spec"]["ports"]
+        assert any(p["port"] == 5432 for p in ports)
+
+    def test_postgresql_service_labels(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_SERVICE)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "postgresql"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+
+class TestDeploymentsUseConfigMaps:
+    def test_ingestion_uses_platform_config(self) -> None:
+        manifest = _load_yaml(INGESTION_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        configmap_envs = [
+            e
+            for e in container["env"]
+            if "valueFrom" in e and "configMapKeyRef" in e.get("valueFrom", {})
+        ]
+        configmap_names = {e["valueFrom"]["configMapKeyRef"]["name"] for e in configmap_envs}
+        assert "platform-config" in configmap_names
+
+    def test_processor_uses_platform_config(self) -> None:
+        manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        configmap_envs = [
+            e
+            for e in container["env"]
+            if "valueFrom" in e and "configMapKeyRef" in e.get("valueFrom", {})
+        ]
+        configmap_names = {e["valueFrom"]["configMapKeyRef"]["name"] for e in configmap_envs}
+        assert "platform-config" in configmap_names
+
+    def test_warehouse_loader_uses_database_config(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        configmap_envs = [
+            e
+            for e in container["env"]
+            if "valueFrom" in e and "configMapKeyRef" in e.get("valueFrom", {})
+        ]
+        configmap_names = {e["valueFrom"]["configMapKeyRef"]["name"] for e in configmap_envs}
+        assert "database-config" in configmap_names
+        assert "platform-config" in configmap_names
+
+    def test_api_uses_database_config(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        configmap_envs = [
+            e
+            for e in container["env"]
+            if "valueFrom" in e and "configMapKeyRef" in e.get("valueFrom", {})
+        ]
+        configmap_names = {e["valueFrom"]["configMapKeyRef"]["name"] for e in configmap_envs}
+        assert "database-config" in configmap_names
+
+
+class TestSecretCreationScript:
+    SCRIPT = REPO_ROOT / "scripts" / "create-local-secrets.sh"
+
+    def test_script_exists(self) -> None:
+        assert self.SCRIPT.exists(), f"secret creation script not found at {self.SCRIPT}"
+
+    def test_script_creates_all_secrets(self) -> None:
+        content = self.SCRIPT.read_text(encoding="utf-8")
+        assert "minio-credentials" in content
+        assert "database-credentials" in content
+        assert "ingestion-api-keys" in content
