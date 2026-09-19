@@ -154,3 +154,57 @@ class TestProcessorDeployment:
         manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert "ports" not in container, "processor should not expose inbound ports"
+
+
+RAW_WRITER_DEPLOYMENT = REPO_ROOT / "kubernetes" / "deployments" / "raw-writer-deployment.yaml"
+
+
+class TestRawWriterDeployment:
+    def test_raw_writer_deployment_exists(self) -> None:
+        assert RAW_WRITER_DEPLOYMENT.exists(), (
+            f"raw-writer deployment not found at {RAW_WRITER_DEPLOYMENT}"
+        )
+
+    def test_raw_writer_deployment_is_deployment_resource(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "Deployment"
+
+    def test_raw_writer_deployment_namespace(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_raw_writer_deployment_labels(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "raw-writer"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_raw_writer_deployment_selector_matches_template(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_raw_writer_deployment_has_kafka_and_minio_env(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = [e["name"] for e in container["env"]]
+        assert "APP_KAFKA_BOOTSTRAP_SERVERS" in env_names
+        assert "APP_KAFKA_GROUP_ID" in env_names
+        assert "APP_MINIO_ENDPOINT" in env_names
+
+    def test_raw_writer_deployment_minio_secrets_are_optional(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        secret_envs = [
+            e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
+        ]
+        for env in secret_envs:
+            assert env["valueFrom"]["secretKeyRef"].get("optional") is True
+
+    def test_raw_writer_deployment_no_inbound_ports(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "ports" not in container, "raw-writer should not expose inbound ports"
