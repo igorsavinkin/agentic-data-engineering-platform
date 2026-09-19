@@ -17,6 +17,7 @@ import signal
 import time
 
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
+from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from libs.parquet_reader.reader import PartitionFilter
@@ -83,5 +84,5 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    setup_logging(service_name="warehouse-loader")
     run()

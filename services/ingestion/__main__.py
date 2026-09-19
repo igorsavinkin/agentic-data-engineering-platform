@@ -25,15 +25,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from libs.adapters.best_buy.adapter import BestBuyAdapter
 from libs.adapters.fake_store.adapter import FakeStoreAdapter
 from libs.common.kafka_producer import KafkaEventProducer, KafkaProducerSettings
+from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from services.ingestion.runner import IngestionRunner
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+setup_logging(service_name="ingestion")
 logger = logging.getLogger("ingestion")
 
 
