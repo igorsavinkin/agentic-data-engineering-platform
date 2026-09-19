@@ -1,0 +1,169 @@
+# values-production.yaml — production-like example overrides
+# Usage:
+#   helm upgrade --install ai-platform helm/ai-data-platform \
+#     -f helm/ai-data-platform/values.yaml \
+#     -f helm/ai-data-platform/values-production.yaml \
+#     --set secrets.database.password="<base64>" \
+#     --set secrets.minio.accessKey="<base64>" \
+#     --set secrets.minio.secretKey="<base64>" \
+#     --set secrets.ingestion.bestbuyApiKey="<base64>"
+#
+# IMPORTANT: This file is an EXAMPLE of production-oriented settings.
+# Real production deployments must:
+#   1. Replace ALL secret values via --set or external secret management
+#   2. Update image tags to pinned versions (not "dev")
+#   3. Configure actual domain names for Ingress TLS
+#   4. Adjust resource limits based on load testing results
+#   5. Review NetworkPolicy rules for the target CNI
+
+global:
+  imagePullPolicy: IfNotPresent
+
+platform:
+  environment: production
+
+# Production uses pinned image tags — override per release.
+images:
+  ingestion:
+    tag: "1.0.0"
+  processor:
+    tag: "1.0.0"
+  rawWriter:
+    tag: "1.0.0"
+  lakeWriter:
+    tag: "1.0.0"
+  warehouseLoader:
+    tag: "1.0.0"
+  api:
+    tag: "1.0.0"
+
+# Production resources — sized for sustained workload, not kind.
+# Adjust based on actual load testing (Milestone 13).
+ingestion:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+processor:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+rawWriter:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+lakeWriter:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+warehouseLoader:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+api:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+kafka:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# Enable Ingress for external API access.
+# Update hosts and TLS for the actual domain.
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  tls:
+    - secretName: api-tls
+      hosts:
+        - api.example.com
+  hosts:
+    - host: api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Enable HPA for the API — requires metrics-server.
+hpa:
+  enabled: true
+  targetDeployment: api
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 75
+
+# Enable NetworkPolicy — requires a CNI that supports it (Calico, Cilium).
+# These rules allow intra-namespace traffic and DNS egress.
+# Adjust for the actual production network topology.
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: ai-data-platform
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: ai-data-platform
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow egress to Kafka, MinIO, PostgreSQL within the cluster.
+    - ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 29092
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 5432
