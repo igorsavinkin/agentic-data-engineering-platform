@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: raw-writer
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: raw-writer
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: raw-writer
+spec:
+  replicas: {{ .Values.rawWriter.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: raw-writer
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: raw-writer
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: raw-writer
+    spec:
+      containers:
+        - name: raw-writer
+          image: "{{ .Values.images.rawWriter.repository }}:{{ .Values.images.rawWriter.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["python", "-m", "services.raw-writer.consumer"]
+          env:
+            - name: APP_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
+            - name: APP_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_KAFKA_BOOTSTRAP_SERVERS
+            - name: APP_KAFKA_GROUP_ID
+              value: {{ .Values.rawWriter.groupId | quote }}
+            - name: APP_MINIO_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_MINIO_ENDPOINT
+            - name: APP_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: minio-access-key
+            - name: APP_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: minio-secret-key
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import os; os.kill(1, 0)"
+            initialDelaySeconds: {{ .Values.rawWriter.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.rawWriter.livenessProbe.periodSeconds }}
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+            initialDelaySeconds: {{ .Values.rawWriter.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.rawWriter.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.rawWriter.readinessProbe.timeoutSeconds }}
+          resources:
+            {{- toYaml .Values.rawWriter.resources | nindent 12 }}

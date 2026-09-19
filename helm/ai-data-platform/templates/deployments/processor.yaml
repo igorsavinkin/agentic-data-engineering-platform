@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: processor
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: processor
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: processor
+spec:
+  replicas: {{ .Values.processor.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: processor
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: processor
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: processor
+    spec:
+      containers:
+        - name: processor
+          image: "{{ .Values.images.processor.repository }}:{{ .Values.images.processor.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["python", "-m", "services.processor"]
+          env:
+            - name: APP_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
+            - name: APP_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_KAFKA_BOOTSTRAP_SERVERS
+            - name: APP_KAFKA_GROUP_ID
+              value: {{ .Values.processor.groupId | quote }}
+            - name: APP_KAFKA_AUTO_OFFSET_RESET
+              value: {{ .Values.processor.autoOffsetReset | quote }}
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import os; os.kill(1, 0)"
+            initialDelaySeconds: {{ .Values.processor.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.processor.livenessProbe.periodSeconds }}
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+            initialDelaySeconds: {{ .Values.processor.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.processor.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.processor.readinessProbe.timeoutSeconds }}
+          resources:
+            {{- toYaml .Values.processor.resources | nindent 12 }}

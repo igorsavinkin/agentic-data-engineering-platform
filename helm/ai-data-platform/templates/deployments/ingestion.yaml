@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: ingestion
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: ingestion
+spec:
+  replicas: {{ .Values.ingestion.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingestion
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingestion
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: ingestion
+    spec:
+      containers:
+        - name: ingestion
+          image: "{{ .Values.images.ingestion.repository }}:{{ .Values.images.ingestion.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["python", "-m", "services.ingestion"]
+          env:
+            - name: APP_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
+            - name: APP_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_KAFKA_BOOTSTRAP_SERVERS
+            - name: APP_KAFKA_RAW_TOPIC
+              value: {{ .Values.ingestion.rawTopic | quote }}
+            - name: INGESTION_INTERVAL_SECONDS
+              value: {{ .Values.ingestion.intervalSeconds | quote }}
+            - name: BESTBUY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ingestion-api-keys
+                  key: bestbuy-api-key
+                  optional: true
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import os; os.kill(1, 0)"
+            initialDelaySeconds: {{ .Values.ingestion.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.ingestion.livenessProbe.periodSeconds }}
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+            initialDelaySeconds: {{ .Values.ingestion.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.ingestion.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.ingestion.readinessProbe.timeoutSeconds }}
+          resources:
+            {{- toYaml .Values.ingestion.resources | nindent 12 }}
