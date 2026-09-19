@@ -114,3 +114,69 @@ class ObservationListResponse(BaseModel):
     total: int
     page: int = Field(ge=1)
     page_size: int = Field(ge=1, le=100)
+
+
+class PriceChangeResponse(BaseModel):
+    """Single price change entry with delta from previous observation."""
+
+    observation_id: int
+    source_product_id: int
+    name: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    collected_at: str
+    prev_price: Optional[float] = None
+    prev_currency: Optional[str] = None
+    price_change_absolute: Optional[float] = None
+    price_change_percent: Optional[float] = None
+    external_id: str
+    source_name: str
+
+
+class PriceChangeListResponse(BaseModel):
+    """Paginated price change list envelope."""
+
+    items: list[PriceChangeResponse]
+    total: int
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+
+
+class PriceMoverResponse(BaseModel):
+    """Single product ranked by price change over a period."""
+
+    source_product_id: int
+    external_id: str
+    source_name: str
+    canonical_name: Optional[str] = None
+    currency: Optional[str] = None
+    first_price: float
+    last_price: float
+    price_change_absolute: float
+    price_change_percent: float
+    observation_count: int
+
+
+class PriceMoverListResponse(BaseModel):
+    """Bounded list of top price movers."""
+
+    items: list[PriceMoverResponse]
+
+
+class PriceStatisticsItemResponse(BaseModel):
+    """Aggregate price statistics for a single source and currency."""
+
+    source_id: int
+    source_name: str
+    currency: Optional[str] = None
+    observation_count: int
+    observations_with_price: int
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    avg_price: Optional[float] = None
+
+
+class PriceStatisticsResponse(BaseModel):
+    """Per-source price statistics."""
+
+    items: list[PriceStatisticsItemResponse]
