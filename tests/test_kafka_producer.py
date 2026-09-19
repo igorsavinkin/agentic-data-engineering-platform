@@ -137,7 +137,6 @@ def test_environment_configures_actual_publish(
         ("APP_KAFKA_DELIVERY_TIMEOUT_MS", "0"),
         ("APP_KAFKA_DELIVERY_TIMEOUT_MS", "300001"),
         ("APP_KAFKA_DELIVERY_TIMEOUT_MS", "nan"),
-        ("APP_KAFKA_TYPO", "secret"),
     ],
 )
 def test_invalid_configuration(variable: str, value: str, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,0 +1,67 @@
+# Raw Writer Deployment (TASK-073).
+#
+# Runs the raw writer service which consumes raw events from Kafka and
+# persists them to Bronze (MinIO) as Parquet files. Implements at-least-once
+# delivery with idempotent processing.
+#
+# No inbound Service is created — raw writer is a Kafka consumer and object
+# storage writer only. Configuration is externalized via environment
+# variables. MinIO credentials are sourced from a Secret (created by
+# TASK-078); until then the optional env vars are left unset and the
+# service uses defaults.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: raw-writer
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: raw-writer
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: raw-writer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: raw-writer
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: raw-writer
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: raw-writer
+    spec:
+      containers:
+        - name: raw-writer
+          image: ai-data-platform/raw-writer:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "services.raw-writer.consumer"]
+          env:
+            - name: APP_ENVIRONMENT
+              value: "production"
+            - name: APP_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:29092"
+            - name: APP_KAFKA_GROUP_ID
+              value: "raw-writer"
+            - name: APP_MINIO_ENDPOINT
+              value: "http://minio:9000"
+            - name: APP_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: raw-writer-secrets
+                  key: minio-access-key
+                  optional: true
+            - name: APP_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: raw-writer-secrets
+                  key: minio-secret-key
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

@@ -11,8 +11,9 @@ kubernetes/
 ├── namespaces/
 │   └── platform-namespace.yaml # Platform namespace definition
 ├── deployments/
-│   ├── ingestion-deployment.yaml # Ingestion service Deployment (TASK-071)
-│   └── processor-deployment.yaml # Processor service Deployment (TASK-072)
+│   ├── ingestion-deployment.yaml  # Ingestion service Deployment (TASK-071)
+│   ├── processor-deployment.yaml  # Processor service Deployment (TASK-072)
+│   └── raw-writer-deployment.yaml # Raw Writer service Deployment (TASK-073)
 └── README.md                   # This file
 ```
 
@@ -59,12 +60,13 @@ After building service images locally, load them into the kind cluster so pods c
 ```bash
 bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev
 bash scripts/kind-cluster.sh load ai-data-platform/processor:dev
+bash scripts/kind-cluster.sh load ai-data-platform/raw-writer:dev
 ```
 
 Multiple images can be loaded at once:
 
 ```bash
-bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev
+bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev
 ```
 
 ## Manual Commands
@@ -118,6 +120,16 @@ kubectl logs deployment/processor -n ai-data-platform
 ```
 
 The processor Deployment consumes raw events from Kafka, validates and normalizes them, applies deduplication, and publishes valid records to the validated topic. Invalid records are routed to the invalid topic with diagnostic context. Like ingestion, it does not expose inbound ports — it is a Kafka consumer/producer only. Configuration uses `APP_KAFKA_GROUP_ID` to identify the consumer group.
+
+### Raw Writer (TASK-073)
+
+```bash
+kubectl apply -f kubernetes/deployments/raw-writer-deployment.yaml
+kubectl get deployment raw-writer -n ai-data-platform
+kubectl logs deployment/raw-writer -n ai-data-platform
+```
+
+The raw writer Deployment consumes raw events from Kafka and persists them to Bronze (MinIO) as Parquet files. It implements at-least-once delivery with idempotent processing. MinIO credentials (`APP_MINIO_ACCESS_KEY`, `APP_MINIO_SECRET_KEY`) are sourced from a Secret (optional until TASK-078 creates it).
 
 ## Port Mappings
 
