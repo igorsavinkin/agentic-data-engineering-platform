@@ -25,6 +25,10 @@ spec:
           image: "{{ .Values.images.warehouseLoader.repository }}:{{ .Values.images.warehouseLoader.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command: ["python", "-m", "services.warehouse-loader.runner"]
+          ports:
+            - containerPort: {{ .Values.prometheus.metricsPort }}
+              protocol: TCP
+              name: metrics
           env:
             - name: APP_ENVIRONMENT
               valueFrom:

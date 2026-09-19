@@ -383,3 +383,27 @@ networkPolicy:
           port: 53
         - protocol: TCP
           port: 53
+
+# ---------------------------------------------------------------------------
+# Prometheus — metrics collection and scraping (TASK-084)
+# ---------------------------------------------------------------------------
+# Disabled by default for local kind development. Enable to deploy
+# Prometheus for scraping platform service metrics.
+prometheus:
+  enabled: false
+  image:
+    repository: prom/prometheus
+    tag: "v3.1.0"
+  # How often Prometheus scrapes targets.
+  scrapeInterval: 15s
+  # How long to retain metrics data.
+  retention: 7d
+  # Port background services expose metrics on.
+  metricsPort: 9100
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

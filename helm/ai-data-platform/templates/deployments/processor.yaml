@@ -25,6 +25,10 @@ spec:
           image: "{{ .Values.images.processor.repository }}:{{ .Values.images.processor.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command: ["python", "-m", "services.processor"]
+          ports:
+            - containerPort: {{ .Values.prometheus.metricsPort }}
+              protocol: TCP
+              name: metrics
           env:
             - name: APP_ENVIRONMENT
               valueFrom:
