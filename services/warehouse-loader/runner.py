@@ -16,9 +16,9 @@ import os
 import signal
 import time
 
-from libs.common.config import MinIOSettings
-from libs.common.minio_storage import MinIOStorage
+from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.parquet_reader.reader import PartitionFilter
+from libs.partitioning import LakeLayer
 from warehouse.loader.batch_loader import WarehouseLoader
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def run() -> None:
 
     while not _shutdown:
         try:
-            result = loader.load_from_lake(PartitionFilter())
+            result = loader.load_from_lake(PartitionFilter(layer=LakeLayer.SILVER))
             logger.info(
                 "Load cycle complete: read=%d loaded=%d failed=%d",
                 result.rows_read,
