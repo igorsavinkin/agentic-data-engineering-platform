@@ -10,8 +10,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import TIMESTAMP, BigInteger, ForeignKey, Integer, Numeric, Text
+from sqlalchemy import TIMESTAMP, BigInteger, Float, ForeignKey, Integer, Numeric, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
 
 
 class Base(DeclarativeBase):
@@ -86,3 +87,36 @@ class ProductObservation(Base):
     event_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
 
     source_product: Mapped[SourceProduct] = relationship(back_populates="observations")
+
+
+class PipelineRun(Base):
+    """Metadata about each pipeline execution that loads data into the warehouse."""
+
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    run_type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True))
+    records_loaded: Mapped[Optional[int]] = mapped_column(BigInteger)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
+
+
+class IngestionHealthResult(Base):
+    """Periodic source health assessments from the ingestion_health DAG."""
+
+    __tablename__ = "ingestion_health_results"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_name: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    freshness_state: Mapped[str] = mapped_column(Text, nullable=False)
+    reasons: Mapped[Optional[dict]] = mapped_column(JSON)
+    signals: Mapped[Optional[dict]] = mapped_column(JSON)
+    freshness_age_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    assessed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    logical_date: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    replay_key: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
