@@ -24,7 +24,7 @@ from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaCons
 from libs.common.kafka_errors import DeadLetterSink, RetryPolicy
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.lake_writer import SilverWriter
-from libs.observability.kafka_metrics import KafkaMetric, LagSample
+from libs.observability.kafka_metrics import LagSample
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.prometheus_exporter import create_prometheus_registry
 
@@ -57,7 +57,7 @@ def _build_dead_letter_sink() -> DeadLetterSink:
 
 
 def _sample_lag(consumer: KafkaConsumer) -> None:
-    """Sample consumer lag and update metrics."""
+    """Sample consumer lag and update metrics, clearing stale samples."""
     try:
         lag_records = consumer.sample_lag(timeout=2.0)
         samples = [
@@ -67,8 +67,8 @@ def _sample_lag(consumer: KafkaConsumer) -> None:
         ]
         consumer.metrics.update_lag(samples)
     except Exception:
-        consumer.metrics.increment(KafkaMetric.LAG_ERRORS)
         logger.debug("lag_sample_failed", exc_info=True)
+    consumer.metrics.clear_stale_lag(max_age_seconds=60.0)
 
 
 def process_message(

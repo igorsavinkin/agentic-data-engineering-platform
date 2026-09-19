@@ -1,5 +1,6 @@
 """Instance-local, bounded Kafka counters for a future Prometheus collector."""
 
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from threading import Lock
@@ -24,6 +25,15 @@ class LagSample:
     topic: str
     partition: int
     lag: int
+    sampled_at: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.sampled_at == 0.0:
+            object.__setattr__(self, "sampled_at", time.monotonic())
+
+    def age_seconds(self) -> float:
+        """Return age of this sample in seconds."""
+        return time.monotonic() - self.sampled_at
 
 
 class KafkaMetrics:
@@ -54,3 +64,10 @@ class KafkaMetrics:
     def lag_snapshot(self) -> list[LagSample]:
         with self._lock:
             return list(self._lag_samples)
+
+    def clear_stale_lag(self, max_age_seconds: float = 60.0) -> int:
+        """Remove lag samples older than max_age_seconds. Returns count removed."""
+        with self._lock:
+            original_count = len(self._lag_samples)
+            self._lag_samples = [s for s in self._lag_samples if s.age_seconds() <= max_age_seconds]
+            return original_count - len(self._lag_samples)
