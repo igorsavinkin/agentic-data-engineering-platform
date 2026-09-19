@@ -13,7 +13,7 @@ scrape_configs:
   - job_name: "ai-data-platform"
     metrics_path: /api/v1/metrics
     static_configs:
-      - targets: ["api:8000"]
+      - targets: ["host.docker.internal:8000"]
         labels:
           service: api
 
@@ -21,8 +21,6 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "ingestion:9100"
-          - "processor:9100"
-          - "raw-writer:9100"
-          - "lake-writer:9100"
-          - "warehouse-loader:9100"
+          - "host.docker.internal:9100"
+        labels:
+          service: background

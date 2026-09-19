@@ -25,6 +25,9 @@ from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaCons
 from libs.common.kafka_errors import KafkaDeadLetterProducer, RetryPolicy
 from libs.common.kafka_producer import KafkaProducerSettings
 from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
+from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.processor_metrics import ProcessorMetrics
+from libs.observability.prometheus_exporter import create_prometheus_registry
 from services.processor.pipeline import ProcessorPipeline
 
 logger = logging.getLogger(__name__)
@@ -67,10 +70,18 @@ def run_consumer() -> None:
     validated_producer = KafkaValidatedOutputProducer(producer_settings)
     invalid_producer = KafkaDeadLetterProducer(producer_settings)
 
+    proc_metrics = ProcessorMetrics()
     pipeline = ProcessorPipeline(
         validated_sink=validated_producer.publish,
         invalid_sink=invalid_producer.publish,
+        metrics=proc_metrics,
     )
+
+    registry, collector = create_prometheus_registry(service_name="processor")
+    collector.register_processor(proc_metrics)
+    metrics_server = MetricsHTTPServer(registry=registry, port=9100)
+    metrics_server.start()
+    logger.info("prometheus_metrics_server_started", extra={"port": 9100})
 
     consumer.subscribe([RAW_TOPIC])
     logger.info(
@@ -93,6 +104,7 @@ def run_consumer() -> None:
     except KeyboardInterrupt:
         logger.info("processor_interrupted")
     finally:
+        metrics_server.stop()
         consumer.close()
         validated_producer.close()
         invalid_producer.close()

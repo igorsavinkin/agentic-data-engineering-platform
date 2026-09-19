@@ -12,6 +12,7 @@ from services.api.config import DatabaseSettings
 from services.api.database import create_db_engine, create_session_factory
 from services.api.dependencies import get_db
 from services.api.errors import register_exception_handlers
+from services.api.routes.v1.metrics import metrics_middleware
 from services.api.routes.v1.router import router as v1_router
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,10 @@ def create_app(
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+
+    @app.middleware("http")
+    async def _prometheus_middleware(request, call_next):
+        return await metrics_middleware(request, call_next)
 
     app.dependency_overrides[get_db] = _db_session
 
