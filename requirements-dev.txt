@@ -7,3 +7,4 @@ mypy>=1.11
 psycopg2-binary>=2.9
 alembic>=1.13
 sqlalchemy>=2.0
+pyyaml>=6.0

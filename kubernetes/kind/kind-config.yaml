@@ -1,0 +1,41 @@
+# kind cluster configuration for local Kubernetes development (Milestone 8).
+#
+# Single-node cluster with extra port mappings for Kafka (9092),
+# MinIO (9000/9001), and the FastAPI service (8000). These mirror the
+# Docker Compose host ports so services reachable on localhost inside
+# the cluster behave consistently with docker-compose.yml.
+#
+# Usage:
+#   kind create cluster --name ai-data-platform --config kubernetes/kind/kind-config.yaml
+#
+# Or use the wrapper script:
+#   bash scripts/kind-cluster.sh create
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.0
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # Kafka — matches docker-compose KAFKA_HOST_PORT
+      - containerPort: 30092
+        hostPort: 9092
+        protocol: TCP
+      # MinIO API — matches MINIO_HOST_PORT
+      - containerPort: 30090
+        hostPort: 9000
+        protocol: TCP
+      # MinIO Console — matches MINIO_CONSOLE_HOST_PORT
+      - containerPort: 30091
+        hostPort: 9001
+        protocol: TCP
+      # FastAPI — matches API service
+      - containerPort: 30080
+        hostPort: 8000
+        protocol: TCP
