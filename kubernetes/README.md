@@ -17,7 +17,10 @@ kubernetes/
 │   ├── lake-writer-deployment.yaml # Lake Writer service Deployment (TASK-074)
 │   ├── warehouse-loader-deployment.yaml # Warehouse Loader Deployment (TASK-075)
 │   ├── api-deployment.yaml         # API service Deployment (TASK-076)
-│   └── api-service.yaml            # API service ClusterIP Service (TASK-076)
+│   ├── api-service.yaml            # API service ClusterIP Service (TASK-076)
+│   ├── kafka-deployment.yaml       # Kafka broker Deployment (TASK-077)
+│   ├── kafka-service.yaml          # Kafka NodePort Service (TASK-077)
+│   └── kafka-topics-job.yaml       # Kafka topic creation Job (TASK-077)
 └── README.md                   # This file
 ```
 
@@ -179,6 +182,39 @@ To access the API locally via port-forward:
 ```bash
 kubectl port-forward svc/api 8000:8000 -n ai-data-platform
 curl http://localhost:8000/api/v1/health
+```
+
+### Kafka (TASK-077)
+
+```bash
+kubectl apply -f kubernetes/deployments/kafka-deployment.yaml
+kubectl apply -f kubernetes/deployments/kafka-service.yaml
+kubectl get deployment kafka -n ai-data-platform
+kubectl get service kafka -n ai-data-platform
+kubectl logs deployment/kafka -n ai-data-platform
+```
+
+Kafka runs in single-broker KRaft mode (combined broker + controller, no ZooKeeper) using the `apache/kafka:4.3.1` image. The NodePort Service exposes port 29092 for in-cluster pod-to-pod communication via `kafka:29092`, and maps host port 9092 via the kind port mapping (host 9092 → node 30092 → pod 9092 via PLAINTEXT_HOST listener).
+
+After Kafka is ready, create the required topics:
+
+```bash
+kubectl apply -f kubernetes/deployments/kafka-topics-job.yaml
+kubectl logs job/kafka-topics-setup -n ai-data-platform
+```
+
+The topics Job creates all five platform topics with correct partition counts and retention:
+- `products.raw.v1` (3 partitions, 7-day retention)
+- `products.validated.v1` (3 partitions, 7-day retention)
+- `products.invalid.v1` (1 partition, 7-day retention)
+- `pipeline.events.v1` (1 partition, 3-day retention)
+- `data-quality.events.v1` (1 partition, 3-day retention)
+
+To diagnose Kafka from inside the cluster:
+
+```bash
+kubectl exec deployment/kafka -n ai-data-platform -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list
+kubectl exec deployment/kafka -n ai-data-platform -- /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092
 ```
 
 ## Port Mappings
