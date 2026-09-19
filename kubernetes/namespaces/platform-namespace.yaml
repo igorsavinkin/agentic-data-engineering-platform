@@ -1,0 +1,22 @@
+# Platform namespace for the AI Data Platform.
+#
+# All platform workloads (ingestion, processor, raw-writer, lake-writer,
+# warehouse-loader, api, agent) run in this namespace. Infrastructure
+# components (Kafka, MinIO, PostgreSQL) share the same namespace for
+# local kind development; production (EKS) may split them later.
+#
+# Labels follow kubernetes.io conventions and add platform-specific
+# metadata for consistent selector matching in later tasks.
+#
+# Apply:
+#   kubectl apply -f kubernetes/namespaces/platform-namespace.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-data-platform
+  labels:
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/managed-by: kubectl
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
