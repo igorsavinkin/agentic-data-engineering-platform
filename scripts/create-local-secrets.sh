@@ -25,7 +25,7 @@ echo "Creating local development Secrets in namespace '${NAMESPACE}'..."
 kubectl create secret generic minio-credentials \
   --namespace "${NAMESPACE}" \
   --from-literal=minio-access-key=minioadmin \
-  --from-literal=minio-secret-key=minioadmin \
+  --from-literal=minio-secret-key=minioadmin-local \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "  Created minio-credentials"

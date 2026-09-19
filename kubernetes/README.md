@@ -165,7 +165,7 @@ Or create each Secret manually:
 kubectl create secret generic minio-credentials \
   --namespace ai-data-platform \
   --from-literal=minio-access-key=minioadmin \
-  --from-literal=minio-secret-key=minioadmin
+  --from-literal=minio-secret-key=minioadmin-local
 
 kubectl create secret generic database-credentials \
   --namespace ai-data-platform \
