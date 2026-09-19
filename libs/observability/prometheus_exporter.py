@@ -82,6 +82,7 @@ class PlatformMetricsCollector:
     def __init__(self, service_name: str = "platform") -> None:
         self._service = service_name
         self._kafka_sources: list[Callable[[], dict[str, int]]] = []
+        self._kafka_lag_sources: list[Callable[[], list]] = []
         self._processor_sources: list[Callable[[], dict]] = []
         self._source_sources: list[Callable[[], dict]] = []
 
@@ -96,10 +97,12 @@ class PlatformMetricsCollector:
         metrics.extend(self._collect_source_counters())
         metrics.extend(self._collect_source_latency())
         metrics.extend(self._collect_source_freshness())
+        metrics.extend(self._collect_kafka_lag())
         return metrics
 
     def register_kafka(self, kafka_metrics: KafkaMetrics) -> None:
         self._kafka_sources.append(kafka_metrics.snapshot)
+        self._kafka_lag_sources.append(kafka_metrics.lag_snapshot)
 
     def register_processor(self, processor_metrics: ProcessorMetrics) -> None:
         self._processor_sources.append(processor_metrics.snapshot)
@@ -194,6 +197,21 @@ class PlatformMetricsCollector:
                 last_fetch = datetime.fromisoformat(last_fetch_iso)
                 age = (datetime.now(timezone.utc) - last_fetch).total_seconds()
                 family.add_metric([self._service, source], max(age, 0.0))
+        return [family]
+
+    def _collect_kafka_lag(self) -> list[GaugeMetricFamily]:
+        family = GaugeMetricFamily(
+            "kafka_consumer_lag",
+            "Consumer group lag by topic and partition.",
+            labels=["service", "topic", "partition"],
+        )
+        for lag_fn in self._kafka_lag_sources:
+            samples = lag_fn()
+            for sample in samples:
+                family.add_metric(
+                    [self._service, sample.topic, str(sample.partition)],
+                    sample.lag,
+                )
         return [family]
 
 

@@ -52,6 +52,7 @@ Access the Prometheus UI at http://localhost:9090.
 | `source_partial_failures_total` | Counter | SourceMetrics |
 | `processor_events_duplicate_total` | Counter | ProcessorMetrics |
 | `processor_events_failed_total` | Counter | ProcessorMetrics |
+| `kafka_consumer_lag` | Gauge | KafkaMetrics |
 
 All metrics carry a `service` label. Source metrics also carry a `source` label.
 
@@ -162,3 +163,66 @@ The `data-quality.json` dashboard focuses on data-quality signals: validation ou
 | Source Partial Failures & Retries | timeseries | `source_partial_failures_total`, `source_retry_attempts_total` |
 | Records Collected vs Emitted | timeseries | `source_records_collected_total`, `source_records_emitted_total` |
 | Source Fetch Failure Rate | stat | `source_fetch_failure_total` |
+
+## Kafka & Processing Dashboard (TASK-088)
+
+The `kafka-processing.json` dashboard focuses on Kafka consumer throughput, lag indicators, error rates, and processing latency.
+
+### Panels
+
+| Panel | Type | Key metrics |
+|-------|------|-------------|
+| Consumer Throughput | timeseries | `kafka_events_consumed_total`, `kafka_events_processed_total` |
+| Consumer Lag Indicator | timeseries | `kafka_consumer_lag` |
+| Kafka Error Rates | timeseries | `kafka_consumer_errors_total`, `kafka_processing_errors_total` |
+| Dead Letter Queue Rate | timeseries | `kafka_dead_letter_events_total` |
+| Invalid Event Rate | timeseries | `events_invalid_total` |
+| Lag Query Errors | stat | `kafka_lag_errors_total` |
+| Processor Throughput | timeseries | `processor_events_processed_total`, `processor_events_valid_total`, `processor_events_invalid_total` |
+| Processor Latency (avg) | timeseries | `processor_processing_seconds` (summary: sum/count) |
+| Processor Batch Size (avg) | timeseries | `processor_batch_records_total`, `processor_batches_total` |
+| Ingestion Rate | timeseries | `ingestion_events_total` |
+| Ingestion Errors | stat | `ingestion_errors_total` |
+| Processor Pipeline Health | gauge | `processor_events_valid_total` / `processor_events_processed_total` |
+
+### Consumer Lag Metric
+
+The `kafka_consumer_lag` gauge reports per-topic, per-partition consumer lag, sampled periodically by each consumer service (processor, raw-writer, lake-writer). Labels: `service`, `topic`, `partition`.
+
+Lag is sampled every 50 consumer loop iterations via `KafkaConsumer.sample_lag()` and stored in `KafkaMetrics` for Prometheus scraping.
+
+### Backlog Test Procedure
+
+This procedure demonstrates the lag metric responding to a controlled backlog and subsequent recovery.
+
+**Prerequisites**: Platform infrastructure running with Docker Compose (`docker compose up -d kafka prometheus grafana`), Grafana accessible at http://localhost:3000.
+
+**Local development (Python processes):**
+
+1. **Baseline**: Open the "Kafka & Processing" dashboard in Grafana. Verify the "Consumer Lag Indicator" panel shows near-zero lag across all partitions.
+
+2. **Start producer**: Run the ingestion service to produce test events:
+   ```bash
+   python -m services.ingestion
+   ```
+
+3. **Create backlog**: Start the processor, then stop it (Ctrl+C) to allow messages to accumulate on `products.raw.v1`. Alternatively, do not start the processor at all while the ingestion service runs. Wait 2-3 minutes for lag to build.
+
+4. **Observe lag increase**: The "Consumer Lag Indicator" panel should show rising `kafka_consumer_lag` values for the `products.raw.v1` topic. The "Consumer Throughput" panel will show consumption dropping to zero while production continues.
+
+5. **Recover**: Restart the processor:
+   ```bash
+   python -m services.processor
+   ```
+   The processor will consume the backlog. Watch the lag panel decrease back toward zero as the processor catches up.
+
+6. **Verify recovery**: Once lag returns to near-zero, confirm the "Consumer Throughput" panel shows consumption rate matching production rate again.
+
+**Kubernetes:**
+
+1. Scale down the processor deployment: `kubectl scale deployment processor --replicas=0 -n ai-data-platform`
+2. Observe lag increase in Grafana
+3. Scale back up: `kubectl scale deployment processor --replicas=1 -n ai-data-platform`
+4. Observe lag decrease back to baseline
+
+**Expected outcome**: Lag increases while processor is stopped, decreases after restart, returns to baseline. This validates the end-to-end lag metric pipeline: `KafkaConsumer.sample_lag()` → `KafkaMetrics.update_lag()` → Prometheus scrape → Grafana panel.
