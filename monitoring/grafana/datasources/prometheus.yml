@@ -1,7 +1,7 @@
 # Grafana datasource provisioning for local development (TASK-085).
 #
-# Prometheus is the default (and only) datasource. The URL points to the
-# Prometheus container on the shared Docker Compose network.
+# Prometheus is the default datasource for metrics. Jaeger is available
+# for distributed trace viewing (TASK-091).
 
 apiVersion: 1
 
@@ -12,4 +12,10 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+    editable: false
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
     editable: false

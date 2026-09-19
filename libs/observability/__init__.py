@@ -24,7 +24,10 @@ from libs.observability.health_persistence import (
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.otel_config import (
     OTelSettings,
+    extract_trace_context,
+    get_current_trace_id,
     get_tracer,
+    inject_trace_context,
     safe_attributes,
     setup_opentelemetry,
     truncate_attribute,
@@ -62,7 +65,10 @@ __all__ = [
     "SourceMetrics",
     "SourceObservation",
     "create_prometheus_registry",
+    "extract_trace_context",
+    "get_current_trace_id",
     "get_tracer",
+    "inject_trace_context",
     "safe_attributes",
     "setup_opentelemetry",
     "truncate_attribute",

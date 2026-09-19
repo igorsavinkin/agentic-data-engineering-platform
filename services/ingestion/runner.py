@@ -24,9 +24,16 @@ from libs.common.kafka_producer import (
 )
 from libs.event_contracts import ProductObservationEvent
 from libs.observability.kafka_metrics import KafkaMetric
+from libs.observability.otel_config import (
+    get_current_trace_id,
+    get_tracer,
+    inject_trace_context,
+    safe_attributes,
+)
 from libs.observability.source_metrics import SourceMetrics
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 
 @dataclass
@@ -349,43 +356,60 @@ class IngestionRunner:
         DeliveryReceipt | None
             Receipt on success, None on serialization/delivery failure.
         """
-        try:
-            receipt = self._producer.publish(event)
-            logger.debug(
-                "event_published",
-                extra={
-                    "operation": "publish",
-                    "source": source_name,
-                    "event_id": event.event_id,
-                    "partition": receipt.partition,
-                    "offset": receipt.offset,
-                },
+        with tracer.start_as_current_span("ingestion.publish") as span:
+            span.set_attributes(
+                safe_attributes(
+                    {
+                        "source": source_name,
+                        "event_id": event.event_id,
+                    }
+                )
             )
-            return receipt
+            try:
+                carrier: dict[str, bytes] = {}
+                inject_trace_context(carrier)
+                kafka_headers = [(k, v) for k, v in carrier.items()] or None
 
-        except EventSerializationError as exc:
-            logger.error(
-                "event_serialization_failed",
-                extra={
-                    "operation": "serialize",
-                    "source": source_name,
-                    "event_id": event.event_id,
-                    "error": str(exc),
-                },
-            )
-            return None
+                receipt = self._producer.publish(event, headers=kafka_headers)
+                trace_id = get_current_trace_id()
+                logger.debug(
+                    "event_published",
+                    extra={
+                        "operation": "publish",
+                        "source": source_name,
+                        "event_id": event.event_id,
+                        "partition": receipt.partition,
+                        "offset": receipt.offset,
+                        "trace_id": trace_id,
+                    },
+                )
+                return receipt
 
-        except PublishError as exc:
-            logger.error(
-                "event_publish_failed",
-                extra={
-                    "operation": "publish",
-                    "source": source_name,
-                    "event_id": event.event_id,
-                    "error": str(exc),
-                },
-            )
-            return None
+            except EventSerializationError as exc:
+                span.record_exception(exc)
+                logger.error(
+                    "event_serialization_failed",
+                    extra={
+                        "operation": "serialize",
+                        "source": source_name,
+                        "event_id": event.event_id,
+                        "error": str(exc),
+                    },
+                )
+                return None
+
+            except PublishError as exc:
+                span.record_exception(exc)
+                logger.error(
+                    "event_publish_failed",
+                    extra={
+                        "operation": "publish",
+                        "source": source_name,
+                        "event_id": event.event_id,
+                        "error": str(exc),
+                    },
+                )
+                return None
 
     def stop(self) -> None:
         """Signal the continuous runner to stop after the current cycle."""

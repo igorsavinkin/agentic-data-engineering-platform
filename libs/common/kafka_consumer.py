@@ -80,6 +80,7 @@ class ConsumerMessage:
     partition: int
     offset: int
     raw_value: bytes | None = None
+    headers: dict[str, bytes] | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,14 @@ class KafkaConsumer:
             if value is None:
                 raise MessageDeserializationError("Message value is None")
 
+            raw_headers = msg.headers()
+            headers: dict[str, bytes] | None = None
+            if raw_headers:
+                if isinstance(raw_headers, dict):
+                    headers = {k: v for k, v in raw_headers.items() if isinstance(v, bytes)}
+                else:
+                    headers = {k: v for k, v in raw_headers if isinstance(v, bytes)}
+
             event = deserialize_event(value.decode("utf-8"))
             messages.append(
                 ConsumerMessage(
@@ -227,6 +236,7 @@ class KafkaConsumer:
                     partition=partition,
                     offset=offset,
                     raw_value=value,
+                    headers=headers,
                 )
             )
         except (ValidationError, UnicodeDecodeError, MessageDeserializationError) as exc:

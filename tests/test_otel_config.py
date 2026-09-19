@@ -9,7 +9,10 @@ from libs.observability.otel_config import (
     OTelSettings,
     _NoOpSpan,
     _NoOpTracer,
+    extract_trace_context,
+    get_current_trace_id,
     get_tracer,
+    inject_trace_context,
     safe_attributes,
     setup_opentelemetry,
     truncate_attribute,
@@ -250,3 +253,94 @@ class TestSetupOpenTelemetry:
         ):
             setup_opentelemetry(settings)
             mock_logger.warning.assert_called()
+
+
+class TestInjectTraceContext:
+    def test_inject_without_otel_does_not_raise(self) -> None:
+        carrier: dict[str, bytes] = {}
+        with patch.dict("sys.modules", {"opentelemetry": None}):
+            inject_trace_context(carrier)
+
+    def test_inject_with_otel_populates_carrier(self) -> None:
+        carrier: dict[str, bytes] = {}
+        mock_propagate = MagicMock()
+
+        def fake_inject(headers: dict[str, str], setter: object = None) -> None:
+            headers["traceparent"] = "00-abc123-def456-01"
+
+        mock_propagate.inject.side_effect = fake_inject
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "opentelemetry": MagicMock(
+                    propagate=mock_propagate,
+                    context=MagicMock(),
+                ),
+            },
+        ):
+            inject_trace_context(carrier)
+
+        assert "traceparent" in carrier
+        assert isinstance(carrier["traceparent"], bytes)
+        assert carrier["traceparent"] == b"00-abc123-def456-01"
+
+
+class TestExtractTraceContext:
+    def test_extract_without_otel_returns_none(self) -> None:
+        carrier = {"traceparent": b"00-abc123-def456-01"}
+        with patch.dict("sys.modules", {"opentelemetry": None}):
+            result = extract_trace_context(carrier)
+        assert result is None
+
+    def test_extract_with_otel_calls_propagator(self) -> None:
+        carrier = {"traceparent": b"00-abc123-def456-01"}
+        mock_propagate = MagicMock()
+        mock_ctx = MagicMock()
+        mock_propagate.extract.return_value = mock_ctx
+
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": MagicMock(propagate=mock_propagate)},
+        ):
+            result = extract_trace_context(carrier)
+
+        assert result is mock_ctx
+        mock_propagate.extract.assert_called_once()
+        call_args = mock_propagate.extract.call_args
+        headers_arg = call_args[0][0]
+        assert headers_arg["traceparent"] == "00-abc123-def456-01"
+
+
+class TestGetCurrentTraceId:
+    def test_returns_none_without_otel(self) -> None:
+        with patch.dict("sys.modules", {"opentelemetry": None}):
+            assert get_current_trace_id() is None
+
+    def test_returns_none_without_active_span(self) -> None:
+        mock_span = MagicMock()
+        mock_span.get_span_context.return_value.trace_id = 0
+
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": MagicMock(trace=MagicMock())},
+        ):
+            from opentelemetry import trace
+
+            trace.get_current_span = MagicMock(return_value=mock_span)
+            result = get_current_trace_id()
+        assert result is None
+
+    def test_returns_hex_trace_id(self) -> None:
+        mock_span = MagicMock()
+        mock_span.get_span_context.return_value.trace_id = 0x1234567890ABCDEF1234567890ABCDEF
+
+        mock_trace = MagicMock()
+        mock_trace.get_current_span.return_value = mock_span
+
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": MagicMock(trace=mock_trace)},
+        ):
+            result = get_current_trace_id()
+        assert result == "1234567890abcdef1234567890abcdef"

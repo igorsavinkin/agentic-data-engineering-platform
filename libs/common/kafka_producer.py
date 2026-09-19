@@ -94,7 +94,11 @@ class KafkaEventProducer:
         except (KafkaException, ValueError) as exc:
             raise ConfigurationError("Kafka producer initialization failed") from exc
 
-    def publish(self, event: ProductObservationEvent) -> DeliveryReceipt:
+    def publish(
+        self,
+        event: ProductObservationEvent,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> DeliveryReceipt:
         with self._lock:
             if self._closed:
                 self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
@@ -142,9 +146,15 @@ class KafkaEventProducer:
                     )
 
             try:
-                self._producer.produce(
-                    self._settings.kafka_raw_topic, value=value, key=key, on_delivery=delivered
-                )
+                produce_kwargs: dict = {
+                    "topic": self._settings.kafka_raw_topic,
+                    "value": value,
+                    "key": key,
+                    "on_delivery": delivered,
+                }
+                if headers:
+                    produce_kwargs["headers"] = headers
+                self._producer.produce(**produce_kwargs)
                 # flush serves callbacks. Its return value alone does NOT prove
                 # success: a failed delivery also removes a message from the queue.
                 pending = self._producer.flush(self._settings.kafka_delivery_timeout_ms / 1000 + 1)

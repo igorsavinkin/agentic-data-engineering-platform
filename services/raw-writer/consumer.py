@@ -26,11 +26,19 @@ from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.observability.kafka_metrics import LagSample
 from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
-from libs.observability.otel_config import OTelSettings, setup_opentelemetry
+from libs.observability.otel_config import (
+    OTelSettings,
+    extract_trace_context,
+    get_current_trace_id,
+    get_tracer,
+    safe_attributes,
+    setup_opentelemetry,
+)
 from libs.observability.prometheus_exporter import create_prometheus_registry
 from libs.raw_writer import BronzeWriter
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 RAW_TOPIC = "products.raw.v1"
 
@@ -86,7 +94,23 @@ def process_message(
     Raises ``StorageError`` on write failure so the caller does NOT commit
     the offset.
     """
-    writer.write_event(message.event)
+    parent_ctx = extract_trace_context(message.headers) if message.headers else None
+    with tracer.start_as_current_span("raw-writer.process_message", context=parent_ctx) as span:
+        span.set_attributes(
+            safe_attributes(
+                {
+                    "topic": message.topic,
+                    "partition": message.partition,
+                    "offset": message.offset,
+                }
+            )
+        )
+        trace_id = get_current_trace_id()
+        if trace_id:
+            from libs.observability.logging_config import set_correlation_id
+
+            set_correlation_id(trace_id)
+        writer.write_event(message.event)
 
 
 def run_consumer() -> None:
