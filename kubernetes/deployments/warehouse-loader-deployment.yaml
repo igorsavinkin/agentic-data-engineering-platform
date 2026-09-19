@@ -1,4 +1,4 @@
-# Warehouse Loader Deployment (TASK-075).
+# Warehouse Loader Deployment (TASK-075, updated TASK-078).
 #
 # Runs the warehouse loader service which reads Silver Parquet from MinIO
 # and loads curated data into PostgreSQL with idempotent upserts. Unlike
@@ -7,9 +7,9 @@
 #
 # No inbound Service is created — warehouse loader is a batch-style service
 # that periodically reads from the lake and writes to the warehouse.
-# Configuration is externalized via environment variables. Database and
-# MinIO credentials are sourced from Secrets (created by TASK-078); until
-# then the optional env vars are left unset and the service uses defaults.
+# Shared configuration is sourced from ConfigMaps (platform-config,
+# database-config); credentials from shared Secrets (minio-credentials,
+# database-credentials).
 #
 # This deployment does NOT run Alembic migrations. Schema management is a
 # separate concern.
@@ -43,35 +43,50 @@ spec:
           command: ["python", "-m", "services.warehouse-loader.runner"]
           env:
             - name: APP_ENVIRONMENT
-              value: "production"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
             - name: APP_MINIO_ENDPOINT
-              value: "http://minio:9000"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_MINIO_ENDPOINT
             - name: APP_MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: warehouse-loader-secrets
+                  name: minio-credentials
                   key: minio-access-key
-                  optional: true
             - name: APP_MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: warehouse-loader-secrets
+                  name: minio-credentials
                   key: minio-secret-key
-                  optional: true
             - name: WAREHOUSE_DB_HOST
-              value: "postgresql"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_HOST
             - name: WAREHOUSE_DB_PORT
-              value: "5432"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_PORT
             - name: WAREHOUSE_DB_NAME
-              value: "warehouse"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_NAME
             - name: WAREHOUSE_DB_USER
-              value: "postgres"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_USER
             - name: WAREHOUSE_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: warehouse-loader-secrets
+                  name: database-credentials
                   key: db-password
-                  optional: true
           resources:
             requests:
               cpu: 100m

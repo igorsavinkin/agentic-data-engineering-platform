@@ -1,0 +1,19 @@
+# Platform ConfigMap (TASK-078).
+#
+# Shared infrastructure endpoints used by all application services.
+# These are non-sensitive connection details that pods need to locate
+# Kafka, MinIO, and other platform infrastructure within the cluster.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: platform-config
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: configuration
+data:
+  APP_ENVIRONMENT: "production"
+  APP_KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+  APP_MINIO_ENDPOINT: "http://minio:9000"

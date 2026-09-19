@@ -1,0 +1,33 @@
+# MinIO ClusterIP Service (TASK-078).
+#
+# Provides in-cluster DNS resolution for the MinIO object storage
+# endpoint. Other services (raw-writer, lake-writer, warehouse-loader)
+# reach MinIO at http://minio:9000 via this Service.
+#
+# The actual MinIO Deployment is expected to be provided by the local
+# development environment (Docker Compose or a later task). This
+# Service assumes a pod with label app.kubernetes.io/name: minio
+# exists and listens on port 9000.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: object-storage
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - port: 9000
+      targetPort: 9000
+      protocol: TCP
+      name: api
+    - port: 9001
+      targetPort: 9001
+      protocol: TCP
+      name: console

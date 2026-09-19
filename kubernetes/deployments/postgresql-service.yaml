@@ -1,0 +1,29 @@
+# PostgreSQL ClusterIP Service (TASK-078).
+#
+# Provides in-cluster DNS resolution for the PostgreSQL database.
+# The warehouse-loader and API services connect to postgresql:5432
+# via this Service.
+#
+# The actual PostgreSQL Deployment is expected to be provided by the
+# local development environment (Docker Compose or a later task).
+# This Service assumes a pod with label app.kubernetes.io/name: postgresql
+# exists and listens on port 5432.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgresql
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres

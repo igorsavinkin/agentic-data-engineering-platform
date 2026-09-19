@@ -1,4 +1,4 @@
-# Processor Deployment (TASK-072).
+# Processor Deployment (TASK-072, updated TASK-078).
 #
 # Runs the processor service which consumes raw events from Kafka,
 # validates and normalizes them, applies deduplication, and publishes
@@ -6,8 +6,8 @@
 # the invalid topic with diagnostic context.
 #
 # No inbound Service is created — processor is a Kafka consumer/producer
-# only. Configuration is externalized via environment variables matching
-# the APP_-prefixed Pydantic settings convention.
+# only. Shared configuration is sourced from the platform-config
+# ConfigMap; service-specific settings remain as literal env vars.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -38,9 +38,15 @@ spec:
           command: ["python", "-m", "services.processor"]
           env:
             - name: APP_ENVIRONMENT
-              value: "production"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
             - name: APP_KAFKA_BOOTSTRAP_SERVERS
-              value: "kafka:29092"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_KAFKA_BOOTSTRAP_SERVERS
             - name: APP_KAFKA_GROUP_ID
               value: "processor"
             - name: APP_KAFKA_AUTO_OFFSET_RESET

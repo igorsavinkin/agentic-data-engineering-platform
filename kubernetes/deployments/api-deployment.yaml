@@ -1,3 +1,10 @@
+# API Deployment (TASK-076, updated TASK-078).
+#
+# Runs the FastAPI application providing synchronous HTTP access to
+# serving and analytics data. Shared configuration is sourced from
+# ConfigMaps (platform-config, database-config); the database password
+# from the database-credentials Secret.
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,25 +37,39 @@ spec:
               protocol: TCP
           env:
             - name: APP_ENVIRONMENT
-              value: "production"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_ENVIRONMENT
             - name: APP_API_HOST
               value: "0.0.0.0"
             - name: APP_API_PORT
               value: "8000"
             - name: WAREHOUSE_DB_HOST
-              value: "postgresql"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_HOST
             - name: WAREHOUSE_DB_PORT
-              value: "5432"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_PORT
             - name: WAREHOUSE_DB_NAME
-              value: "warehouse"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_NAME
             - name: WAREHOUSE_DB_USER
-              value: "postgres"
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_USER
             - name: WAREHOUSE_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: api-secrets
+                  name: database-credentials
                   key: db-password
-                  optional: true
           livenessProbe:
             httpGet:
               path: /api/v1/health
