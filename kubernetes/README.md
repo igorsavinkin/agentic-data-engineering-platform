@@ -15,7 +15,9 @@ kubernetes/
 │   ├── processor-deployment.yaml   # Processor service Deployment (TASK-072)
 │   ├── raw-writer-deployment.yaml  # Raw Writer service Deployment (TASK-073)
 │   ├── lake-writer-deployment.yaml # Lake Writer service Deployment (TASK-074)
-│   └── warehouse-loader-deployment.yaml # Warehouse Loader Deployment (TASK-075)
+│   ├── warehouse-loader-deployment.yaml # Warehouse Loader Deployment (TASK-075)
+│   ├── api-deployment.yaml         # API service Deployment (TASK-076)
+│   └── api-service.yaml            # API service ClusterIP Service (TASK-076)
 └── README.md                   # This file
 ```
 
@@ -65,12 +67,13 @@ bash scripts/kind-cluster.sh load ai-data-platform/processor:dev
 bash scripts/kind-cluster.sh load ai-data-platform/raw-writer:dev
 bash scripts/kind-cluster.sh load ai-data-platform/lake-writer:dev
 bash scripts/kind-cluster.sh load ai-data-platform/warehouse-loader:dev
+bash scripts/kind-cluster.sh load ai-data-platform/api:dev
 ```
 
 Multiple images can be loaded at once:
 
 ```bash
-bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev ai-data-platform/lake-writer:dev ai-data-platform/warehouse-loader:dev
+bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev ai-data-platform/lake-writer:dev ai-data-platform/warehouse-loader:dev ai-data-platform/api:dev
 ```
 
 ## Manual Commands
@@ -154,6 +157,29 @@ kubectl logs deployment/warehouse-loader -n ai-data-platform
 ```
 
 The warehouse loader Deployment reads Silver Parquet from MinIO and loads curated data into PostgreSQL with idempotent upserts. Unlike the Kafka-consuming services, it connects to PostgreSQL and object storage only. Database credentials (`WAREHOUSE_DB_PASSWORD`) and MinIO credentials (`APP_MINIO_ACCESS_KEY`, `APP_MINIO_SECRET_KEY`) are sourced from a Secret (optional until TASK-078 creates it). This deployment does not run Alembic migrations.
+
+### API (TASK-076)
+
+```bash
+kubectl apply -f kubernetes/deployments/api-deployment.yaml
+kubectl apply -f kubernetes/deployments/api-service.yaml
+kubectl get deployment api -n ai-data-platform
+kubectl get service api -n ai-data-platform
+kubectl logs deployment/api -n ai-data-platform
+```
+
+The API Deployment runs the FastAPI application providing synchronous HTTP access to serving and analytics data. It is the only service that exposes inbound ports (port 8000) and has a corresponding ClusterIP Service for in-cluster access. Database password (`WAREHOUSE_DB_PASSWORD`) is sourced from a Secret (optional until TASK-078 creates it).
+
+Health and readiness probes target the established endpoints:
+- **Liveness**: `GET /api/v1/health` — always returns 200 when the process is running
+- **Readiness**: `GET /api/v1/ready` — returns 200 only when the database is reachable, 503 otherwise
+
+To access the API locally via port-forward:
+
+```bash
+kubectl port-forward svc/api 8000:8000 -n ai-data-platform
+curl http://localhost:8000/api/v1/health
+```
 
 ## Port Mappings
 
