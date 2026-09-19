@@ -11,9 +11,10 @@ kubernetes/
 ├── namespaces/
 │   └── platform-namespace.yaml # Platform namespace definition
 ├── deployments/
-│   ├── ingestion-deployment.yaml  # Ingestion service Deployment (TASK-071)
-│   ├── processor-deployment.yaml  # Processor service Deployment (TASK-072)
-│   └── raw-writer-deployment.yaml # Raw Writer service Deployment (TASK-073)
+│   ├── ingestion-deployment.yaml   # Ingestion service Deployment (TASK-071)
+│   ├── processor-deployment.yaml   # Processor service Deployment (TASK-072)
+│   ├── raw-writer-deployment.yaml  # Raw Writer service Deployment (TASK-073)
+│   └── lake-writer-deployment.yaml # Lake Writer service Deployment (TASK-074)
 └── README.md                   # This file
 ```
 
@@ -61,12 +62,13 @@ After building service images locally, load them into the kind cluster so pods c
 bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev
 bash scripts/kind-cluster.sh load ai-data-platform/processor:dev
 bash scripts/kind-cluster.sh load ai-data-platform/raw-writer:dev
+bash scripts/kind-cluster.sh load ai-data-platform/lake-writer:dev
 ```
 
 Multiple images can be loaded at once:
 
 ```bash
-bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev
+bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev ai-data-platform/lake-writer:dev
 ```
 
 ## Manual Commands
@@ -130,6 +132,16 @@ kubectl logs deployment/raw-writer -n ai-data-platform
 ```
 
 The raw writer Deployment consumes raw events from Kafka and persists them to Bronze (MinIO) as Parquet files. It implements at-least-once delivery with idempotent processing. MinIO credentials (`APP_MINIO_ACCESS_KEY`, `APP_MINIO_SECRET_KEY`) are sourced from a Secret (optional until TASK-078 creates it).
+
+### Lake Writer (TASK-074)
+
+```bash
+kubectl apply -f kubernetes/deployments/lake-writer-deployment.yaml
+kubectl get deployment lake-writer -n ai-data-platform
+kubectl logs deployment/lake-writer -n ai-data-platform
+```
+
+The lake writer Deployment consumes validated events from Kafka and persists them to Silver (MinIO) as Parquet files. It implements at-least-once delivery with idempotent processing using deterministic S3 keys derived from `event_id`. MinIO credentials (`APP_MINIO_ACCESS_KEY`, `APP_MINIO_SECRET_KEY`) are sourced from a Secret (optional until TASK-078 creates it).
 
 ## Port Mappings
 
