@@ -180,3 +180,43 @@ class PriceStatisticsResponse(BaseModel):
     """Per-source price statistics."""
 
     items: list[PriceStatisticsItemResponse]
+
+
+class PipelineRunResponse(BaseModel):
+    """Single pipeline run with derived overall status."""
+
+    id: int
+    run_type: str
+    status: str
+    overall_status: str
+    started_at: str
+    finished_at: Optional[str] = None
+    records_loaded: Optional[int] = None
+    error_message: Optional[str] = None
+
+
+class PipelineRunListResponse(BaseModel):
+    """Paginated pipeline run list envelope."""
+
+    items: list[PipelineRunResponse]
+    total: int
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+
+
+class SourceHealthResponse(BaseModel):
+    """Latest health assessment for a single source."""
+
+    source_name: str
+    overall_status: str
+    degradation_state: str
+    freshness_state: str
+    freshness_age_seconds: Optional[float] = None
+    assessed_at: str
+    reasons: Optional[dict[str, Any]] = None
+
+
+class SourceHealthListResponse(BaseModel):
+    """Source health overview."""
+
+    items: list[SourceHealthResponse]
