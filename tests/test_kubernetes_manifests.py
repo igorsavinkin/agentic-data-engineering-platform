@@ -104,7 +104,7 @@ class TestIngestionDeployment:
         manifest = _load_yaml(INGESTION_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         env_names = [e["name"] for e in container["env"]]
-        assert "KAFKA_BOOTSTRAP_SERVERS" in env_names
+        assert "APP_KAFKA_BOOTSTRAP_SERVERS" in env_names
 
     def test_ingestion_deployment_no_inbound_ports(self) -> None:
         manifest = _load_yaml(INGESTION_DEPLOYMENT)

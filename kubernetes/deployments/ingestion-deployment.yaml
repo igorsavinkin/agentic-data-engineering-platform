@@ -37,9 +37,11 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "services.ingestion"]
           env:
-            - name: KAFKA_BOOTSTRAP_SERVERS
+            - name: APP_ENVIRONMENT
+              value: "production"
+            - name: APP_KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:29092"
-            - name: KAFKA_RAW_TOPIC
+            - name: APP_KAFKA_RAW_TOPIC
               value: "products.raw.v1"
             - name: INGESTION_INTERVAL_SECONDS
               value: "60"
