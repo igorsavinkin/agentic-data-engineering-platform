@@ -101,3 +101,19 @@ Keep both task-check helpers aligned whenever CI changes.
 
 Run `python scripts/task_workflow.py --help` for the Codex/Qwen workflow runner.
 See [setup, execution and recovery](../docs/AUTOMATED_TASK_WORKFLOW.md).
+
+## Commit milestone task files
+
+Use `scripts/commit_tasks.sh` to stage, commit, and push a batch of new task specifications for a milestone:
+
+```bash
+./scripts/commit_tasks.sh <milestone-num> "<milestone-name>" <first-task> <last-task>
+```
+
+Example:
+
+```bash
+./scripts/commit_tasks.sh 8 "Kubernetes with kind" 070 079
+```
+
+This stages all `ai/tasks/TASK-*.md` files, commits with the message `Milestone 8: Kubernetes with kind: TASKS 070-079`, and pushes to origin.
