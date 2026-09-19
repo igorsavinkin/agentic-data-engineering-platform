@@ -162,3 +162,24 @@ The `data-quality.json` dashboard focuses on data-quality signals: validation ou
 | Source Partial Failures & Retries | timeseries | `source_partial_failures_total`, `source_retry_attempts_total` |
 | Records Collected vs Emitted | timeseries | `source_records_collected_total`, `source_records_emitted_total` |
 | Source Fetch Failure Rate | stat | `source_fetch_failure_total` |
+
+## Kafka & Processing Dashboard (TASK-088)
+
+The `kafka-processing.json` dashboard focuses on Kafka consumer throughput, lag indicators, error rates, and processing latency.
+
+### Panels
+
+| Panel | Type | Key metrics |
+|-------|------|-------------|
+| Consumer Throughput | timeseries | `kafka_events_consumed_total`, `kafka_events_processed_total` |
+| Consumer Lag Indicator | timeseries | consumed rate - processed rate (gap indicator) |
+| Kafka Error Rates | timeseries | `kafka_consumer_errors_total`, `kafka_processing_errors_total` |
+| Dead Letter Queue Rate | timeseries | `kafka_dead_letter_events_total` |
+| Invalid Event Rate | timeseries | `events_invalid_total` |
+| Lag Query Errors | stat | `kafka_lag_errors_total` |
+| Processor Throughput | timeseries | `processor_events_processed_total`, `processor_events_valid_total`, `processor_events_invalid_total` |
+| Processor Latency (avg) | timeseries | `processor_processing_seconds` (summary: sum/count) |
+| Processor Batch Size (avg) | timeseries | `processor_batch_records_total`, `processor_batches_total` |
+| Ingestion Rate | timeseries | `ingestion_events_total` |
+| Ingestion Errors | stat | `ingestion_errors_total` |
+| Processor Pipeline Health | gauge | `processor_events_valid_total` / `processor_events_processed_total` |

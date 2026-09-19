@@ -428,6 +428,7 @@ class TestHelmTemplate:
         ][0]
         assert "platform-overview.json" in cm["data"]
         assert "data-quality.json" in cm["data"]
+        assert "kafka-processing.json" in cm["data"]
         import json
 
         overview = json.loads(cm["data"]["platform-overview.json"])
@@ -437,6 +438,10 @@ class TestHelmTemplate:
         quality = json.loads(cm["data"]["data-quality.json"])
         assert quality["uid"] == "ai-data-platform-data-quality"
         assert len(quality["panels"]) >= 1
+
+        kafka = json.loads(cm["data"]["kafka-processing.json"])
+        assert kafka["uid"] == "ai-data-platform-kafka"
+        assert len(kafka["panels"]) >= 1
 
     def test_grafana_deployment_mounts_dashboard_volume(self) -> None:
         docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
