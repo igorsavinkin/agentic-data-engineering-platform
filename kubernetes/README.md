@@ -305,6 +305,24 @@ kubectl exec deployment/kafka -n ai-data-platform -- /opt/kafka/bin/kafka-topics
 kubectl exec deployment/kafka -n ai-data-platform -- /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092
 ```
 
+## Health Probes (TASK-079)
+
+All deployments include liveness and readiness probes to detect failures and control traffic routing:
+
+| Service | Liveness | Readiness |
+|---------|----------|-----------|
+| api | HTTP GET `/api/v1/health:8000` | HTTP GET `/api/v1/ready:8000` |
+| kafka | TCP socket `:29092` | TCP socket `:29092` |
+| ingestion | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| processor | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| raw-writer | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| lake-writer | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| warehouse-loader | exec (PID 1 check) | exec (PostgreSQL TCP connectivity) |
+
+Worker services (ingestion, processor, raw-writer, lake-writer) use exec probes that verify Kafka broker reachability as a readiness indicator. The warehouse-loader checks PostgreSQL reachability instead, since it does not consume Kafka.
+
+All deployments have CPU and memory requests/limits set for local development. See `docs/kubernetes-troubleshooting.md` for diagnosing probe failures, OOMKilled events, and other common issues.
+
 ## Applying All Manifests
 
 To deploy the full platform in the correct order:
@@ -348,6 +366,8 @@ The kind config maps host ports to NodePort services inside the cluster, mirrori
 | 8000 | 30080 | FastAPI |
 
 ## Troubleshooting
+
+For detailed diagnosis and recovery of CrashLoopBackOff, ImagePullBackOff, OOMKilled, readiness failures, and missing configuration, see [`docs/kubernetes-troubleshooting.md`](../docs/kubernetes-troubleshooting.md).
 
 ```bash
 # Check kind is installed

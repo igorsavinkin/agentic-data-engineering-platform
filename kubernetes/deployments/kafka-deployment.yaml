@@ -61,6 +61,16 @@ spec:
               value: "604800000"
             - name: KAFKA_HEAP_OPTS
               value: "-Xmx512M -Xms256M"
+          livenessProbe:
+            tcpSocket:
+              port: 29092
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: 29092
+            initialDelaySeconds: 15
+            periodSeconds: 10
           resources:
             requests:
               cpu: 200m
