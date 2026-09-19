@@ -1,19 +1,44 @@
-# Default values for ai-data-platform.
-# Environment-specific overrides live in values-local.yaml / values-production.yaml.
+# Default values for ai-data-platform Helm chart.
+#
+# This file contains the complete set of configuration knobs for every
+# component in the platform.  Environment-specific overrides belong in
+# values-local.yaml (development / kind) or values-production.yaml.
+#
+# Structure overview
+# ------------------
+#   global           – namespace, image pull policy, cross-cutting settings
+#   images           – container image repository and tag per component
+#   platform         – ConfigMap: platform-config (APP_* env vars)
+#   database         – ConfigMap: database-config (WAREHOUSE_DB_* env vars)
+#   secrets          – base64-encoded local-dev placeholders (never real creds)
+#   <component>      – per-component: replicas, resources, probes, app config
+#   minio/postgresql – infrastructure Service definitions (no Deployment)
+#   ingress          – Ingress resource for the API (disabled by default)
+#   hpa              – HorizontalPodAutoscaler for the API (disabled by default)
+#   networkPolicy    – NetworkPolicy for the platform namespace (disabled by default)
 
+# ---------------------------------------------------------------------------
+# Global settings
+# ---------------------------------------------------------------------------
 global:
+  # Namespace where all resources are created.
   namespace: ai-data-platform
+  # imagePullPolicy applied to every container. Use "Always" with a registry
+  # and "IfNotPresent" for local kind development.
   imagePullPolicy: IfNotPresent
 
+# Override the chart name or the full release name.
 nameOverride: ""
 fullnameOverride: ""
 
-# -- Common labels applied to every resource
+# Extra labels merged into every resource's metadata.labels.
 commonLabels: {}
 
 # ---------------------------------------------------------------------------
-# Images
+# Container images
 # ---------------------------------------------------------------------------
+# Each component specifies a repository and tag. For kind development the
+# images are loaded locally with `kind load docker-image`.
 images:
   ingestion:
     repository: ai-data-platform/ingestion
@@ -38,16 +63,22 @@ images:
     tag: "4.3.1"
 
 # ---------------------------------------------------------------------------
-# Platform configuration (ConfigMap: platform-config)
+# Platform configuration — rendered into ConfigMap "platform-config"
 # ---------------------------------------------------------------------------
+# These values become APP_* environment variables consumed by all services.
 platform:
+  # APP_ENVIRONMENT — informational label used by services at startup.
   environment: production
+  # APP_KAFKA_BOOTSTRAP_SERVERS — in-cluster Kafka address.
   kafkaBootstrapServers: "kafka:29092"
+  # APP_MINIO_ENDPOINT — in-cluster MinIO/S3 address.
   minioEndpoint: "http://minio:9000"
 
 # ---------------------------------------------------------------------------
-# Database configuration (ConfigMap: database-config)
+# Database configuration — rendered into ConfigMap "database-config"
 # ---------------------------------------------------------------------------
+# These values become WAREHOUSE_DB_* environment variables consumed by
+# warehouse-loader and api.
 database:
   host: postgresql
   port: "5432"
@@ -55,23 +86,42 @@ database:
   user: postgres
 
 # ---------------------------------------------------------------------------
-# Secrets — local-dev placeholder values only; never use in production
+# Secrets — base64-encoded local-dev placeholders
 # ---------------------------------------------------------------------------
+# WARNING: These are NOT production credentials. They exist only to let the
+# kind cluster start without manual secret creation. In production, replace
+# with externally managed Secrets (e.g. Sealed Secrets, External Secrets).
 secrets:
   minio:
+    # minio-access-key (base64 of "minioadmin")
     accessKey: bWluaW9hZG1pbg==
+    # minio-secret-key (base64 of "minioadmin-local")
     secretKey: bWluaW9hZG1pbi1sb2NhbA==
   database:
+    # db-password (base64 of "postgres")
     password: cG9zdGdyZXM=
   ingestion:
+    # bestbuy-api-key (base64 of placeholder)
     bestbuyApiKey: cGxhY2Vob2xkZXItcmVwbGFjZS1tZQ==
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Service components
+# ===========================================================================
+# Each component section controls the Deployment for that service:
+#   replicas        — number of pod replicas
+#   resources       — CPU/memory requests and limits
+#   livenessProbe   — liveness probe timing
+#   readinessProbe  — readiness probe timing
+# Plus component-specific APP_* configuration.
+
+# ---------------------------------------------------------------------------
+# Ingestion — source adapter fetch-publish loop (Kafka producer only)
 # ---------------------------------------------------------------------------
 ingestion:
   replicas: 1
+  # APP_KAFKA_RAW_TOPIC — topic to publish raw product observations to.
   rawTopic: products.raw.v1
+  # INGESTION_INTERVAL_SECONDS — seconds between fetch cycles.
   intervalSeconds: 60
   resources:
     requests:
@@ -88,9 +138,14 @@ ingestion:
     periodSeconds: 10
     timeoutSeconds: 5
 
+# ---------------------------------------------------------------------------
+# Processor — Kafka consumer/producer: validate, normalize, deduplicate
+# ---------------------------------------------------------------------------
 processor:
   replicas: 1
+  # APP_KAFKA_GROUP_ID — consumer group for this service.
   groupId: processor
+  # APP_KAFKA_AUTO_OFFSET_RESET — where to start reading on first connect.
   autoOffsetReset: earliest
   resources:
     requests:
@@ -107,6 +162,9 @@ processor:
     periodSeconds: 10
     timeoutSeconds: 5
 
+# ---------------------------------------------------------------------------
+# Raw Writer — Kafka consumer → Bronze Parquet on MinIO
+# ---------------------------------------------------------------------------
 rawWriter:
   replicas: 1
   groupId: raw-writer
@@ -125,6 +183,9 @@ rawWriter:
     periodSeconds: 10
     timeoutSeconds: 5
 
+# ---------------------------------------------------------------------------
+# Lake Writer — Kafka consumer → Silver Parquet on MinIO
+# ---------------------------------------------------------------------------
 lakeWriter:
   replicas: 1
   groupId: lake-writer
@@ -143,6 +204,9 @@ lakeWriter:
     periodSeconds: 10
     timeoutSeconds: 5
 
+# ---------------------------------------------------------------------------
+# Warehouse Loader — batch reader: Gold Parquet → PostgreSQL (idempotent)
+# ---------------------------------------------------------------------------
 warehouseLoader:
   replicas: 1
   resources:
@@ -160,11 +224,18 @@ warehouseLoader:
     periodSeconds: 10
     timeoutSeconds: 5
 
+# ---------------------------------------------------------------------------
+# API — FastAPI serving layer (the only component with inbound HTTP)
+# ---------------------------------------------------------------------------
 api:
   replicas: 1
+  # APP_API_HOST — bind address inside the container.
   host: "0.0.0.0"
+  # APP_API_PORT — container port for the HTTP server.
   port: 8000
   service:
+    # Kubernetes Service type. ClusterIP for in-cluster; use LoadBalancer
+    # or NodePort for external access.
     type: ClusterIP
     port: 8000
   resources:
@@ -181,11 +252,18 @@ api:
     initialDelaySeconds: 5
     periodSeconds: 10
 
+# ---------------------------------------------------------------------------
+# Kafka — single-broker KRaft mode (combined broker + controller)
+# ---------------------------------------------------------------------------
 kafka:
   replicas: 1
+  # KAFKA_NODE_ID — broker identifier in the KRaft quorum.
   nodeId: 1
+  # KAFKA_HEAP_OPTS — JVM heap settings for the Kafka process.
   heapOpts: "-Xmx512M -Xms256M"
   service:
+    # NodePort for local kind development; use ClusterIP in production
+    # with an Ingress or port-forward for external access.
     type: NodePort
     internalPort: 29092
     externalPort: 9092
@@ -203,6 +281,7 @@ kafka:
   readinessProbe:
     initialDelaySeconds: 15
     periodSeconds: 10
+  # Kafka topic creation Job settings.
   topics:
     backoffLimit: 3
     resources:
@@ -213,9 +292,13 @@ kafka:
         cpu: 200m
         memory: 256Mi
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Infrastructure services (no Deployment — external or Compose-managed)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# These Service resources provide in-cluster DNS for infrastructure that
+# is not deployed by this chart (e.g. MinIO and PostgreSQL run via Docker
+# Compose or are provided externally).
+
 minio:
   service:
     type: ClusterIP
@@ -227,14 +310,76 @@ postgresql:
     type: ClusterIP
     port: 5432
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Optional resources — disabled by default, enabled per environment
+# ===========================================================================
+# These resources have explicit values paths so they can be enabled in
+# specific environments (e.g. production) without template forks.
+
 # ---------------------------------------------------------------------------
+# Ingress — external HTTP access to the API service
+# ---------------------------------------------------------------------------
+# Disabled by default for local kind development. Enable with an ingress
+# controller (e.g. ingress-nginx) and configure the host accordingly.
 ingress:
   enabled: false
+  # Ingress class name (e.g. "nginx", "traefik").
+  className: ""
+  # Annotations applied to the Ingress resource.
+  annotations: {}
+  # TLS configuration.
+  tls: []
+  #  - secretName: api-tls
+  #    hosts:
+  #      - api.example.com
+  # Host-based routing rules. The default routes to the API service.
+  hosts:
+    - host: api.local
+      paths:
+        - path: /
+          pathType: Prefix
 
+# ---------------------------------------------------------------------------
+# HorizontalPodAutoscaler — automatic replica scaling for the API
+# ---------------------------------------------------------------------------
+# Disabled by default. Requires a metrics source (e.g. metrics-server).
 hpa:
   enabled: false
+  # Target deployment to scale.
+  targetDeployment: api
+  # Replica bounds.
+  minReplicas: 1
+  maxReplicas: 5
+  # CPU utilization target percentage.
+  targetCPUUtilizationPercentage: 80
+  # Memory utilization target percentage (optional).
+  # targetMemoryUtilizationPercentage: 80
 
+# ---------------------------------------------------------------------------
+# NetworkPolicy — pod-level traffic restrictions
+# ---------------------------------------------------------------------------
+# Disabled by default. Requires a CNI that supports NetworkPolicy
+# (e.g. Calico, Cilium). kind's default CNI (kindnet) has limited support.
 networkPolicy:
   enabled: false
+  # Policy type: which traffic to restrict.
+  policyTypes:
+    - Ingress
+    - Egress
+  # Ingress rules — allow traffic from within the namespace by default.
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: ai-data-platform
+  # Egress rules — allow DNS and intra-namespace traffic by default.
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: ai-data-platform
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -1,0 +1,32 @@
+{{- if .Values.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "ai-data-platform.fullname" . }}-{{ .Values.hpa.targetDeployment }}
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    {{- $ctx := dict "componentLabels" (include "ai-data-platform.componentLabels" (dict "component" .Values.hpa.targetDeployment)) }}
+    {{- include "ai-data-platform.labels" (merge $ctx (dict "Values" .Values "Chart" .Chart "Release" .Release)) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "ai-data-platform.fullname" . }}-{{ .Values.hpa.targetDeployment }}
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+    {{- with .Values.hpa.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+{{- end }}
