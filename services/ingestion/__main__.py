@@ -25,6 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from libs.adapters.best_buy.adapter import BestBuyAdapter
 from libs.adapters.fake_store.adapter import FakeStoreAdapter
 from libs.common.kafka_producer import KafkaEventProducer, KafkaProducerSettings
+from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.prometheus_exporter import create_prometheus_registry
 from services.ingestion.runner import IngestionRunner
 
 logging.basicConfig(
@@ -98,12 +100,22 @@ async def main() -> None:
             max_retries=3,
         )
 
+        # Wire Prometheus metrics
+        registry, collector = create_prometheus_registry(service_name="ingestion")
+        collector.register_kafka(producer.metrics)
+        for src_metrics in runner.source_metrics.values():
+            collector.register_source(src_metrics)
+        metrics_server = MetricsHTTPServer(registry=registry, port=9100)
+        metrics_server.start()
+        logger.info("prometheus_metrics_server_started", extra={"port": 9100})
+
         try:
             await runner.run_continuous()
         except KeyboardInterrupt:
             logger.info("ingestion_shutdown_requested")
             runner.stop()
         finally:
+            metrics_server.stop()
             # Close adapters
             for adapter in adapters:
                 if hasattr(adapter, "close"):

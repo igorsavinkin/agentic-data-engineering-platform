@@ -191,11 +191,36 @@ services:
       retries: 12
       start_period: 30s
 
+  # Prometheus (TASK-084): metrics collection and storage.
+  # Scrapes /metrics from platform services on a 15-second interval.
+  # Configuration is in monitoring/prometheus.yml.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
 volumes:
   kafka_data:
   minio_data:
   postgres_data:
   airflow_logs:
+  prometheus_data:
 
 networks:
   # Fixed name so application services (later tasks) and other Compose

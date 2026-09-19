@@ -23,6 +23,8 @@ from libs.common.config import load_settings
 from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaConsumerSettings
 from libs.common.kafka_errors import DeadLetterSink, RetryPolicy
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
+from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.prometheus_exporter import create_prometheus_registry
 from libs.raw_writer import BronzeWriter
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,12 @@ def run_consumer() -> None:
     consumer.subscribe([RAW_TOPIC])
     logger.info("raw_writer_started", extra={"topic": RAW_TOPIC})
 
+    registry, collector = create_prometheus_registry(service_name="raw-writer")
+    collector.register_kafka(consumer.metrics)
+    metrics_server = MetricsHTTPServer(registry=registry, port=9100)
+    metrics_server.start()
+    logger.info("prometheus_metrics_server_started", extra={"port": 9100})
+
     try:
         while not consumer.is_shutdown_requested():
             processed = consumer.process_next(
@@ -105,6 +113,7 @@ def run_consumer() -> None:
     except KeyboardInterrupt:
         logger.info("raw_writer_interrupted")
     finally:
+        metrics_server.stop()
         consumer.close()
         storage.close()
         logger.info("raw_writer_stopped")

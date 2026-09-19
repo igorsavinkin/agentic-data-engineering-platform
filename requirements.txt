@@ -32,3 +32,6 @@ tenacity>=8.0.0
 fastapi>=0.115,<1
 uvicorn>=0.32,<1
 sqlalchemy>=2.0
+
+# Prometheus metrics export (TASK-084).
+prometheus-client>=0.21,<1

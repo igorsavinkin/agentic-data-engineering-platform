@@ -17,6 +17,8 @@ import signal
 import time
 
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
+from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.prometheus_exporter import create_prometheus_registry
 from libs.parquet_reader.reader import PartitionFilter
 from libs.partitioning import LakeLayer
 from warehouse.loader.batch_loader import WarehouseLoader
@@ -52,22 +54,30 @@ def run() -> None:
 
     logger.info("Warehouse loader started (interval=%ds)", interval)
 
-    while not _shutdown:
-        try:
-            result = loader.load_from_lake(PartitionFilter(layer=LakeLayer.SILVER))
-            logger.info(
-                "Load cycle complete: read=%d loaded=%d failed=%d",
-                result.rows_read,
-                result.rows_loaded,
-                result.rows_failed,
-            )
-        except Exception:
-            logger.exception("Load cycle failed")
+    registry, collector = create_prometheus_registry(service_name="warehouse-loader")
+    metrics_server = MetricsHTTPServer(registry=registry, port=9100)
+    metrics_server.start()
+    logger.info("prometheus_metrics_server_started (port=%d)", 9100)
 
-        for _ in range(interval):
-            if _shutdown:
-                break
-            time.sleep(1)
+    try:
+        while not _shutdown:
+            try:
+                result = loader.load_from_lake(PartitionFilter(layer=LakeLayer.SILVER))
+                logger.info(
+                    "Load cycle complete: read=%d loaded=%d failed=%d",
+                    result.rows_read,
+                    result.rows_loaded,
+                    result.rows_failed,
+                )
+            except Exception:
+                logger.exception("Load cycle failed")
+
+            for _ in range(interval):
+                if _shutdown:
+                    break
+                time.sleep(1)
+    finally:
+        metrics_server.stop()
 
     logger.info("Warehouse loader stopped")
 

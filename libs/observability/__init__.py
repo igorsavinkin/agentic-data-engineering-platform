@@ -21,6 +21,11 @@ from libs.observability.health_persistence import (
     IngestionHealthResultRow,
     IngestionHealthResultWriter,
 )
+from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.prometheus_exporter import (
+    PlatformMetricsCollector,
+    create_prometheus_registry,
+)
 from libs.observability.source_metrics import (
     SourceFreshness,
     SourceMetric,
@@ -36,6 +41,8 @@ __all__ = [
     "IngestionHealthResultReader",
     "IngestionHealthResultRow",
     "IngestionHealthResultWriter",
+    "MetricsHTTPServer",
+    "PlatformMetricsCollector",
     "SourceDegradationState",
     "SourceFreshness",
     "SourceHealthAssessment",
@@ -46,4 +53,5 @@ __all__ = [
     "SourceMetric",
     "SourceMetrics",
     "SourceObservation",
+    "create_prometheus_registry",
 ]

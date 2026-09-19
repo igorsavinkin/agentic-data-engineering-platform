@@ -24,6 +24,8 @@ from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaCons
 from libs.common.kafka_errors import DeadLetterSink, RetryPolicy
 from libs.common.minio_storage import MinIOSettings, MinIOStorage
 from libs.lake_writer import SilverWriter
+from libs.observability.metrics_http_server import MetricsHTTPServer
+from libs.observability.prometheus_exporter import create_prometheus_registry
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,12 @@ def run_consumer() -> None:
     consumer.subscribe([VALIDATED_TOPIC])
     logger.info("lake_writer_started", extra={"topic": VALIDATED_TOPIC})
 
+    registry, collector = create_prometheus_registry(service_name="lake-writer")
+    collector.register_kafka(consumer.metrics)
+    metrics_server = MetricsHTTPServer(registry=registry, port=9100)
+    metrics_server.start()
+    logger.info("prometheus_metrics_server_started", extra={"port": 9100})
+
     try:
         while not consumer.is_shutdown_requested():
             processed = consumer.process_next(
@@ -105,6 +113,7 @@ def run_consumer() -> None:
     except KeyboardInterrupt:
         logger.info("lake_writer_interrupted")
     finally:
+        metrics_server.stop()
         consumer.close()
         storage.close()
         logger.info("lake_writer_stopped")

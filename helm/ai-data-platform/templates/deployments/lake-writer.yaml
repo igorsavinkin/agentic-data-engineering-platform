@@ -25,6 +25,10 @@ spec:
           image: "{{ .Values.images.lakeWriter.repository }}:{{ .Values.images.lakeWriter.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command: ["python", "-m", "services.lake-writer.consumer"]
+          ports:
+            - containerPort: {{ .Values.prometheus.metricsPort }}
+              protocol: TCP
+              name: metrics
           env:
             - name: APP_ENVIRONMENT
               valueFrom:
