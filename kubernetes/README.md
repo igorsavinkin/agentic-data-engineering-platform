@@ -10,6 +10,8 @@ kubernetes/
 │   └── kind-config.yaml       # kind cluster configuration
 ├── namespaces/
 │   └── platform-namespace.yaml # Platform namespace definition
+├── deployments/
+│   └── ingestion-deployment.yaml # Ingestion service Deployment (TASK-071)
 └── README.md                   # This file
 ```
 
@@ -91,6 +93,20 @@ All platform workloads run in the `ai-data-platform` namespace. This keeps them 
 ```bash
 kubectl get all -n ai-data-platform
 ```
+
+## Deployments
+
+Application service deployments live in `deployments/`. Each Deployment targets the `ai-data-platform` namespace and uses consistent `app.kubernetes.io` labels.
+
+### Ingestion (TASK-071)
+
+```bash
+kubectl apply -f kubernetes/deployments/ingestion-deployment.yaml
+kubectl get deployment ingestion -n ai-data-platform
+kubectl logs deployment/ingestion -n ai-data-platform
+```
+
+The ingestion Deployment runs the source adapter fetch-publish loop. It does not expose inbound ports — it is a Kafka producer only. Configuration is externalized via environment variables; `BESTBUY_API_KEY` references a Secret (optional until TASK-078 creates it).
 
 ## Port Mappings
 
