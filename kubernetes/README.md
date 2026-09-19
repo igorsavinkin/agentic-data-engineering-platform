@@ -313,11 +313,11 @@ All deployments include liveness and readiness probes to detect failures and con
 |---------|----------|-----------|
 | api | HTTP GET `/api/v1/health:8000` | HTTP GET `/api/v1/ready:8000` |
 | kafka | TCP socket `:29092` | TCP socket `:29092` |
-| ingestion | exec (Python process check) | exec (Kafka TCP connectivity) |
-| processor | exec (Python process check) | exec (Kafka TCP connectivity) |
-| raw-writer | exec (Python process check) | exec (Kafka TCP connectivity) |
-| lake-writer | exec (Python process check) | exec (Kafka TCP connectivity) |
-| warehouse-loader | exec (Python process check) | exec (PostgreSQL TCP connectivity) |
+| ingestion | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| processor | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| raw-writer | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| lake-writer | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| warehouse-loader | exec (PID 1 check) | exec (PostgreSQL TCP connectivity) |
 
 Worker services (ingestion, processor, raw-writer, lake-writer) use exec probes that verify Kafka broker reachability as a readiness indicator. The warehouse-loader checks PostgreSQL reachability instead, since it does not consume Kafka.
 

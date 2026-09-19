@@ -846,7 +846,7 @@ ALL_DEPLOYMENTS = {
     "kafka": KAFKA_DEPLOYMENT,
 }
 
-KAFKA_CONSUMER_DEPLOYMENTS = {
+KAFKA_DEPENDENT_DEPLOYMENTS = {
     "ingestion": INGESTION_DEPLOYMENT,
     "processor": PROCESSOR_DEPLOYMENT,
     "raw-writer": RAW_WRITER_DEPLOYMENT,
@@ -906,21 +906,21 @@ class TestKafkaDeploymentProbes:
 
 class TestWorkerServiceProbes:
     def test_kafka_consumers_have_exec_liveness(self) -> None:
-        for name, path in KAFKA_CONSUMER_DEPLOYMENTS.items():
+        for name, path in KAFKA_DEPENDENT_DEPLOYMENTS.items():
             manifest = _load_yaml(path)
             container = manifest["spec"]["template"]["spec"]["containers"][0]
             probe = container["livenessProbe"]
             assert "exec" in probe, f"{name} livenessProbe should use exec"
 
     def test_kafka_consumers_have_exec_readiness(self) -> None:
-        for name, path in KAFKA_CONSUMER_DEPLOYMENTS.items():
+        for name, path in KAFKA_DEPENDENT_DEPLOYMENTS.items():
             manifest = _load_yaml(path)
             container = manifest["spec"]["template"]["spec"]["containers"][0]
             probe = container["readinessProbe"]
             assert "exec" in probe, f"{name} readinessProbe should use exec"
 
     def test_kafka_consumer_readiness_checks_kafka_connectivity(self) -> None:
-        for name, path in KAFKA_CONSUMER_DEPLOYMENTS.items():
+        for name, path in KAFKA_DEPENDENT_DEPLOYMENTS.items():
             manifest = _load_yaml(path)
             container = manifest["spec"]["template"]["spec"]["containers"][0]
             probe = container["readinessProbe"]

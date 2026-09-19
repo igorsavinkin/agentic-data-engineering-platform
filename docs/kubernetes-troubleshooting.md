@@ -44,7 +44,7 @@ kubectl describe pod <pod-name> -n ai-data-platform
 
 | Cause | Fix |
 |-------|-----|
-| Image not built | Build the image: `docker build -t ai-data-platform/<service>:dev .` |
+| Image not built | Build the image with your project's Dockerfile and tag it `ai-data-platform/<service>:dev` |
 | Image not loaded into kind | Load it: `bash scripts/kind-cluster.sh load ai-data-platform/<service>:dev` |
 | Wrong image name or tag | Check `image:` field in the deployment manifest |
 | `imagePullPolicy: Never` with no local image | Build and load the image, or change to `IfNotPresent` |
@@ -52,8 +52,8 @@ kubectl describe pod <pod-name> -n ai-data-platform
 **Recovery:**
 
 ```bash
-# Rebuild and reload
-docker build -t ai-data-platform/<service>:dev -f docker/Dockerfile.<service> .
+# Rebuild and reload (use your project's build process)
+docker build -t ai-data-platform/<service>:dev <dockerfile-path>
 bash scripts/kind-cluster.sh load ai-data-platform/<service>:dev
 kubectl rollout restart deployment/<name> -n ai-data-platform
 ```

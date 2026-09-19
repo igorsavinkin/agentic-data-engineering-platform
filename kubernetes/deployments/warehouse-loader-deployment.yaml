@@ -92,7 +92,7 @@ spec:
               command:
                 - python
                 - "-c"
-                - "import os; os.getpid()"
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: 10
             periodSeconds: 15
           readinessProbe:
@@ -103,6 +103,7 @@ spec:
                 - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('postgresql',5432)); s.close()"
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
           resources:
             requests:
               cpu: 100m
