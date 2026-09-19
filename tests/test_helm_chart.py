@@ -427,11 +427,16 @@ class TestHelmTemplate:
             if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "grafana-dashboards"
         ][0]
         assert "platform-overview.json" in cm["data"]
+        assert "data-quality.json" in cm["data"]
         import json
 
-        dashboard = json.loads(cm["data"]["platform-overview.json"])
-        assert dashboard["uid"] == "ai-data-platform-overview"
-        assert len(dashboard["panels"]) >= 1
+        overview = json.loads(cm["data"]["platform-overview.json"])
+        assert overview["uid"] == "ai-data-platform-overview"
+        assert len(overview["panels"]) >= 1
+
+        quality = json.loads(cm["data"]["data-quality.json"])
+        assert quality["uid"] == "ai-data-platform-data-quality"
+        assert len(quality["panels"]) >= 1
 
     def test_grafana_deployment_mounts_dashboard_volume(self) -> None:
         docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
