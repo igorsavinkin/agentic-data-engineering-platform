@@ -156,7 +156,7 @@ def inject_trace_context(carrier: dict[str, bytes]) -> None:
         from opentelemetry import propagate
 
         headers: dict[str, str] = {}
-        propagate.inject(headers, setter=_DictSetter())
+        propagate.inject(headers)
         for key, value in headers.items():
             carrier[key] = value.encode("utf-8")
     except ImportError:
@@ -179,7 +179,7 @@ def extract_trace_context(carrier: dict[str, bytes]) -> Any:
                 headers[key] = value.decode("utf-8")
             else:
                 headers[key] = str(value)
-        return propagate.extract(headers, getter=_DictGetter())
+        return propagate.extract(headers)
     except ImportError:
         logger.debug("opentelemetry_not_installed_for_extraction")
         return None
@@ -196,23 +196,6 @@ def get_current_trace_id() -> str | None:
         return None
     except ImportError:
         return None
-
-
-class _DictSetter:
-    """Setter for injecting trace context into a dict."""
-
-    def set(self, carrier: dict[str, str], key: str, value: str) -> None:
-        carrier[key] = value
-
-
-class _DictGetter:
-    """Getter for extracting trace context from a dict."""
-
-    def get(self, carrier: dict[str, str], key: str) -> list[str]:
-        value = carrier.get(key)
-        if value is None:
-            return []
-        return [value]
 
 
 class _NoOpTracer:
