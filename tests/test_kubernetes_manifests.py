@@ -341,3 +341,112 @@ class TestWarehouseLoaderDeployment:
         manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert container["command"] == ["python", "-m", "services.warehouse-loader.runner"]
+
+
+API_DEPLOYMENT = REPO_ROOT / "kubernetes" / "deployments" / "api-deployment.yaml"
+API_SERVICE = REPO_ROOT / "kubernetes" / "deployments" / "api-service.yaml"
+
+
+class TestAPIDeployment:
+    def test_api_deployment_exists(self) -> None:
+        assert API_DEPLOYMENT.exists(), f"api deployment not found at {API_DEPLOYMENT}"
+
+    def test_api_deployment_is_deployment_resource(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "Deployment"
+
+    def test_api_deployment_namespace(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_api_deployment_labels(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "api"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_api_deployment_selector_matches_template(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_api_deployment_has_db_env(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = [e["name"] for e in container["env"]]
+        assert "WAREHOUSE_DB_HOST" in env_names
+        assert "WAREHOUSE_DB_PORT" in env_names
+        assert "WAREHOUSE_DB_NAME" in env_names
+
+    def test_api_deployment_exposes_port(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "ports" in container
+        ports = container["ports"]
+        assert any(p["containerPort"] == 8000 for p in ports)
+
+    def test_api_deployment_has_liveness_probe(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "livenessProbe" in container
+        probe = container["livenessProbe"]
+        assert probe["httpGet"]["path"] == "/api/v1/health"
+        assert probe["httpGet"]["port"] == 8000
+
+    def test_api_deployment_has_readiness_probe(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "readinessProbe" in container
+        probe = container["readinessProbe"]
+        assert probe["httpGet"]["path"] == "/api/v1/ready"
+        assert probe["httpGet"]["port"] == 8000
+
+    def test_api_deployment_secrets_are_optional(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        secret_envs = [
+            e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
+        ]
+        for env in secret_envs:
+            assert env["valueFrom"]["secretKeyRef"].get("optional") is True
+
+    def test_api_deployment_command_uses_module_invocation(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == ["python", "-m", "services.api"]
+
+
+class TestAPIService:
+    def test_api_service_exists(self) -> None:
+        assert API_SERVICE.exists(), f"api service not found at {API_SERVICE}"
+
+    def test_api_service_is_service_resource(self) -> None:
+        manifest = _load_yaml(API_SERVICE)
+        assert manifest["apiVersion"] == "v1"
+        assert manifest["kind"] == "Service"
+
+    def test_api_service_namespace(self) -> None:
+        manifest = _load_yaml(API_SERVICE)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_api_service_labels(self) -> None:
+        manifest = _load_yaml(API_SERVICE)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "api"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_api_service_selector_matches_deployment(self) -> None:
+        manifest = _load_yaml(API_SERVICE)
+        selector = manifest["spec"]["selector"]
+        deployment = _load_yaml(API_DEPLOYMENT)
+        template_labels = deployment["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_api_service_exposes_port_8000(self) -> None:
+        manifest = _load_yaml(API_SERVICE)
+        ports = manifest["spec"]["ports"]
+        assert any(p["port"] == 8000 for p in ports)
