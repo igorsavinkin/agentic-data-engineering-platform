@@ -36,7 +36,7 @@ spec:
         - name: raw-writer
           image: ai-data-platform/raw-writer:dev
           imagePullPolicy: IfNotPresent
-          command: ["python", "services/raw-writer/consumer.py"]
+          command: ["python", "-m", "services.raw-writer.consumer"]
           env:
             - name: APP_ENVIRONMENT
               value: "production"
