@@ -19,8 +19,9 @@ task-workflow/
 .env.*
 !.env.example
 
-# Local agent tooling — not part of the data platform, holds a bot token
-.qoder/notify/
+# Local agent tooling — scripts are versioned, only secrets and runtime state are ignored
+.qoder/notify/config.json
+.qoder/notify/.control_offset
 
 # Editors / OS
 .idea/
