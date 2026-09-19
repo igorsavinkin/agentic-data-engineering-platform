@@ -1,0 +1,103 @@
+"""Processor service entrypoint (TASK-072).
+
+Wires Kafka consumer to the processor pipeline, consuming raw events from
+products.raw.v1, validating and normalizing them, applying deduplication,
+and publishing valid records to products.validated.v1. Invalid records are
+routed to products.invalid.v1 with diagnostic context.
+
+Offset semantics: offsets are committed ONLY after successful processing
+and output publication, implementing at-least-once delivery.
+
+Environment variables:
+    APP_ENVIRONMENT              Environment name (required)
+    APP_KAFKA_BOOTSTRAP_SERVERS  Kafka broker address (default: localhost:9092)
+    APP_KAFKA_GROUP_ID           Consumer group ID (required)
+    APP_KAFKA_AUTO_OFFSET_RESET  Offset reset policy (default: earliest)
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+
+from libs.common.config import load_settings
+from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaConsumerSettings
+from libs.common.kafka_errors import KafkaDeadLetterProducer, RetryPolicy
+from libs.common.kafka_producer import KafkaProducerSettings
+from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
+from services.processor.pipeline import ProcessorPipeline
+
+logger = logging.getLogger(__name__)
+
+RAW_TOPIC = "products.raw.v1"
+
+
+def process_batch(
+    messages: list[ConsumerMessage],
+    pipeline: ProcessorPipeline,
+) -> None:
+    """Process a batch of messages through the pipeline.
+
+    Raises PublishError if any output publication fails, so the caller
+    does NOT commit the offset.
+    """
+    result = pipeline.process_batch(messages)
+    logger.info(
+        "processor_batch_complete",
+        extra={
+            "valid": result.published_valid,
+            "invalid": result.published_invalid,
+            "duplicates": result.duplicates_skipped,
+            "conflicts": result.conflicts,
+        },
+    )
+
+
+def run_consumer() -> None:
+    """Main entry point: initialize components and start consuming."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    consumer_settings = load_settings(KafkaConsumerSettings)
+    producer_settings = load_settings(KafkaProducerSettings)
+
+    consumer = KafkaConsumer(consumer_settings)
+    validated_producer = KafkaValidatedOutputProducer(producer_settings)
+    invalid_producer = KafkaDeadLetterProducer(producer_settings)
+
+    pipeline = ProcessorPipeline(
+        validated_sink=validated_producer.publish,
+        invalid_sink=invalid_producer.publish,
+    )
+
+    consumer.subscribe([RAW_TOPIC])
+    logger.info(
+        "processor_started",
+        extra={
+            "topic": RAW_TOPIC,
+            "group_id": consumer_settings.kafka_group_id,
+        },
+    )
+
+    try:
+        while not consumer.is_shutdown_requested():
+            processed = consumer.process_next(
+                process=lambda msg: process_batch([msg], pipeline),
+                dead_letter=invalid_producer.publish,
+                retry=RetryPolicy(max_attempts=3, backoff_seconds=1),
+            )
+            if not processed:
+                time.sleep(0.1)
+    except KeyboardInterrupt:
+        logger.info("processor_interrupted")
+    finally:
+        consumer.close()
+        validated_producer.close()
+        invalid_producer.close()
+        logger.info("processor_stopped")
+
+
+if __name__ == "__main__":
+    run_consumer()

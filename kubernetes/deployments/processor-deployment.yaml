@@ -1,0 +1,54 @@
+# Processor Deployment (TASK-072).
+#
+# Runs the processor service which consumes raw events from Kafka,
+# validates and normalizes them, applies deduplication, and publishes
+# valid records to the validated topic. Invalid records are routed to
+# the invalid topic with diagnostic context.
+#
+# No inbound Service is created — processor is a Kafka consumer/producer
+# only. Configuration is externalized via environment variables matching
+# the APP_-prefixed Pydantic settings convention.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: processor
+  namespace: ai-data-platform
+  labels:
+    app.kubernetes.io/name: processor
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: processor
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: processor
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: processor
+    spec:
+      containers:
+        - name: processor
+          image: ai-data-platform/processor:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "services.processor"]
+          env:
+            - name: APP_ENVIRONMENT
+              value: "production"
+            - name: APP_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:29092"
+            - name: APP_KAFKA_GROUP_ID
+              value: "processor"
+            - name: APP_KAFKA_AUTO_OFFSET_RESET
+              value: "earliest"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

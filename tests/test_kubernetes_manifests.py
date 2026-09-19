@@ -110,3 +110,47 @@ class TestIngestionDeployment:
         manifest = _load_yaml(INGESTION_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert "ports" not in container, "ingestion should not expose inbound ports"
+
+
+PROCESSOR_DEPLOYMENT = REPO_ROOT / "kubernetes" / "deployments" / "processor-deployment.yaml"
+
+
+class TestProcessorDeployment:
+    def test_processor_deployment_exists(self) -> None:
+        assert PROCESSOR_DEPLOYMENT.exists(), (
+            f"processor deployment not found at {PROCESSOR_DEPLOYMENT}"
+        )
+
+    def test_processor_deployment_is_deployment_resource(self) -> None:
+        manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "Deployment"
+
+    def test_processor_deployment_namespace(self) -> None:
+        manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_processor_deployment_labels(self) -> None:
+        manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "processor"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_processor_deployment_selector_matches_template(self) -> None:
+        manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_processor_deployment_has_kafka_env(self) -> None:
+        manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = [e["name"] for e in container["env"]]
+        assert "APP_KAFKA_BOOTSTRAP_SERVERS" in env_names
+        assert "APP_KAFKA_GROUP_ID" in env_names
+
+    def test_processor_deployment_no_inbound_ports(self) -> None:
+        manifest = _load_yaml(PROCESSOR_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "ports" not in container, "processor should not expose inbound ports"
