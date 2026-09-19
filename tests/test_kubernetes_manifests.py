@@ -834,3 +834,203 @@ class TestSecretCreationScript:
         assert "minio-credentials" in content
         assert "database-credentials" in content
         assert "ingestion-api-keys" in content
+
+
+ALL_DEPLOYMENTS = {
+    "ingestion": INGESTION_DEPLOYMENT,
+    "processor": PROCESSOR_DEPLOYMENT,
+    "raw-writer": RAW_WRITER_DEPLOYMENT,
+    "lake-writer": LAKE_WRITER_DEPLOYMENT,
+    "warehouse-loader": WAREHOUSE_LOADER_DEPLOYMENT,
+    "api": API_DEPLOYMENT,
+    "kafka": KAFKA_DEPLOYMENT,
+}
+
+KAFKA_CONSUMER_DEPLOYMENTS = {
+    "ingestion": INGESTION_DEPLOYMENT,
+    "processor": PROCESSOR_DEPLOYMENT,
+    "raw-writer": RAW_WRITER_DEPLOYMENT,
+    "lake-writer": LAKE_WRITER_DEPLOYMENT,
+}
+
+
+class TestAllDeploymentsHaveHealthProbes:
+    def test_every_deployment_has_liveness_probe(self) -> None:
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            assert "livenessProbe" in container, f"{name} deployment missing livenessProbe"
+
+    def test_every_deployment_has_readiness_probe(self) -> None:
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            assert "readinessProbe" in container, f"{name} deployment missing readinessProbe"
+
+    def test_liveness_probes_have_timing(self) -> None:
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            probe = container["livenessProbe"]
+            assert "initialDelaySeconds" in probe, (
+                f"{name} livenessProbe missing initialDelaySeconds"
+            )
+            assert "periodSeconds" in probe, f"{name} livenessProbe missing periodSeconds"
+
+    def test_readiness_probes_have_timing(self) -> None:
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            probe = container["readinessProbe"]
+            assert "initialDelaySeconds" in probe, (
+                f"{name} readinessProbe missing initialDelaySeconds"
+            )
+            assert "periodSeconds" in probe, f"{name} readinessProbe missing periodSeconds"
+
+
+class TestKafkaDeploymentProbes:
+    def test_kafka_liveness_is_tcp_socket(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        probe = container["livenessProbe"]
+        assert "tcpSocket" in probe
+        assert probe["tcpSocket"]["port"] == 29092
+
+    def test_kafka_readiness_is_tcp_socket(self) -> None:
+        manifest = _load_yaml(KAFKA_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        probe = container["readinessProbe"]
+        assert "tcpSocket" in probe
+        assert probe["tcpSocket"]["port"] == 29092
+
+
+class TestWorkerServiceProbes:
+    def test_kafka_consumers_have_exec_liveness(self) -> None:
+        for name, path in KAFKA_CONSUMER_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            probe = container["livenessProbe"]
+            assert "exec" in probe, f"{name} livenessProbe should use exec"
+
+    def test_kafka_consumers_have_exec_readiness(self) -> None:
+        for name, path in KAFKA_CONSUMER_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            probe = container["readinessProbe"]
+            assert "exec" in probe, f"{name} readinessProbe should use exec"
+
+    def test_kafka_consumer_readiness_checks_kafka_connectivity(self) -> None:
+        for name, path in KAFKA_CONSUMER_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            probe = container["readinessProbe"]
+            command = " ".join(probe["exec"]["command"])
+            assert "kafka" in command, f"{name} readiness probe should check Kafka connectivity"
+            assert "29092" in command, f"{name} readiness probe should connect to port 29092"
+
+    def test_warehouse_loader_readiness_checks_postgresql(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_LOADER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        probe = container["readinessProbe"]
+        command = " ".join(probe["exec"]["command"])
+        assert "postgresql" in command
+        assert "5432" in command
+
+
+class TestAPIDeploymentProbes:
+    def test_api_liveness_is_http_get(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        probe = container["livenessProbe"]
+        assert "httpGet" in probe
+        assert probe["httpGet"]["path"] == "/api/v1/health"
+
+    def test_api_readiness_is_http_get(self) -> None:
+        manifest = _load_yaml(API_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        probe = container["readinessProbe"]
+        assert "httpGet" in probe
+        assert probe["httpGet"]["path"] == "/api/v1/ready"
+
+
+class TestAllDeploymentsHaveResourceLimits:
+    def test_every_deployment_has_resources(self) -> None:
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            assert "resources" in container, f"{name} deployment missing resources"
+
+    def test_every_deployment_has_cpu_and_memory_requests(self) -> None:
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            resources = container["resources"]
+            assert "requests" in resources, f"{name} missing resource requests"
+            assert "cpu" in resources["requests"], f"{name} missing cpu request"
+            assert "memory" in resources["requests"], f"{name} missing memory request"
+
+    def test_every_deployment_has_cpu_and_memory_limits(self) -> None:
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            resources = container["resources"]
+            assert "limits" in resources, f"{name} missing resource limits"
+            assert "cpu" in resources["limits"], f"{name} missing cpu limit"
+            assert "memory" in resources["limits"], f"{name} missing memory limit"
+
+    def test_requests_do_not_exceed_limits(self) -> None:
+        def _parse_cpu(val: str) -> int:
+            s = str(val)
+            if s.endswith("m"):
+                return int(s[:-1])
+            return int(float(s) * 1000)
+
+        def _parse_mem(val: str) -> int:
+            s = str(val)
+            if s.endswith("Gi"):
+                return int(float(s[:-2]) * 1024)
+            if s.endswith("Mi"):
+                return int(s[:-2])
+            return int(s)
+
+        for name, path in ALL_DEPLOYMENTS.items():
+            manifest = _load_yaml(path)
+            container = manifest["spec"]["template"]["spec"]["containers"][0]
+            res = container["resources"]
+            assert _parse_cpu(res["requests"]["cpu"]) <= _parse_cpu(res["limits"]["cpu"]), (
+                f"{name} cpu request exceeds limit"
+            )
+            assert _parse_mem(res["requests"]["memory"]) <= _parse_mem(res["limits"]["memory"]), (
+                f"{name} memory request exceeds limit"
+            )
+
+
+TROUBLESHOOTING_GUIDE = REPO_ROOT / "docs" / "kubernetes-troubleshooting.md"
+
+
+class TestTroubleshootingGuide:
+    def test_guide_exists(self) -> None:
+        assert TROUBLESHOOTING_GUIDE.exists(), (
+            f"troubleshooting guide not found at {TROUBLESHOOTING_GUIDE}"
+        )
+
+    def test_guide_covers_crash_loop(self) -> None:
+        content = TROUBLESHOOTING_GUIDE.read_text(encoding="utf-8")
+        assert "CrashLoopBackOff" in content
+
+    def test_guide_covers_image_pull(self) -> None:
+        content = TROUBLESHOOTING_GUIDE.read_text(encoding="utf-8")
+        assert "ImagePullBackOff" in content
+
+    def test_guide_covers_readiness_failure(self) -> None:
+        content = TROUBLESHOOTING_GUIDE.read_text(encoding="utf-8")
+        assert "Readiness" in content or "readiness" in content
+
+    def test_guide_covers_oomkilled(self) -> None:
+        content = TROUBLESHOOTING_GUIDE.read_text(encoding="utf-8")
+        assert "OOMKilled" in content
+
+    def test_guide_covers_missing_configuration(self) -> None:
+        content = TROUBLESHOOTING_GUIDE.read_text(encoding="utf-8")
+        assert "ConfigMap" in content or "configmap" in content
+        assert "Secret" in content or "secret" in content

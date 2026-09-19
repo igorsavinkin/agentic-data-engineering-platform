@@ -1,4 +1,4 @@
-# Lake Writer Deployment (TASK-074, updated TASK-078).
+# Lake Writer Deployment (TASK-074, updated TASK-078, TASK-079).
 #
 # Runs the lake writer service which consumes validated events from Kafka and
 # persists them to Silver (MinIO) as Parquet files. Implements at-least-once
@@ -65,6 +65,22 @@ spec:
                 secretKeyRef:
                   name: minio-credentials
                   key: minio-secret-key
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import os; os.getpid()"
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             requests:
               cpu: 100m

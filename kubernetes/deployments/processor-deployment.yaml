@@ -1,4 +1,4 @@
-# Processor Deployment (TASK-072, updated TASK-078).
+# Processor Deployment (TASK-072, updated TASK-078, TASK-079).
 #
 # Runs the processor service which consumes raw events from Kafka,
 # validates and normalizes them, applies deduplication, and publishes
@@ -51,6 +51,22 @@ spec:
               value: "processor"
             - name: APP_KAFKA_AUTO_OFFSET_RESET
               value: "earliest"
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import os; os.getpid()"
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             requests:
               cpu: 100m

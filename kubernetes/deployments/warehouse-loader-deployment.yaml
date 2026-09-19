@@ -1,4 +1,4 @@
-# Warehouse Loader Deployment (TASK-075, updated TASK-078).
+# Warehouse Loader Deployment (TASK-075, updated TASK-078, TASK-079).
 #
 # Runs the warehouse loader service which reads Silver Parquet from MinIO
 # and loads curated data into PostgreSQL with idempotent upserts. Unlike
@@ -87,6 +87,22 @@ spec:
                 secretKeyRef:
                   name: database-credentials
                   key: db-password
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import os; os.getpid()"
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - "-c"
+                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('postgresql',5432)); s.close()"
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             requests:
               cpu: 100m
