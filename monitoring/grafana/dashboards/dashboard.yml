@@ -1,0 +1,17 @@
+# Grafana dashboard provisioning for local development (TASK-085).
+#
+# Dashboards are loaded from JSON files in the same directory. Later tasks
+# (TASK-086+) add platform-specific dashboard definitions here.
+
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false
