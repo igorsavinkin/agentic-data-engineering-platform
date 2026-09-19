@@ -362,7 +362,6 @@ class IngestionRunner:
                     {
                         "source": source_name,
                         "event_id": event.event_id,
-                        "mimeType": "application/json",
                     }
                 )
             )

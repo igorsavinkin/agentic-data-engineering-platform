@@ -267,8 +267,6 @@ services:
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"
       - "${JAEGER_OTLP_GRPC_PORT:-4319}:4317"
-    environment:
-      COLLECTOR_OTLP_ENABLED_HONOUR_ENVIRONMENT_VARIABLES: "true"
     networks:
       - platform
 

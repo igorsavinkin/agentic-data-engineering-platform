@@ -29,6 +29,7 @@ from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.otel_config import (
     OTelSettings,
     extract_trace_context,
+    get_current_trace_id,
     get_tracer,
     safe_attributes,
     setup_opentelemetry,
@@ -104,6 +105,11 @@ def process_message(
                 }
             )
         )
+        trace_id = get_current_trace_id()
+        if trace_id:
+            from libs.observability.logging_config import set_correlation_id
+
+            set_correlation_id(trace_id)
         writer.write_event(message.event)
 
 

@@ -25,6 +25,7 @@ from libs.common.kafka_consumer import ConsumerMessage, KafkaConsumer, KafkaCons
 from libs.common.kafka_errors import KafkaDeadLetterProducer, RetryPolicy
 from libs.common.kafka_producer import KafkaProducerSettings
 from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
+from libs.event_contracts import ProductObservationEvent
 from libs.observability.kafka_metrics import LagSample
 from libs.observability.logging_config import setup_logging
 from libs.observability.metrics_http_server import MetricsHTTPServer
@@ -33,6 +34,7 @@ from libs.observability.otel_config import (
     extract_trace_context,
     get_current_trace_id,
     get_tracer,
+    inject_trace_context,
     safe_attributes,
     setup_opentelemetry,
 )
@@ -114,9 +116,15 @@ def run_consumer() -> None:
     validated_producer = KafkaValidatedOutputProducer(producer_settings)
     invalid_producer = KafkaDeadLetterProducer(producer_settings)
 
+    def _publish_validated_with_trace(event: ProductObservationEvent) -> None:
+        carrier: dict[str, bytes] = {}
+        inject_trace_context(carrier)
+        kafka_headers = [(k, v) for k, v in carrier.items()] or None
+        validated_producer.publish(event, headers=kafka_headers)
+
     proc_metrics = ProcessorMetrics()
     pipeline = ProcessorPipeline(
-        validated_sink=validated_producer.publish,
+        validated_sink=_publish_validated_with_trace,
         invalid_sink=invalid_producer.publish,
         metrics=proc_metrics,
     )

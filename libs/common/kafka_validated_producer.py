@@ -66,7 +66,11 @@ class KafkaValidatedOutputProducer:
                 "Kafka validated output producer initialization failed"
             ) from exc
 
-    def publish(self, event: ProductObservationEvent) -> DeliveryReceipt:
+    def publish(
+        self,
+        event: ProductObservationEvent,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> DeliveryReceipt:
         with self._lock:
             if self._closed:
                 self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)
@@ -104,7 +108,15 @@ class KafkaValidatedOutputProducer:
                     receipt = DeliveryReceipt(topic, partition, offset)
 
             try:
-                self._producer.produce(VALIDATED_TOPIC, value=value, key=key, on_delivery=delivered)
+                produce_kwargs: dict = {
+                    "topic": VALIDATED_TOPIC,
+                    "value": value,
+                    "key": key,
+                    "on_delivery": delivered,
+                }
+                if headers:
+                    produce_kwargs["headers"] = headers
+                self._producer.produce(**produce_kwargs)
                 pending = self._producer.flush(self._settings.kafka_delivery_timeout_ms / 1000 + 1)
             except (KafkaException, BufferError) as exc:
                 self.metrics.increment(KafkaMetric.PRODUCER_ERRORS)

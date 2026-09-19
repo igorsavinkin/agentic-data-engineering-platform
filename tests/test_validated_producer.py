@@ -126,7 +126,7 @@ class TestPublishSuccess:
         producer.publish(_make_event())
 
         call_args = mock_producer.produce.call_args
-        assert call_args[0][0] == VALIDATED_TOPIC
+        assert call_args.kwargs["topic"] == VALIDATED_TOPIC
 
 
 class TestPublishFailure:

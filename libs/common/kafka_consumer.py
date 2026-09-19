@@ -223,7 +223,10 @@ class KafkaConsumer:
             raw_headers = msg.headers()
             headers: dict[str, bytes] | None = None
             if raw_headers:
-                headers = {k: v for k, v in raw_headers if isinstance(v, bytes)}
+                if isinstance(raw_headers, dict):
+                    headers = {k: v for k, v in raw_headers.items() if isinstance(v, bytes)}
+                else:
+                    headers = {k: v for k, v in raw_headers if isinstance(v, bytes)}
 
             event = deserialize_event(value.decode("utf-8"))
             messages.append(
