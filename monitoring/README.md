@@ -63,7 +63,7 @@ Grafana provides visualization of platform metrics collected by Prometheus.
 ### Architecture
 
 - **Datasource**: Prometheus at `http://prometheus:9090` (auto-provisioned)
-- **Dashboards**: loaded from `monitoring/grafana/dashboards/` (TASK-086+ adds platform dashboards)
+- **Dashboards**: loaded from `monitoring/grafana/dashboards/` (Compose) or `grafana-dashboards` ConfigMap (Helm)
 - **Credentials**: externalized via environment variables (`GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD`)
 
 ### Local development
@@ -103,5 +103,31 @@ kubectl port-forward svc/grafana 3000:3000 -n ai-data-platform
 
 Both Docker Compose and Helm use file-based provisioning:
 
-- **Datasources** — `monitoring/grafana/datasources/prometheus.yml` (Compose) or `grafana-configmap` ConfigMap (Helm)
-- **Dashboards** — JSON files in `monitoring/grafana/dashboards/` (Compose) or mounted via ConfigMap (Helm)
+- **Datasources** — `monitoring/grafana/datasources/prometheus.yml` (Compose) or `grafana-provisioning` ConfigMap (Helm)
+- **Dashboard provider** — `monitoring/grafana/dashboards/dashboard.yml` (Compose) or `grafana-provisioning` ConfigMap (Helm)
+- **Dashboard JSON** — `monitoring/grafana/dashboards/*.json` (Compose) or `grafana-dashboards` ConfigMap (Helm)
+
+## Platform Dashboard (TASK-086)
+
+The `platform-overview.json` dashboard provides a single-pane view of platform health.
+
+### Panels
+
+| Panel | Type | Key metrics |
+|-------|------|-------------|
+| Service Event Rates | timeseries | `kafka_events_processed_total`, `kafka_events_consumed_total` |
+| Error Rates | timeseries | `kafka_consumer_errors_total`, `kafka_processing_errors_total`, `kafka_dead_letter_events_total`, `events_invalid_total` |
+| Processor Latency (p50/p95) | timeseries | `processor_processing_seconds` |
+| Processor Throughput | stat | `processor_events_valid_total`, `processor_events_invalid_total` |
+| API Request Rate | timeseries | `api_requests_total` |
+| API Latency (p50/p95) | timeseries | `api_request_duration_seconds` |
+| Source Freshness | timeseries | `source_freshness_age_seconds` |
+| Source Fetch Success Rate | gauge | `source_fetch_success_total`, `source_fetch_attempts_total` |
+| Ingestion Events | stat | `ingestion_events_total`, `ingestion_errors_total` |
+| Source Fetch Latency (p95) | stat | `source_fetch_latency_seconds` |
+
+### Adding dashboards
+
+1. Create a JSON file in `monitoring/grafana/dashboards/` (for Compose)
+2. Copy the same file to `helm/ai-data-platform/dashboards/` (for Helm)
+3. The dashboard provider auto-detects new JSON files on the next 30-second polling cycle

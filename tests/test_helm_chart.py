@@ -135,6 +135,7 @@ class TestChartStructure:
             "monitoring/grafana-service.yaml",
             "monitoring/grafana-configmap.yaml",
             "monitoring/grafana-secret.yaml",
+            "monitoring/grafana-dashboards-configmap.yaml",
         ]
         for template in expected:
             path = TEMPLATES_DIR / template
@@ -373,12 +374,14 @@ class TestHelmTemplate:
         grafana_deps = [
             d
             for d in docs
-            if d["metadata"]["name"] in ("grafana", "grafana-provisioning", "grafana-credentials")
+            if d["metadata"]["name"]
+            in ("grafana", "grafana-provisioning", "grafana-credentials", "grafana-dashboards")
         ]
         names = {d["metadata"]["name"] for d in grafana_deps}
         assert "grafana" in names
         assert "grafana-provisioning" in names
         assert "grafana-credentials" in names
+        assert "grafana-dashboards" in names
 
     def test_grafana_deployment_has_probes_and_resources(self) -> None:
         docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
@@ -414,3 +417,30 @@ class TestHelmTemplate:
         datasources = yaml.safe_load(cm["data"]["datasources.yml"])
         assert datasources["datasources"][0]["type"] == "prometheus"
         assert datasources["datasources"][0]["url"] == "http://prometheus:9090"
+
+    def test_grafana_dashboards_configmap_contains_dashboard_json(self) -> None:
+        docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
+        cm = [
+            d
+            for d in docs
+            if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "grafana-dashboards"
+        ][0]
+        assert "platform-overview.json" in cm["data"]
+        import json
+
+        dashboard = json.loads(cm["data"]["platform-overview.json"])
+        assert dashboard["uid"] == "ai-data-platform-overview"
+        assert len(dashboard["panels"]) >= 1
+
+    def test_grafana_deployment_mounts_dashboard_volume(self) -> None:
+        docs = _helm_template(extra_args=["--set", "grafana.enabled=true"])
+        dep = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "grafana"][
+            0
+        ]
+        spec = dep["spec"]["template"]["spec"]
+        mount_names = [vm["name"] for vm in spec["containers"][0]["volumeMounts"]]
+        volume_names = [v["name"] for v in spec["volumes"]]
+        assert "dashboards" in mount_names
+        assert "dashboards" in volume_names
+        dash_vol = [v for v in spec["volumes"] if v["name"] == "dashboards"][0]
+        assert dash_vol["configMap"]["name"] == "grafana-dashboards"
