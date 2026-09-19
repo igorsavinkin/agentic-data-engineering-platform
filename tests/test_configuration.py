@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from pydantic import Field, SecretStr, ValidationError
-from pydantic_settings import SettingsConfigDict
 
 from libs.common.config import (
     AppSettings,
@@ -93,30 +92,25 @@ def test_invalid_log_level_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "APP_LOG_LEVEL" in str(exc_info.value)
 
 
-def test_unknown_app_variable_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unknown_app_variable_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unknown APP_ variables are silently ignored to allow multi-class settings."""
     monkeypatch.setenv("APP_ENVIRONMENT", "development")
-    monkeypatch.setenv("APP_SOMETHING", "distinctive-typo-value")
+    monkeypatch.setenv("APP_SOMETHING", "other-domain-var")
 
-    with pytest.raises(ConfigurationError) as exc_info:
-        load_settings()
-
-    message = str(exc_info.value)
-    assert "APP_SOMETHING" in message
-    assert "distinctive-typo-value" not in message
+    # Should not raise — unknown vars are ignored
+    settings = load_settings()
+    assert settings.environment == "development"
 
 
-def test_unknown_dotenv_key_is_rejected(tmp_path: Path) -> None:
+def test_unknown_dotenv_key_is_ignored(tmp_path: Path) -> None:
+    """Unknown APP_ keys in .env are silently ignored."""
     (tmp_path / ".env").write_text(
-        "APP_ENVIRONMENT=development\nAPP_SOMETHING=dotenv-typo-value\n", encoding="utf-8"
+        "APP_ENVIRONMENT=development\nAPP_SOMETHING=dotenv-other-domain\n", encoding="utf-8"
     )
 
-    with pytest.raises(ConfigurationError) as exc_info:
-        load_settings()
-
-    message = str(exc_info.value)
-    assert "APP_SOMETHING" in message
-    assert "APP_APP_SOMETHING" not in message
-    assert "dotenv-typo-value" not in message
+    # Should not raise — unknown vars are ignored
+    settings = load_settings()
+    assert settings.environment == "development"
 
 
 def test_foreign_dotenv_keys_are_ignored(tmp_path: Path) -> None:
@@ -213,68 +207,18 @@ def test_load_settings_with_subclass(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.environment == "development"
 
 
-def test_load_settings_rejects_unknown_vars_in_subclass(
+def test_load_settings_ignores_unknown_vars_in_subclass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """MAJOR-1: Unknown APP_ variables are rejected even for subclasses."""
+    """Unknown APP_ variables are ignored for subclasses, allowing multi-class loading."""
 
     class ServiceSettings(BaseAppSettings):
         service_port: int = 8080
 
     monkeypatch.setenv("APP_ENVIRONMENT", "production")
     monkeypatch.setenv("APP_SERVICE_PORT", "8080")
-    monkeypatch.setenv("APP_TYPO_VAR", "should-fail")
+    monkeypatch.setenv("APP_OTHER_DOMAIN_VAR", "should-be-ignored")
 
-    with pytest.raises(ConfigurationError) as exc_info:
-        load_settings(ServiceSettings)
-
-    message = str(exc_info.value)
-    assert "APP_TYPO_VAR" in message
-
-
-def test_dotenv_keys_handles_single_path(tmp_path: Path) -> None:
-    """MINOR-1: _dotenv_keys() correctly handles a single Path/PathLike."""
-    from libs.common.config import _dotenv_keys
-
-    env_file = tmp_path / ".env"
-    env_file.write_text("APP_FOO=bar\n", encoding="utf-8")
-
-    class TestSettings(BaseAppSettings):
-        model_config = SettingsConfigDict(env_file=env_file)
-
-    keys = _dotenv_keys(TestSettings)
-    assert "APP_FOO" in keys
-
-
-def test_dotenv_keys_handles_pathlib_path(tmp_path: Path) -> None:
-    """MINOR-1: _dotenv_keys() handles pathlib.Path without TypeError."""
-    from libs.common.config import _dotenv_keys
-
-    env_file = tmp_path / ".env"
-    env_file.write_text("APP_TEST=value\n", encoding="utf-8")
-
-    class TestSettings(BaseAppSettings):
-        model_config = SettingsConfigDict(env_file=Path(env_file))
-
-    # Should not raise TypeError
-    keys = _dotenv_keys(TestSettings)
-    assert "APP_TEST" in keys
-
-
-def test_duplicate_unknown_variables_eliminated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """MINOR-2: Same variable with different cases produces only one error line."""
-    # Set variable in environment with uppercase
-    monkeypatch.setenv("APP_ENVIRONMENT", "development")
-    monkeypatch.setenv("APP_DUP_VAR", "from-env")
-
-    # Set same variable in .env with lowercase (different case)
-    (tmp_path / ".env").write_text("app_dup_var=from-dotenv\n", encoding="utf-8")
-
-    with pytest.raises(ConfigurationError) as exc_info:
-        load_settings()
-
-    message = str(exc_info.value)
-    # Should appear only once, not twice
-    assert message.count("APP_DUP_VAR") == 1
+    # Should not raise — unknown vars are ignored
+    settings = load_settings(ServiceSettings)
+    assert settings.service_port == 8080

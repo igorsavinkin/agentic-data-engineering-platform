@@ -9,11 +9,8 @@ ignored. See ``docs/configuration.md``.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Literal, TypeVar, overload
 
-from dotenv import dotenv_values
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -37,9 +34,8 @@ class BaseAppSettings(BaseSettings):
 
     * variables are prefixed ``APP_`` (``log_level`` -> ``APP_LOG_LEVEL``);
     * variable names are matched case-insensitively;
-    * unknown ``APP_`` variables fail startup instead of being silently
-      ignored, so typos surface immediately (``load_settings`` checks both
-      the environment and the ``.env`` file);
+    * unknown ``APP_`` variables are silently ignored, allowing services to
+      load multiple settings classes from the same environment;
     * non-``APP_`` keys in ``.env`` belong to other tools (for example
       Docker Compose's ``POSTGRES_USER``) and are ignored;
     * loaded settings are immutable;
@@ -52,9 +48,6 @@ class BaseAppSettings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        # Unknown keys must not fail validation here: the same .env file also
-        # carries variables owned by other tools. load_settings() rejects
-        # unknown APP_ variables explicitly instead.
         extra="ignore",
         frozen=True,
     )
@@ -84,41 +77,6 @@ def format_validation_error(error: ValidationError) -> str:
     return "\n".join(lines)
 
 
-def _dotenv_keys(settings_cls: type[BaseAppSettings]) -> list[str]:
-    """Return the keys present in the ``.env`` file(s) configured for the class."""
-    env_file = settings_cls.model_config.get("env_file")
-    if isinstance(env_file, (str, os.PathLike)):
-        files: list[str | Path] = [env_file]
-    elif isinstance(env_file, list):
-        files = [Path(p) if not isinstance(p, Path) else p for p in env_file]
-    else:
-        files = []
-    keys: list[str] = []
-    for path in files:
-        keys.extend(dotenv_values(path))
-    return keys
-
-
-def _unknown_app_variables(settings_cls: type[BaseAppSettings]) -> list[str]:
-    """Find ``APP_``-prefixed variables no field consumes.
-
-    pydantic-settings deliberately ignores unknown variables: the
-    environment is a shared namespace, and ``.env`` also carries variables
-    owned by other tools (Docker Compose, IDEs). Only ``APP_``-prefixed
-    names are this platform's responsibility, so only those are checked —
-    in both the environment and ``.env`` — to surface typos immediately.
-    """
-    known = {f"app_{field}" for field in settings_cls.model_fields}
-    # Normalize to uppercase before set construction to avoid duplicates
-    # when the same variable appears with different cases across sources.
-    candidates = {v.upper() for v in {*os.environ, *_dotenv_keys(settings_cls)}}
-    return sorted(
-        variable
-        for variable in candidates
-        if variable.lower().startswith("app_") and variable.lower() not in known
-    )
-
-
 TSettings = TypeVar("TSettings", bound=BaseAppSettings)
 
 
@@ -133,15 +91,14 @@ def load_settings(settings_cls: type[TSettings]) -> TSettings: ...
 def load_settings(
     settings_cls: type[BaseAppSettings] | None = None,
 ) -> BaseAppSettings:
-    cls = settings_cls or AppSettings
-    unknown = _unknown_app_variables(cls)
+    """Load settings from APP_-prefixed environment variables.
 
-    if unknown:
-        vars_list = ", ".join(unknown)
-        raise ConfigurationError(
-            f"Unknown configuration variable(s): {vars_list}\n"
-            "See docs/configuration.md for the expected variables."
-        )
+    Unknown APP_ variables are silently ignored (pydantic's ``extra="ignore"``),
+    allowing services to load multiple settings classes without cross-class
+    rejection. For example, raw-writer loads both ``KafkaConsumerSettings`` and
+    ``MinIOSettings`` from the same environment.
+    """
+    cls = settings_cls or AppSettings
 
     try:
         return cls()

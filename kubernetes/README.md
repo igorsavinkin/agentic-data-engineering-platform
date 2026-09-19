@@ -60,12 +60,13 @@ After building service images locally, load them into the kind cluster so pods c
 ```bash
 bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev
 bash scripts/kind-cluster.sh load ai-data-platform/processor:dev
+bash scripts/kind-cluster.sh load ai-data-platform/raw-writer:dev
 ```
 
 Multiple images can be loaded at once:
 
 ```bash
-bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev
+bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev
 ```
 
 ## Manual Commands

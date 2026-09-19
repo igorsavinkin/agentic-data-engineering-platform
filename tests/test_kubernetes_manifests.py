@@ -208,3 +208,8 @@ class TestRawWriterDeployment:
         manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert "ports" not in container, "raw-writer should not expose inbound ports"
+
+    def test_raw_writer_deployment_command_uses_module_invocation(self) -> None:
+        manifest = _load_yaml(RAW_WRITER_DEPLOYMENT)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == ["python", "-m", "services.raw-writer.consumer"]
