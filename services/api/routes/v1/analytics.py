@@ -91,6 +91,7 @@ def list_price_movers(
                 external_id=item.external_id,
                 source_name=item.source_name,
                 canonical_name=item.canonical_name,
+                currency=item.currency,
                 first_price=float(item.first_price),
                 last_price=float(item.last_price),
                 price_change_absolute=float(item.price_change_absolute),
@@ -115,6 +116,7 @@ def list_price_statistics(
             PriceStatisticsItemResponse(
                 source_id=s.source_id,
                 source_name=s.source_name,
+                currency=s.currency,
                 observation_count=s.observation_count,
                 listings_with_price=s.listings_with_price,
                 min_price=_decimal_to_float(s.min_price),

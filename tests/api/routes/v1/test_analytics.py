@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from services.api.models import Product, ProductObservation, Source, SourceProduct
 
-_NOW = datetime(2026, 9, 15, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime.now(timezone.utc)
 
 
 def _ts(days_ago: int) -> datetime:
@@ -202,6 +202,17 @@ class TestPriceMovers:
             assert "price_change_percent" in item
             assert "observation_count" in item
             assert item["observation_count"] >= 2
+            assert item["currency"] == "USD"
+
+    def test_price_drop_reported_correctly(self, seeded_client: TestClient) -> None:
+        response = seeded_client.get("/api/v1/analytics/price-movers?days_back=30")
+        body = response.json()
+        by_sp = {item["source_product_id"]: item for item in body["items"]}
+        gadget = by_sp[2]
+        assert gadget["first_price"] == pytest.approx(50.00)
+        assert gadget["last_price"] == pytest.approx(45.00)
+        assert gadget["price_change_absolute"] == pytest.approx(-5.00)
+        assert gadget["price_change_percent"] == pytest.approx(-10.0)
 
     def test_limit(self, seeded_client: TestClient) -> None:
         response = seeded_client.get("/api/v1/analytics/price-movers?limit=1&days_back=30")
@@ -246,6 +257,7 @@ class TestPriceStatistics:
         body = response.json()
         by_name = {item["source_name"]: item for item in body["items"]}
         fs = by_name["fake_store"]
+        assert fs["currency"] == "USD"
         assert fs["observation_count"] == 5
         assert fs["min_price"] == pytest.approx(10.00)
         assert fs["max_price"] == pytest.approx(50.00)

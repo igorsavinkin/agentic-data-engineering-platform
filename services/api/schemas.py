@@ -148,6 +148,7 @@ class PriceMoverResponse(BaseModel):
     external_id: str
     source_name: str
     canonical_name: Optional[str] = None
+    currency: Optional[str] = None
     first_price: float
     last_price: float
     price_change_absolute: float
@@ -162,10 +163,11 @@ class PriceMoverListResponse(BaseModel):
 
 
 class PriceStatisticsItemResponse(BaseModel):
-    """Aggregate price statistics for a single source."""
+    """Aggregate price statistics for a single source and currency."""
 
     source_id: int
     source_name: str
+    currency: Optional[str] = None
     observation_count: int
     listings_with_price: int
     min_price: Optional[float] = None
