@@ -87,7 +87,8 @@ def _compact_sources(**context: object) -> dict[str, object]:
 
     try:
         for layer in DEFAULT_LAYERS:
-            compactor = ParquetCompactor(storage, bucket=layer, config=config)
+            bucket = settings.minio_bucket_bronze if layer == "bronze" else layer
+            compactor = ParquetCompactor(storage, bucket=bucket, config=config)
             for source in sources:
                 results = compactor.compact_all(layer=layer, source=source)
                 for r in results:

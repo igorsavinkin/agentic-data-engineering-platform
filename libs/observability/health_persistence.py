@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import psycopg2
@@ -112,7 +112,7 @@ class IngestionHealthResultWriter:
         if not evaluations:
             return HealthWriteResult()
 
-        now = evaluated_at or datetime.now()
+        now = evaluated_at or datetime.now(timezone.utc)
         write_result = HealthWriteResult()
         db_url = self._db_url.replace("postgresql+psycopg2://", "postgresql://")
         conn = psycopg2.connect(db_url)

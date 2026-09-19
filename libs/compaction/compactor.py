@@ -4,9 +4,8 @@ Compacts eligible small Parquet files within a partition while preserving
 records, schema, and partition semantics. Validates replacement before
 source removal and handles replay/partial failure safely.
 
-The compactor is idempotent: running it twice on the same partition
-produces the same result. A deterministic compaction key (based on the
-partition prefix) prevents duplicate work.
+Already-compacted files (compacted-*.parquet) are excluded from the
+source set, so partial failures do not cause data duplication on retry.
 """
 
 from __future__ import annotations
@@ -59,14 +58,6 @@ class CompactionResult:
         return not self.errors
 
 
-@dataclass
-class CompactionPlan:
-    """Describes what partitions need compaction."""
-
-    partitions: list[str]
-    total_files: int = 0
-
-
 class ParquetCompactor:
     """Compact small Parquet files within lake partitions.
 
@@ -105,6 +96,9 @@ class ParquetCompactor:
 
         partition_files: dict[str, int] = {}
         for key in all_keys:
+            filename = key.rsplit("/", 1)[-1]
+            if not filename.endswith(".parquet") or filename.startswith("compacted-"):
+                continue
             parts = key.rsplit("/", 1)
             if len(parts) == 2:
                 partition_prefix = parts[0] + "/"
@@ -119,20 +113,24 @@ class ParquetCompactor:
         """Compact all files in a single partition.
 
         Steps:
-        1. List all parquet files in the partition
+        1. List all parquet files in the partition (excluding compacted-*)
         2. Read and combine into a single DataFrame
         3. Write a new compacted file
         4. Validate record count matches
         5. Delete source files
 
-        Idempotent: if a compacted file already exists with the correct
-        record count, source files are cleaned up without re-reading.
+        Already-compacted files are excluded from the source set,
+        preventing data duplication on partial failure retry.
         """
         result = CompactionResult(partition_prefix=partition_prefix)
 
         try:
             keys = self._storage.list_objects(self._bucket, partition_prefix)
-            parquet_keys = [k for k in keys if k.endswith(".parquet")]
+            parquet_keys = [
+                k
+                for k in keys
+                if k.endswith(".parquet") and not k.rsplit("/", 1)[-1].startswith("compacted-")
+            ]
 
             if len(parquet_keys) < self._config.min_files_to_compact:
                 return result

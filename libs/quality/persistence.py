@@ -38,6 +38,7 @@ def make_replay_key(
     observation_id: int | None = None,
     source: str | None = None,
     checked_at: datetime | None = None,
+    logical_date: str | None = None,
 ) -> str:
     """Build a deterministic replay key for idempotent writes.
 
@@ -45,10 +46,16 @@ def make_replay_key(
     results with the same key represent the same logical check execution
     and should not be duplicated.
 
-    When no context is provided (all None), includes ``checked_at`` to
-    prevent collision between distinct executions of the same check.
+    When logical_date is provided (e.g. from Airflow), it is used for
+    determinism. Otherwise falls back to checked_at to prevent collision
+    between distinct executions of the same check.
     """
-    has_context = pipeline_run_id is not None or observation_id is not None or source is not None
+    has_context = (
+        pipeline_run_id is not None
+        or observation_id is not None
+        or source is not None
+        or logical_date is not None
+    )
 
     parts = [
         check_name,
@@ -57,7 +64,9 @@ def make_replay_key(
         source or "_",
     ]
 
-    if not has_context and checked_at is not None:
+    if logical_date is not None:
+        parts.append(logical_date)
+    elif not has_context and checked_at is not None:
         parts.append(checked_at.isoformat())
 
     return ":".join(parts)
@@ -134,11 +143,13 @@ class QualityResultWriter:
         suite_result: QualitySuiteResult,
         *,
         pipeline_run_id: int | None = None,
+        logical_date: str | None = None,
     ) -> WriteResult:
         """Persist all results from a quality suite execution."""
         return self.write_results(
             list(suite_result.results),
             pipeline_run_id=pipeline_run_id,
+            logical_date=logical_date,
         )
 
     def write_results(
@@ -147,6 +158,7 @@ class QualityResultWriter:
         *,
         pipeline_run_id: int | None = None,
         observation_id: int | None = None,
+        logical_date: str | None = None,
     ) -> WriteResult:
         """Persist multiple quality results in a single transaction.
 
@@ -160,6 +172,8 @@ class QualityResultWriter:
             Optional pipeline run FK for traceability.
         observation_id:
             Optional observation FK, shared across all results.
+        logical_date:
+            Optional Airflow logical date for idempotent replay key.
         """
         if not results:
             return WriteResult()
@@ -180,6 +194,7 @@ class QualityResultWriter:
                     observation_id=observation_id,
                     source=r.source,
                     checked_at=r.checked_at,
+                    logical_date=logical_date,
                 )
                 values.append(
                     (

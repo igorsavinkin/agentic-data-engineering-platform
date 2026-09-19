@@ -118,7 +118,7 @@ def _query_observations(db_url: str, lookback_hours: int = 24) -> pl.DataFrame:
         cur.execute(
             """
             SELECT s.name AS source_name,
-                   p.sku AS product_id,
+                   p.id AS product_id,
                    po.price,
                    po.currency,
                    po.availability,
@@ -143,7 +143,7 @@ def _query_observations(db_url: str, lookback_hours: int = 24) -> pl.DataFrame:
         return pl.DataFrame(
             {
                 "source_name": pl.Series([], dtype=pl.Utf8),
-                "product_id": pl.Series([], dtype=pl.Utf8),
+                "product_id": pl.Series([], dtype=pl.Int64),
                 "price": pl.Series([], dtype=pl.Float64),
                 "currency": pl.Series([], dtype=pl.Utf8),
                 "availability": pl.Series([], dtype=pl.Utf8),
@@ -172,23 +172,12 @@ def _run_quality_checks(**context: object) -> dict[str, object]:
 
     db_config = QualityPersistenceConfig.from_env()
 
-    try:
-        df = _query_observations(db_config.db_url)
-    except Exception:
-        logger.warning("warehouse_query_failed_using_empty_frame")
-        df = pl.DataFrame(
-            {
-                "source_name": pl.Series([], dtype=pl.Utf8),
-                "product_id": pl.Series([], dtype=pl.Utf8),
-                "price": pl.Series([], dtype=pl.Float64),
-                "collected_at": pl.Series([], dtype=pl.Datetime),
-            }
-        )
+    df = _query_observations(db_config.db_url)
 
     suite_result = run_checks(df, checks, suite_name="daily_data_quality")
 
     writer = QualityResultWriter(db_config)
-    write_result = writer.write_suite_result(suite_result)
+    write_result = writer.write_suite_result(suite_result, logical_date=logical_date_str)
 
     results_summary = {
         "total_checks": suite_result.total_checks,

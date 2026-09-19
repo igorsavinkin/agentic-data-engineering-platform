@@ -6,9 +6,8 @@ observations and persists them to the ``daily_metrics`` table.
 The DAG is a thin orchestration layer — all computation logic lives in
 ``libs.metrics.calculator`` and persistence in ``libs.metrics.persistence``.
 
-Uses the Airflow data interval to determine which day's observations to
-aggregate. The logical date represents the end of the interval, so
-metrics are computed for the day before the logical date.
+Uses the Airflow logical date (= data_interval_start) as the metric date.
+For schedule=timedelta(days=1), a run with logical_date=D covers [D, D+1).
 
 Idempotency: the persistence layer uses ``replay_key`` with
 ``ON CONFLICT DO NOTHING``, so rerunning the same logical interval
@@ -54,8 +53,8 @@ def _query_observations(db_url: str, metric_date: str) -> pl.DataFrame:
             JOIN source_products sp ON sp.id = po.source_product_id
             JOIN sources s ON s.id = sp.source_id
             JOIN products p ON p.id = sp.product_id
-            WHERE po.collected_at >= %s::date
-              AND po.collected_at < (%s::date + interval '1 day')
+            WHERE po.collected_at AT TIME ZONE 'UTC' >= %s::date
+              AND po.collected_at AT TIME ZONE 'UTC' < (%s::date + interval '1 day')
             ORDER BY po.collected_at
             """,
             (metric_date, metric_date),
@@ -84,32 +83,20 @@ def _query_observations(db_url: str, metric_date: str) -> pl.DataFrame:
 def _build_daily_metrics(**context: object) -> dict[str, object]:
     """Compute and persist daily metrics.
 
-    Called by the PythonOperator. Uses the Airflow data interval to
-    determine the metric date (the day before the logical date).
+    Called by the PythonOperator. Uses the Airflow logical date (= data_interval_start)
+    as the metric date.
     """
     logical_date = context["logical_date"]
     if isinstance(logical_date, datetime):
         logical_date_str = logical_date.strftime("%Y-%m-%dT%H:%M:%S")
-        metric_date = (logical_date - timedelta(days=1)).strftime("%Y-%m-%d")
+        metric_date = logical_date.strftime("%Y-%m-%d")
     else:
         logical_date_str = str(logical_date)
         metric_date = str(logical_date)
 
     config = MetricsPersistenceConfig.from_env()
 
-    try:
-        df = _query_observations(config.db_url, metric_date)
-    except Exception:
-        logger.warning("warehouse_query_failed_using_empty_frame")
-        df = pl.DataFrame(
-            {
-                "source_name": pl.Series([], dtype=pl.Utf8),
-                "product_id": pl.Series([], dtype=pl.Int64),
-                "price": pl.Series([], dtype=pl.Float64),
-                "availability": pl.Series([], dtype=pl.Utf8),
-                "collected_at": pl.Series([], dtype=pl.Datetime),
-            }
-        )
+    df = _query_observations(config.db_url, metric_date)
 
     from datetime import date as date_type
 
