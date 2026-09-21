@@ -848,6 +848,7 @@ ALL_DEPLOYMENTS = {
 
 MINIO_STATEFULSET = REPO_ROOT / "kubernetes" / "deployments" / "minio-statefulset.yaml"
 POSTGRESQL_STATEFULSET = REPO_ROOT / "kubernetes" / "deployments" / "postgresql-statefulset.yaml"
+DOCKER_COMPOSE = REPO_ROOT / "docker-compose.yml"
 
 ALL_STATEFULSETS = {
     "minio": MINIO_STATEFULSET,
@@ -1148,6 +1149,21 @@ class TestMinioStatefulSet:
         sc = container["securityContext"]
         assert sc.get("allowPrivilegeEscalation") is False
 
+    def test_minio_image_matches_docker_compose(self) -> None:
+        import yaml
+
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        k8s_image = container["image"]
+
+        with open(DOCKER_COMPOSE, encoding="utf-8") as f:
+            compose = yaml.safe_load(f)
+        compose_image = compose["services"]["minio"]["image"]
+
+        assert k8s_image == compose_image, (
+            f"MinIO image mismatch: K8s={k8s_image}, docker-compose={compose_image}"
+        )
+
 
 class TestPostgreSQLStatefulSet:
     def test_postgresql_statefulset_exists(self) -> None:
@@ -1249,10 +1265,78 @@ class TestPostgreSQLStatefulSet:
 
     def test_postgresql_has_security_context(self) -> None:
         manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        pod_sc = manifest["spec"]["template"]["spec"].get("securityContext", {})
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert "securityContext" in container
         sc = container["securityContext"]
         assert sc.get("allowPrivilegeEscalation") is False
+        assert sc.get("capabilities", {}).get("drop") == ["ALL"]
+        assert sc.get("runAsNonRoot") is True
+        assert sc.get("runAsUser") == 999
+        assert sc.get("runAsGroup") == 999
+        assert pod_sc.get("fsGroup") == 999
+
+
+class TestStatefulSetVolumeMountPVCConsistency:
+    """Regression: every persistent volumeMount must resolve to a volumeClaimTemplate."""
+
+    def _persistent_volume_mount_names(self, manifest: dict) -> set[str]:
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        pod_volumes = {
+            v["name"]: v for v in manifest["spec"]["template"]["spec"].get("volumes", [])
+        }
+        vct_names = {
+            v["metadata"]["name"] for v in manifest["spec"].get("volumeClaimTemplates", [])
+        }
+        mount_names: set[str] = set()
+        for vm in container.get("volumeMounts", []):
+            name = vm["name"]
+            if name in vct_names:
+                mount_names.add(name)
+            elif name in pod_volumes and pod_volumes[name].get("emptyDir") is not None:
+                continue
+            else:
+                mount_names.add(name)
+        return mount_names
+
+    def _vct_names(self, manifest: dict) -> set[str]:
+        return {v["metadata"]["name"] for v in manifest["spec"].get("volumeClaimTemplates", [])}
+
+    def test_minio_volume_mounts_resolve_to_vct(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        mount_names = self._persistent_volume_mount_names(manifest)
+        vct_names = self._vct_names(manifest)
+        unresolved = mount_names - vct_names
+        assert not unresolved, (
+            f"MinIO volumeMounts {unresolved} have no matching volumeClaimTemplate"
+        )
+
+    def test_postgresql_volume_mounts_resolve_to_vct(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        mount_names = self._persistent_volume_mount_names(manifest)
+        vct_names = self._vct_names(manifest)
+        unresolved = mount_names - vct_names
+        assert not unresolved, (
+            f"PostgreSQL volumeMounts {unresolved} have no matching volumeClaimTemplate"
+        )
+
+    def test_minio_vct_names_match_volume_mounts(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        mount_names = {vm["name"] for vm in container.get("volumeMounts", [])}
+        vct_names = self._vct_names(manifest)
+        assert vct_names == mount_names, (
+            f"VCT names mismatch: mounts={mount_names}, vcts={vct_names}"
+        )
+
+    def test_postgresql_vct_names_match_volume_mounts(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        mount_names = {vm["name"] for vm in container.get("volumeMounts", [])}
+        vct_names = self._vct_names(manifest)
+        assert vct_names == mount_names, (
+            f"VCT name mismatch: mounts={mount_names}, vcts={vct_names}"
+        )
 
 
 class TestStatefulSetServiceCompatibility:
