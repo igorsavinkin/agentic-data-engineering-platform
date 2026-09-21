@@ -188,9 +188,12 @@ class TestProcessorCrashMidBatch:
         3. Consumer 2 (same group): re-consume from last committed offset,
            verify event 2 is redelivered (no silent data loss).
         """
+        produced_event_ids: list[str] = []
         with KafkaEventProducer(producer_settings) as producer:
             for tag in ["evt-a", "evt-b", "evt-c"]:
-                producer.publish(_make_event(tag))
+                evt = _make_event(tag)
+                produced_event_ids.append(evt.event_id)
+                producer.publish(evt)
 
         processed_event_ids: list[str] = []
 
@@ -202,7 +205,6 @@ class TestProcessorCrashMidBatch:
             callback=lambda msg: processed_event_ids.append(msg.event.event_id),
             dead_letter=_noop_dead_letter,
         ), "Should process first event"
-        first_committed = processed_event_ids[0]
 
         def crash_on_process(msg: ConsumerMessage) -> None:
             raise RuntimeError("Simulated processor crash")
@@ -241,11 +243,8 @@ class TestProcessorCrashMidBatch:
         finally:
             consumer2.close()
 
-        assert len(processed_event_ids) == 3, (
-            f"All 3 events must be processed after recovery, got {len(processed_event_ids)}"
-        )
-        assert first_committed == processed_event_ids[0], (
-            "First committed event must remain first in processing order"
+        assert processed_event_ids == produced_event_ids, (
+            "Exact events must be processed once, in order — no loss, no duplicates"
         )
 
     def test_successful_processing_commits_offset(
