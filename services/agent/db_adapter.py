@@ -1,8 +1,9 @@
 """Concrete DatabaseConnection adapter backed by a SQLAlchemy session.
 
 Implements the agent tool ``DatabaseConnection`` protocol using the
-read-only API session.  The session MUST be opened with read-only
-transaction semantics at the connection level.
+API session.  Read-only enforcement is applied at the query level via
+``validate_read_only`` (defense-in-depth; the connection itself should
+also use a read-only PostgreSQL role in production).
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from services.agent.tools import validate_read_only
 
 
 class SQLAlchemyDatabaseConnection:
@@ -21,7 +24,10 @@ class SQLAlchemyDatabaseConnection:
         self._schema = schema
 
     def execute(self, query: str, params: tuple[Any, ...] | None = None) -> list[dict[str, Any]]:
-        result = self._session.execute(text(query), dict(enumerate(params)) if params else {})
+        error = validate_read_only(query)
+        if error:
+            raise ValueError(f"Read-only violation: {error}")
+        result = self._session.execute(text(query))
         columns = list(result.keys())
         return [dict(zip(columns, row)) for row in result.fetchall()]
 
@@ -45,7 +51,9 @@ class SQLAlchemyDatabaseConnection:
         ]
 
     def get_row_count(self, schema: str, table: str) -> int:
-        query = text(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
+        safe_schema = schema.replace('"', "")
+        safe_table = table.replace('"', "")
+        query = text(f'SELECT COUNT(*) FROM "{safe_schema}"."{safe_table}"')
         return self._session.execute(query).scalar() or 0
 
     def list_tables(self, schema: str) -> list[str]:

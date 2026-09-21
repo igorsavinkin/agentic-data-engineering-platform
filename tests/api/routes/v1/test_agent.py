@@ -172,6 +172,13 @@ class TestAgentAsk:
         )
         assert response.status_code == 422
 
+    def test_whitespace_question_rejected(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/v1/agent/ask",
+            json={"question": "   "},
+        )
+        assert response.status_code == 422
+
     def test_response_sources_list(self, seeded_client: TestClient) -> None:
         response = seeded_client.post(
             "/api/v1/agent/ask",
