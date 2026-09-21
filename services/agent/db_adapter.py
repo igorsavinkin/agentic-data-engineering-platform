@@ -1,9 +1,16 @@
 """Concrete DatabaseConnection adapter backed by a SQLAlchemy session.
 
 Implements the agent tool ``DatabaseConnection`` protocol using the
-API session.  Read-only enforcement is applied at the query level via
-``validate_read_only`` (defense-in-depth; the connection itself should
-also use a read-only PostgreSQL role in production).
+API session.  Read-only is enforced at two layers:
+
+1. **Query level** — every call to :meth:`execute` passes through
+   ``validate_read_only`` which rejects any write statement.
+2. **Connection level** — for PostgreSQL sessions, ``SET TRANSACTION
+   READ ONLY`` is issued at construction time so the database itself
+   rejects writes within the request transaction.
+
+Production deployments should additionally use a dedicated read-only
+PostgreSQL role for the agent's database connection.
 """
 
 from __future__ import annotations
@@ -17,11 +24,31 @@ from services.agent.tools import validate_read_only
 
 
 class SQLAlchemyDatabaseConnection:
-    """Adapter from SQLAlchemy ``Session`` to the agent ``DatabaseConnection`` protocol."""
+    """Adapter from SQLAlchemy ``Session`` to the agent ``DatabaseConnection`` protocol.
+
+    Read-only is enforced at the query level (``validate_read_only`` in
+    ``execute``) and, for PostgreSQL, at the connection level via
+    ``SET TRANSACTION READ ONLY`` issued during construction.
+    """
 
     def __init__(self, session: Session, schema: str = "public") -> None:
         self._session = session
         self._schema = schema
+        self._enforce_connection_read_only()
+
+    def _enforce_connection_read_only(self) -> None:
+        """Set the current transaction to read-only (PostgreSQL only).
+
+        This is defense-in-depth; the primary enforcement is the
+        ``validate_read_only`` guard in ``execute``.  Production should
+        use a read-only PostgreSQL role for full connection-level safety.
+        """
+        try:
+            dialect = self._session.bind.dialect.name if self._session.bind else ""
+        except Exception:
+            return
+        if dialect == "postgresql":
+            self._session.execute(text("SET TRANSACTION READ ONLY"))
 
     def execute(self, query: str, params: tuple[Any, ...] | None = None) -> list[dict[str, Any]]:
         error = validate_read_only(query)

@@ -8,6 +8,8 @@ queries and require an integration test against a real PostgreSQL.
 
 from __future__ import annotations
 
+from typing import Generator
+
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,7 +19,7 @@ from services.agent.db_adapter import SQLAlchemyDatabaseConnection
 
 
 @pytest.fixture()
-def sqlite_session() -> Session:
+def sqlite_session() -> Generator[Session, None, None]:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
