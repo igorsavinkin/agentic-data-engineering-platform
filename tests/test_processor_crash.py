@@ -211,8 +211,9 @@ class TestProcessorCrashMidBatch:
 
         with caplog.at_level(logging.ERROR, logger="libs.common.kafka_consumer"):
             with pytest.raises(RuntimeError, match="Simulated processor crash"):
-                consumer1.process_next(
-                    process=crash_on_process,
+                _process_one(
+                    consumer1,
+                    callback=crash_on_process,
                     dead_letter=_noop_dead_letter,
                 )
 
@@ -304,8 +305,9 @@ class TestProcessorCrashMidBatch:
 
         with caplog.at_level(logging.ERROR, logger="libs.common.kafka_consumer"):
             with pytest.raises(RuntimeError, match="Processor exploded"):
-                consumer.process_next(
-                    process=crashing_process,
+                _process_one(
+                    consumer,
+                    callback=crashing_process,
                     dead_letter=_noop_dead_letter,
                 )
 
