@@ -538,3 +538,89 @@ def _derive_overall_quality(
         return "degraded"
 
     return "healthy"
+
+
+class SourceHealthDetail(BaseModel):
+    """Per-source health detail for agent consumption."""
+
+    source_name: str
+    overall_status: str
+    degradation_state: str
+    freshness_state: str
+    freshness_age_seconds: Optional[float] = None
+    assessed_at: str
+    reasons: Optional[dict[str, Any]] = None
+    signals: Optional[dict[str, Any]] = None
+
+
+class SourceHealthStatusResult(BaseModel):
+    """Aggregated source health status for agent reasoning."""
+
+    overall_status: str
+    sources: list[SourceHealthDetail] = Field(default_factory=list)
+    total_sources: int = 0
+    healthy_count: int = 0
+    degraded_count: int = 0
+    stale_count: int = 0
+
+
+class SourceHealthProvider(Protocol):
+    """Protocol for source health data access.
+
+    Abstracts the repository layer so the agent tool can be tested
+    without a live database.
+    """
+
+    def list_source_health(self, source_name: Optional[str] = None) -> list[dict[str, Any]]: ...
+
+
+def get_source_health(
+    provider: SourceHealthProvider,
+    source_name: Optional[str] = None,
+) -> ToolResponse:
+    """Report source-level health: freshness, availability, error rates, degradation."""
+    try:
+        sources_raw = provider.list_source_health(source_name=source_name)
+
+        sources = [
+            SourceHealthDetail(
+                source_name=s["source_name"],
+                overall_status=s["overall_status"],
+                degradation_state=s["degradation_state"],
+                freshness_state=s["freshness_state"],
+                freshness_age_seconds=s.get("freshness_age_seconds"),
+                assessed_at=s["assessed_at"],
+                reasons=s.get("reasons"),
+                signals=s.get("signals"),
+            )
+            for s in sources_raw
+        ]
+
+        healthy = sum(1 for s in sources if s.overall_status == "healthy")
+        degraded = sum(1 for s in sources if s.overall_status == "degraded")
+        stale = sum(1 for s in sources if s.overall_status == "stale")
+        overall = _derive_overall_source_health(sources)
+
+        result = SourceHealthStatusResult(
+            overall_status=overall,
+            sources=sources,
+            total_sources=len(sources),
+            healthy_count=healthy,
+            degraded_count=degraded,
+            stale_count=stale,
+        )
+        return ToolResponse(success=True, data=result.model_dump())
+    except Exception as e:
+        return ToolResponse(success=False, error=str(e))
+
+
+def _derive_overall_source_health(sources: list[SourceHealthDetail]) -> str:
+    if not sources:
+        return "unknown"
+    if any(s.overall_status == "degraded" for s in sources):
+        return "degraded"
+    if any(s.overall_status == "stale" for s in sources):
+        return "stale"
+    if all(s.overall_status == "healthy" for s in sources):
+        return "healthy"
+    return "unknown"

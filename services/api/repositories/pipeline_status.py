@@ -77,6 +77,7 @@ class SourceHealthEntry:
     freshness_age_seconds: Optional[float]
     assessed_at: str
     reasons: Optional[dict[str, Any]]
+    signals: Optional[dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,7 @@ class PipelineStatusRepository:
                     freshness_age_seconds=row.freshness_age_seconds,
                     assessed_at=row.assessed_at.isoformat(),
                     reasons=row.reasons,
+                    signals=row.signals,
                 )
             )
             if len(items) >= limit:

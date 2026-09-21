@@ -1,4 +1,4 @@
-"""Tests for read-only SQL, dataset metadata, pipeline status, and data quality agent tools."""
+"""Tests for read-only SQL, dataset metadata, pipeline status, data quality, and source health agent tools."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from services.agent.tools import (
     PipelineAlert,
     PipelineRunSummary,
     PipelineStatusResult,
+    SourceHealthDetail,
     SourceHealthSummary,
     SQLResult,
     TableMetadata,
@@ -19,12 +20,14 @@ from services.agent.tools import (
     _derive_alerts,
     _derive_overall_pipeline_health,
     _derive_overall_quality,
+    _derive_overall_source_health,
     _last_successful_write,
     _worst_severity,
     execute_read_only_sql,
     get_data_quality,
     get_dataset_metadata,
     get_pipeline_status,
+    get_source_health,
     validate_read_only,
 )
 
@@ -1112,3 +1115,287 @@ class TestDeriveOverallQuality:
 
     def test_unknown_with_empty_summary(self) -> None:
         assert _derive_overall_quality([], []) == "unknown"
+
+
+class FakeSourceHealthProvider:
+    """Fake SourceHealthProvider for testing."""
+
+    def __init__(
+        self,
+        sources: list[dict[str, Any]] | None = None,
+        raise_error: bool = False,
+    ) -> None:
+        self._sources = sources or []
+        self._raise_error = raise_error
+        self.last_source_name: str | None = None
+
+    def list_source_health(self, source_name: str | None = None) -> list[dict[str, Any]]:
+        if self._raise_error:
+            raise RuntimeError("db down")
+        self.last_source_name = source_name
+        if source_name is not None:
+            return [s for s in self._sources if s["source_name"] == source_name]
+        return list(self._sources)
+
+
+class TestGetSourceHealth:
+    def test_all_healthy(self) -> None:
+        provider = FakeSourceHealthProvider(
+            sources=[
+                {
+                    "source_name": "api_a",
+                    "overall_status": "healthy",
+                    "degradation_state": "healthy",
+                    "freshness_state": "fresh",
+                    "freshness_age_seconds": 60.0,
+                    "assessed_at": "2026-09-21T10:00:00",
+                    "reasons": None,
+                    "signals": {"success_ratio": 1.0, "failed_fetches": 0},
+                },
+                {
+                    "source_name": "api_b",
+                    "overall_status": "healthy",
+                    "degradation_state": "healthy",
+                    "freshness_state": "fresh",
+                    "freshness_age_seconds": 120.0,
+                    "assessed_at": "2026-09-21T10:00:00",
+                    "reasons": None,
+                    "signals": None,
+                },
+            ]
+        )
+
+        response = get_source_health(provider)
+
+        assert response.success is True
+        data = response.data
+        assert data["overall_status"] == "healthy"
+        assert data["total_sources"] == 2
+        assert data["healthy_count"] == 2
+        assert data["degraded_count"] == 0
+        assert data["stale_count"] == 0
+        assert len(data["sources"]) == 2
+        assert data["sources"][0]["source_name"] == "api_a"
+        assert data["sources"][0]["signals"]["success_ratio"] == 1.0
+
+    def test_degraded_source(self) -> None:
+        provider = FakeSourceHealthProvider(
+            sources=[
+                {
+                    "source_name": "api_a",
+                    "overall_status": "healthy",
+                    "degradation_state": "healthy",
+                    "freshness_state": "fresh",
+                    "freshness_age_seconds": 30.0,
+                    "assessed_at": "2026-09-21T10:00:00",
+                    "reasons": None,
+                    "signals": None,
+                },
+                {
+                    "source_name": "api_b",
+                    "overall_status": "degraded",
+                    "degradation_state": "unreachable",
+                    "freshness_state": "fresh",
+                    "freshness_age_seconds": 10.0,
+                    "assessed_at": "2026-09-21T10:00:00",
+                    "reasons": {"detail": "Connection refused"},
+                    "signals": {"success_ratio": 0.0, "failed_fetches": 5},
+                },
+            ]
+        )
+
+        response = get_source_health(provider)
+
+        assert response.success is True
+        data = response.data
+        assert data["overall_status"] == "degraded"
+        assert data["degraded_count"] == 1
+        assert data["healthy_count"] == 1
+        degraded = [s for s in data["sources"] if s["overall_status"] == "degraded"][0]
+        assert degraded["degradation_state"] == "unreachable"
+        assert degraded["signals"]["failed_fetches"] == 5
+
+    def test_stale_source(self) -> None:
+        provider = FakeSourceHealthProvider(
+            sources=[
+                {
+                    "source_name": "api_a",
+                    "overall_status": "stale",
+                    "degradation_state": "healthy",
+                    "freshness_state": "stale",
+                    "freshness_age_seconds": 7200.0,
+                    "assessed_at": "2026-09-21T08:00:00",
+                    "reasons": None,
+                    "signals": None,
+                },
+            ]
+        )
+
+        response = get_source_health(provider)
+
+        assert response.success is True
+        data = response.data
+        assert data["overall_status"] == "stale"
+        assert data["stale_count"] == 1
+
+    def test_empty_sources(self) -> None:
+        provider = FakeSourceHealthProvider(sources=[])
+
+        response = get_source_health(provider)
+
+        assert response.success is True
+        data = response.data
+        assert data["overall_status"] == "unknown"
+        assert data["total_sources"] == 0
+
+    def test_filter_by_source_name(self) -> None:
+        provider = FakeSourceHealthProvider(
+            sources=[
+                {
+                    "source_name": "api_a",
+                    "overall_status": "healthy",
+                    "degradation_state": "healthy",
+                    "freshness_state": "fresh",
+                    "freshness_age_seconds": 30.0,
+                    "assessed_at": "2026-09-21T10:00:00",
+                    "reasons": None,
+                    "signals": None,
+                },
+                {
+                    "source_name": "api_b",
+                    "overall_status": "degraded",
+                    "degradation_state": "rate_limited",
+                    "freshness_state": "fresh",
+                    "freshness_age_seconds": 15.0,
+                    "assessed_at": "2026-09-21T10:00:00",
+                    "reasons": None,
+                    "signals": None,
+                },
+            ]
+        )
+
+        response = get_source_health(provider, source_name="api_a")
+
+        assert response.success is True
+        data = response.data
+        assert data["total_sources"] == 1
+        assert data["sources"][0]["source_name"] == "api_a"
+        assert provider.last_source_name == "api_a"
+
+    def test_provider_error(self) -> None:
+        provider = FakeSourceHealthProvider(raise_error=True)
+
+        response = get_source_health(provider)
+
+        assert response.success is False
+        assert response.error is not None
+        assert "db down" in response.error
+
+    def test_surfaces_degradation_state_and_signals(self) -> None:
+        provider = FakeSourceHealthProvider(
+            sources=[
+                {
+                    "source_name": "api_a",
+                    "overall_status": "degraded",
+                    "degradation_state": "partially_parseable",
+                    "freshness_state": "fresh",
+                    "freshness_age_seconds": 5.0,
+                    "assessed_at": "2026-09-21T10:00:00",
+                    "reasons": {"parse_error": "3 of 100 records malformed"},
+                    "signals": {
+                        "malformed_ratio": 0.03,
+                        "success_ratio": 0.97,
+                        "failed_fetches": 0,
+                    },
+                },
+            ]
+        )
+
+        response = get_source_health(provider)
+
+        assert response.success is True
+        source = response.data["sources"][0]
+        assert source["degradation_state"] == "partially_parseable"
+        assert source["signals"]["malformed_ratio"] == 0.03
+        assert source["reasons"]["parse_error"] == "3 of 100 records malformed"
+
+
+class TestDeriveOverallSourceHealth:
+    def test_empty_returns_unknown(self) -> None:
+        assert _derive_overall_source_health([]) == "unknown"
+
+    def test_all_healthy(self) -> None:
+        sources = [
+            SourceHealthDetail(
+                source_name="a",
+                overall_status="healthy",
+                degradation_state="healthy",
+                freshness_state="fresh",
+                assessed_at="2026-09-21T10:00:00",
+            ),
+        ]
+        assert _derive_overall_source_health(sources) == "healthy"
+
+    def test_degraded_takes_priority(self) -> None:
+        sources = [
+            SourceHealthDetail(
+                source_name="a",
+                overall_status="healthy",
+                degradation_state="healthy",
+                freshness_state="fresh",
+                assessed_at="2026-09-21T10:00:00",
+            ),
+            SourceHealthDetail(
+                source_name="b",
+                overall_status="degraded",
+                degradation_state="unreachable",
+                freshness_state="fresh",
+                assessed_at="2026-09-21T10:00:00",
+            ),
+            SourceHealthDetail(
+                source_name="c",
+                overall_status="stale",
+                degradation_state="healthy",
+                freshness_state="stale",
+                assessed_at="2026-09-21T08:00:00",
+            ),
+        ]
+        assert _derive_overall_source_health(sources) == "degraded"
+
+    def test_stale_when_no_degraded(self) -> None:
+        sources = [
+            SourceHealthDetail(
+                source_name="a",
+                overall_status="healthy",
+                degradation_state="healthy",
+                freshness_state="fresh",
+                assessed_at="2026-09-21T10:00:00",
+            ),
+            SourceHealthDetail(
+                source_name="b",
+                overall_status="stale",
+                degradation_state="healthy",
+                freshness_state="stale",
+                assessed_at="2026-09-21T08:00:00",
+            ),
+        ]
+        assert _derive_overall_source_health(sources) == "stale"
+
+    def test_mixed_known_and_unknown(self) -> None:
+        sources = [
+            SourceHealthDetail(
+                source_name="a",
+                overall_status="healthy",
+                degradation_state="healthy",
+                freshness_state="fresh",
+                assessed_at="2026-09-21T10:00:00",
+            ),
+            SourceHealthDetail(
+                source_name="b",
+                overall_status="unknown",
+                degradation_state="unknown",
+                freshness_state="never_collected",
+                assessed_at="2026-09-21T10:00:00",
+            ),
+        ]
+        assert _derive_overall_source_health(sources) == "unknown"
