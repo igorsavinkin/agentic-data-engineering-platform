@@ -90,6 +90,30 @@ kafka:
       cpu: 500m
       memory: 512Mi
 
+minio:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  storage:
+    size: 512Mi
+
+postgresql:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  storage:
+    size: 512Mi
+
 # Optional resources remain disabled in local development.
 ingress:
   enabled: false

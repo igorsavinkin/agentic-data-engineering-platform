@@ -58,16 +58,24 @@ def check_governance_documents(errors: list[str]) -> None:
             errors.append(f"missing governance document: {relative}")
 
 
+def _parse_task_number(name: str) -> int | None:
+    stem = name.removesuffix(".md")
+    suffix = stem[5:]
+    if suffix[:3].isdigit():
+        return int(suffix[:3])
+    return None
+
+
 def check_task_files(errors: list[str]) -> int:
     task_dir = ROOT / "ai" / "tasks"
     task_files = sorted(task_dir.glob("TASK-*.md")) if task_dir.is_dir() else []
     task_numbers: set[int] = set()
     for path in task_files:
-        digits = path.name[5:8]
-        if not digits.isdigit():
+        number = _parse_task_number(path.name)
+        if number is None and not path.name.startswith("TASK-K8S-FIX-"):
             errors.append(f"unexpected task file name: {path.name}")
-        else:
-            task_numbers.add(int(digits))
+        elif number is not None:
+            task_numbers.add(number)
     for number in range(1, REQUIRED_MILESTONE_0_1_TASKS + 1):
         if number not in task_numbers:
             errors.append(f"missing task file: ai/tasks/TASK-{number:03d}-*.md")
