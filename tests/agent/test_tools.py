@@ -1,10 +1,11 @@
-"""Tests for read-only SQL, dataset metadata, and pipeline status agent tools."""
+"""Tests for read-only SQL, dataset metadata, pipeline status, and data quality agent tools."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from services.agent.tools import (
+    DataQualityStatusResult,
     DatasetMetadataResult,
     PipelineAlert,
     PipelineRunSummary,
@@ -17,8 +18,11 @@ from services.agent.tools import (
     _compute_processing_rate,
     _derive_alerts,
     _derive_overall_pipeline_health,
+    _derive_overall_quality,
     _last_successful_write,
+    _worst_severity,
     execute_read_only_sql,
+    get_data_quality,
     get_dataset_metadata,
     get_pipeline_status,
     validate_read_only,
@@ -842,3 +846,269 @@ class TestLastSuccessfulWrite:
 
         result = PipelineStatusResult(**response.data)
         assert result.last_successful_write_at == "2026-09-20T10:05:00"
+
+
+class FakeDataQualityProvider:
+    """Deterministic in-memory data quality provider for testing."""
+
+    def __init__(
+        self,
+        checks: list[dict[str, Any]] | None = None,
+        summary: list[dict[str, Any]] | None = None,
+        raise_error: Exception | None = None,
+    ) -> None:
+        self._checks = checks if checks is not None else []
+        self._summary = summary if summary is not None else []
+        self._raise_error = raise_error
+        self.last_limit: int | None = None
+        self.last_check_name: str | None = None
+
+    def list_recent_checks(
+        self, limit: int = 10, check_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        if self._raise_error:
+            raise self._raise_error
+        self.last_limit = limit
+        self.last_check_name = check_name
+        return self._checks
+
+    def get_quality_summary(self) -> list[dict[str, Any]]:
+        if self._raise_error:
+            raise self._raise_error
+        return self._summary
+
+
+class TestGetDataQuality:
+    def test_healthy_quality(self) -> None:
+        checks = [
+            {
+                "check_name": "required_fields",
+                "severity": "error",
+                "passed": True,
+                "message": "OK",
+                "checked_at": "2026-09-20T10:00:00",
+                "records_checked": 500,
+                "failed_records": 0,
+                "details": None,
+            }
+        ]
+        summary = [
+            {
+                "check_name": "required_fields",
+                "total_runs": 10,
+                "passed_runs": 10,
+                "failed_runs": 0,
+                "last_checked_at": "2026-09-20T10:00:00",
+                "severity": "error",
+            }
+        ]
+        provider = FakeDataQualityProvider(checks=checks, summary=summary)
+
+        response = get_data_quality(provider)
+
+        assert response.success is True
+        result = DataQualityStatusResult(**response.data)
+        assert result.overall_status == "healthy"
+        assert result.total_failures == 0
+        assert result.checks_with_failures == 0
+        assert result.worst_severity is None
+        assert len(result.recent_checks) == 1
+        assert result.recent_checks[0].passed is True
+
+    def test_degraded_on_error_failures(self) -> None:
+        checks = [
+            {
+                "check_name": "price_validity",
+                "severity": "error",
+                "passed": False,
+                "message": "Negative prices found",
+                "checked_at": "2026-09-20T10:00:00",
+                "records_checked": 500,
+                "failed_records": 15,
+            }
+        ]
+        summary = [
+            {
+                "check_name": "price_validity",
+                "total_runs": 10,
+                "passed_runs": 8,
+                "failed_runs": 2,
+                "last_checked_at": "2026-09-20T10:00:00",
+                "severity": "error",
+            }
+        ]
+        provider = FakeDataQualityProvider(checks=checks, summary=summary)
+
+        response = get_data_quality(provider)
+
+        result = DataQualityStatusResult(**response.data)
+        assert result.overall_status == "degraded"
+        assert result.total_failures == 2
+        assert result.checks_with_failures == 1
+        assert result.worst_severity == "error"
+
+    def test_degraded_on_warning_failures(self) -> None:
+        checks = [
+            {
+                "check_name": "duplicates",
+                "severity": "warning",
+                "passed": False,
+                "checked_at": "2026-09-20T10:00:00",
+            }
+        ]
+        summary = [
+            {
+                "check_name": "duplicates",
+                "total_runs": 5,
+                "passed_runs": 3,
+                "failed_runs": 2,
+                "last_checked_at": "2026-09-20T10:00:00",
+                "severity": "warning",
+            }
+        ]
+        provider = FakeDataQualityProvider(checks=checks, summary=summary)
+
+        response = get_data_quality(provider)
+
+        result = DataQualityStatusResult(**response.data)
+        assert result.overall_status == "degraded"
+        assert result.worst_severity == "warning"
+
+    def test_unknown_when_no_summary(self) -> None:
+        provider = FakeDataQualityProvider()
+
+        response = get_data_quality(provider)
+
+        result = DataQualityStatusResult(**response.data)
+        assert result.overall_status == "unknown"
+        assert result.total_failures == 0
+
+    def test_limit_and_filter_passed_through(self) -> None:
+        provider = FakeDataQualityProvider()
+        get_data_quality(provider, limit=5, check_name="freshness")
+
+        assert provider.last_limit == 5
+        assert provider.last_check_name == "freshness"
+
+    def test_provider_error(self) -> None:
+        provider = FakeDataQualityProvider(raise_error=RuntimeError("db down"))
+
+        response = get_data_quality(provider)
+
+        assert response.success is False
+        assert response.error is not None
+        assert "db down" in response.error
+
+    def test_pass_rate_computed(self) -> None:
+        summary = [
+            {
+                "check_name": "required_fields",
+                "total_runs": 20,
+                "passed_runs": 15,
+                "failed_runs": 5,
+                "last_checked_at": "2026-09-20T10:00:00",
+                "severity": "error",
+            }
+        ]
+        provider = FakeDataQualityProvider(summary=summary)
+
+        response = get_data_quality(provider)
+
+        result = DataQualityStatusResult(**response.data)
+        assert result.summary[0].pass_rate == 0.75
+
+    def test_multiple_checks_aggregated(self) -> None:
+        summary = [
+            {
+                "check_name": "required_fields",
+                "total_runs": 10,
+                "passed_runs": 10,
+                "failed_runs": 0,
+                "last_checked_at": "2026-09-20T10:00:00",
+                "severity": "error",
+            },
+            {
+                "check_name": "duplicates",
+                "total_runs": 10,
+                "passed_runs": 7,
+                "failed_runs": 3,
+                "last_checked_at": "2026-09-20T10:00:00",
+                "severity": "warning",
+            },
+        ]
+        provider = FakeDataQualityProvider(summary=summary)
+
+        response = get_data_quality(provider)
+
+        result = DataQualityStatusResult(**response.data)
+        assert result.total_failures == 3
+        assert result.checks_with_failures == 1
+        assert len(result.summary) == 2
+
+
+class TestWorstSeverity:
+    def test_no_failures_returns_none(self) -> None:
+        checks = [{"passed": True, "severity": "error"}]
+        assert _worst_severity(checks) is None
+
+    def test_error_worst(self) -> None:
+        checks = [
+            {"passed": False, "severity": "warning"},
+            {"passed": False, "severity": "error"},
+        ]
+        assert _worst_severity(checks) == "error"
+
+    def test_warning_when_no_errors(self) -> None:
+        checks = [{"passed": False, "severity": "warning"}]
+        assert _worst_severity(checks) == "warning"
+
+
+class TestDeriveOverallQuality:
+    def test_healthy_with_no_failures(self) -> None:
+        from services.agent.tools import QualityCheckSummary
+
+        summary = [
+            QualityCheckSummary(
+                check_name="test",
+                total_runs=10,
+                passed_runs=10,
+                failed_runs=0,
+                last_checked_at="2026-09-20T10:00:00",
+                severity="error",
+            )
+        ]
+        assert _derive_overall_quality(summary, []) == "healthy"
+
+    def test_degraded_on_error_summary_failures(self) -> None:
+        from services.agent.tools import QualityCheckSummary
+
+        summary = [
+            QualityCheckSummary(
+                check_name="test",
+                total_runs=10,
+                passed_runs=8,
+                failed_runs=2,
+                last_checked_at="2026-09-20T10:00:00",
+                severity="error",
+            )
+        ]
+        assert _derive_overall_quality(summary, []) == "degraded"
+
+    def test_degraded_on_recent_failures(self) -> None:
+        from services.agent.tools import QualityCheckSummary
+
+        summary = [
+            QualityCheckSummary(
+                check_name="test",
+                total_runs=10,
+                passed_runs=10,
+                failed_runs=0,
+                last_checked_at="2026-09-20T10:00:00",
+                severity="warning",
+            )
+        ]
+        recent = [{"passed": False, "severity": "warning"}]
+        assert _derive_overall_quality(summary, recent) == "degraded"
+
+    def test_unknown_with_empty_summary(self) -> None:
+        assert _derive_overall_quality([], []) == "unknown"

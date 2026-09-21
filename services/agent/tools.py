@@ -1,8 +1,8 @@
-"""Read-only SQL, dataset metadata, and pipeline status agent tools.
+"""Read-only SQL, dataset metadata, pipeline status, and data quality agent tools.
 
 Tools enforce read-only constraints at the query level: DDL, DML,
 and any non-SELECT statements are rejected before execution.
-Pipeline status tool aggregates from existing health/metrics endpoints.
+Pipeline status and data quality tools aggregate from existing endpoints.
 """
 
 from __future__ import annotations
@@ -392,3 +392,149 @@ def _derive_alerts(
             )
 
     return alerts
+
+
+class QualityCheckDetail(BaseModel):
+    """Single quality check result for agent consumption."""
+
+    check_name: str
+    severity: str
+    passed: bool
+    message: Optional[str] = None
+    checked_at: str
+    records_checked: int = 0
+    failed_records: int = 0
+    details: Optional[dict[str, Any]] = None
+
+
+class QualityCheckSummary(BaseModel):
+    """Aggregate quality stats per check name."""
+
+    check_name: str
+    total_runs: int
+    passed_runs: int
+    failed_runs: int
+    last_checked_at: str
+    severity: str
+    pass_rate: float = 0.0
+
+
+class DataQualityStatusResult(BaseModel):
+    """Aggregated data quality status for agent reasoning."""
+
+    overall_status: str
+    recent_checks: list[QualityCheckDetail] = Field(default_factory=list)
+    summary: list[QualityCheckSummary] = Field(default_factory=list)
+    total_failures: int = 0
+    checks_with_failures: int = 0
+    worst_severity: Optional[str] = None
+
+
+class DataQualityProvider(Protocol):
+    """Protocol for data quality data access.
+
+    Abstracts the repository layer so the agent tool can be tested
+    without a live database.
+    """
+
+    def list_recent_checks(
+        self, limit: int = 10, check_name: Optional[str] = None
+    ) -> list[dict[str, Any]]: ...
+    def get_quality_summary(self) -> list[dict[str, Any]]: ...
+
+
+def get_data_quality(
+    provider: DataQualityProvider,
+    limit: int = 10,
+    check_name: Optional[str] = None,
+) -> ToolResponse:
+    """Retrieve data quality check results, failure counts, and trends."""
+    try:
+        recent_raw = provider.list_recent_checks(limit=limit, check_name=check_name)
+        summary_raw = provider.get_quality_summary()
+
+        recent_checks = [
+            QualityCheckDetail(
+                check_name=r["check_name"],
+                severity=r["severity"],
+                passed=r["passed"],
+                message=r.get("message"),
+                checked_at=r["checked_at"],
+                records_checked=int(r.get("records_checked") or 0),
+                failed_records=int(r.get("failed_records") or 0),
+                details=r.get("details"),
+            )
+            for r in recent_raw
+        ]
+
+        summary = [
+            QualityCheckSummary(
+                check_name=s["check_name"],
+                total_runs=int(s["total_runs"]),
+                passed_runs=int(s["passed_runs"]),
+                failed_runs=int(s["failed_runs"]),
+                last_checked_at=s["last_checked_at"],
+                severity=s["severity"],
+                pass_rate=(
+                    round(int(s["passed_runs"]) / int(s["total_runs"]), 4)
+                    if int(s["total_runs"]) > 0
+                    else 0.0
+                ),
+            )
+            for s in summary_raw
+        ]
+
+        total_failures = sum(s.failed_runs for s in summary)
+        checks_with_failures = sum(1 for s in summary if s.failed_runs > 0)
+        worst = _worst_severity(recent_raw)
+        overall = _derive_overall_quality(summary, recent_raw)
+
+        result = DataQualityStatusResult(
+            overall_status=overall,
+            recent_checks=recent_checks,
+            summary=summary,
+            total_failures=total_failures,
+            checks_with_failures=checks_with_failures,
+            worst_severity=worst,
+        )
+        return ToolResponse(success=True, data=result.model_dump())
+    except Exception as e:
+        return ToolResponse(success=False, error=str(e))
+
+
+_SEVERITY_RANK = {"error": 3, "warning": 2, "info": 1}
+
+
+def _worst_severity(checks: list[dict[str, Any]]) -> Optional[str]:
+    worst: Optional[str] = None
+    worst_rank = 0
+    for c in checks:
+        if not c.get("passed"):
+            sev = c.get("severity", "info")
+            rank = _SEVERITY_RANK.get(sev, 0)
+            if rank > worst_rank:
+                worst_rank = rank
+                worst = sev
+    return worst
+
+
+def _derive_overall_quality(
+    summary: list[QualityCheckSummary],
+    recent_checks: list[dict[str, Any]],
+) -> str:
+    if not summary:
+        return "unknown"
+
+    has_error_failures = any(s.failed_runs > 0 and s.severity == "error" for s in summary)
+    if has_error_failures:
+        return "degraded"
+
+    has_recent_failures = any(not c.get("passed") for c in recent_checks)
+    if has_recent_failures:
+        return "degraded"
+
+    has_any_failures = any(s.failed_runs > 0 for s in summary)
+    if has_any_failures:
+        return "degraded"
+
+    return "healthy"
