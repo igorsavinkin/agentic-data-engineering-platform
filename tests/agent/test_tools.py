@@ -553,7 +553,7 @@ class TestGetPipelineStatus:
         assert "db connection lost" in response.error
 
     def test_multiple_alerts(self) -> None:
-        runs = [
+        runs: list[dict[str, Any]] = [
             {
                 "run_type": "ingestion",
                 "overall_status": "failed",
@@ -815,7 +815,7 @@ class TestProcessingRate:
 
 class TestLastSuccessfulWrite:
     def test_last_write_from_healthy_run(self) -> None:
-        runs = [
+        runs: list[dict[str, Any]] = [
             {"overall_status": "healthy", "finished_at": "2026-09-20T10:05:00"},
             {"overall_status": "failed", "finished_at": None},
         ]

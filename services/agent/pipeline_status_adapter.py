@@ -6,9 +6,8 @@ and Kafka metrics layer, avoiding duplication of business logic.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
-
-from services.api.repositories.pipeline_status import PipelineStatusRepository
 
 
 class RepositoryPipelineStatusProvider:
@@ -16,8 +15,8 @@ class RepositoryPipelineStatusProvider:
 
     def __init__(
         self,
-        repository: PipelineStatusRepository,
-        lag_samples_fn: Any = None,
+        repository: Any,
+        lag_samples_fn: Callable[[], list[Any]] | None = None,
     ) -> None:
         self._repo = repository
         self._lag_samples_fn = lag_samples_fn
@@ -38,7 +37,7 @@ class RepositoryPipelineStatusProvider:
 
     def get_total_run_count(self) -> int:
         result = self._repo.list_pipeline_runs(page=1, page_size=1)
-        return result.total
+        return int(result.total)
 
     def list_source_health(self) -> list[dict[str, Any]]:
         result = self._repo.list_source_health()

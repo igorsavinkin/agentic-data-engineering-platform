@@ -288,7 +288,7 @@ def _aggregate_lag(lag_samples: list[dict[str, Any]]) -> ConsumerLagSummary:
     topic_lag: dict[str, int] = {}
     for s in lag_samples:
         topic = s.get("topic", "unknown")
-        topic_lag[topic] = topic_lag.get(topic, 0) + s.get("lag", 0)
+        topic_lag[topic] = topic_lag.get(topic, 0) + int(s.get("lag") or 0)
 
     total = sum(topic_lag.values())
     topics = [{"topic": t, "lag": lag} for t, lag in sorted(topic_lag.items())]
