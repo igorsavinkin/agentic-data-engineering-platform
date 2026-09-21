@@ -262,3 +262,18 @@ class QualitySummaryListResponse(BaseModel):
     """Quality summary list."""
 
     items: list[QualitySummaryResponse]
+
+
+class AgentAskRequest(BaseModel):
+    """Request body for the agent ask endpoint."""
+
+    question: str = Field(min_length=1, max_length=2000, pattern=r".*\S.*")
+
+
+class AgentAskResponse(APIResponse):
+    """Agent response envelope with answer and metadata."""
+
+    answer: str
+    intent: str
+    confidence: float
+    sources: list[str]
