@@ -231,6 +231,9 @@ class TestGraphDeterminism:
 
 
 class TestComposeResponse:
+    def _apply(self, state: AgentState, updates: dict) -> AgentState:
+        return state.model_copy(update=updates)
+
     def test_compose_with_successful_results(self) -> None:
         state = AgentState(
             question="test",
@@ -247,7 +250,7 @@ class TestComposeResponse:
         )
         ctx = GraphContext()
 
-        result = _compose_response_node(state, ctx)
+        result = self._apply(state, _compose_response_node(state, ctx))
 
         assert result.response is not None
         assert (
@@ -259,7 +262,7 @@ class TestComposeResponse:
         state = AgentState(question="test")
         ctx = GraphContext()
 
-        result = _compose_response_node(state, ctx)
+        result = self._apply(state, _compose_response_node(state, ctx))
 
         assert result.response is not None
         assert result.response.intent == IntentType.GENERAL
@@ -281,7 +284,7 @@ class TestComposeResponse:
         )
         ctx = GraphContext()
 
-        result = _compose_response_node(state, ctx)
+        result = self._apply(state, _compose_response_node(state, ctx))
 
         assert result.response is not None
         assert "error" in result.response.answer.lower()

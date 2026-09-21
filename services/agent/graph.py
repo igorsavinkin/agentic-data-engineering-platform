@@ -1,17 +1,28 @@
 """LangGraph graph construction and routing for the Data Engineer Agent.
 
-Connects intent classification to tool selection and response generation.
-The graph routes based on classified intent, invokes the appropriate tools,
-and composes a final response from tool results.
+Uses the ``langgraph`` library to build a compiled ``StateGraph`` that
+routes based on classified intent, invokes the appropriate tools, and
+composes a final response from tool results.
 
-Graph structure:
-    classify → route → [tool_node | fallback] → compose_response
+Graph structure::
+
+    START → classify → [conditional edges] → compose → END
+                           │
+              ┌────────────┼────────────────┬──────────────┐
+              ▼            ▼                ▼              ▼
+         execute_sql  pipeline_status  data_quality  source_health
+              │                                              │
+              └──────────────────────────────────────────────┘
+                           │
+                      fallback
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+
+from langgraph.graph import END, START, StateGraph
 
 from services.agent.classifier import classify_intent
 from services.agent.intents import ClassifiedIntent, IntentType
@@ -40,8 +51,6 @@ class GraphContext:
     source_health_provider: Optional[SourceHealthProvider] = None
 
 
-NodeFunction = Callable[[AgentState, GraphContext], AgentState]
-
 _INTENT_TOOL_MAP: dict[IntentType, str] = {
     IntentType.PRICE_ANALYTICS: "execute_sql",
     IntentType.PIPELINE_STATUS: "pipeline_status",
@@ -51,29 +60,24 @@ _INTENT_TOOL_MAP: dict[IntentType, str] = {
 }
 
 
-def _classify_node(state: AgentState, ctx: GraphContext) -> AgentState:
+# ---------------------------------------------------------------------------
+# Node logic (module-level for testability)
+# ---------------------------------------------------------------------------
+
+
+def _classify_node_fn(state: AgentState, ctx: GraphContext) -> dict[str, Any]:
     classified = classify_intent(state.question)
-    return state.model_copy(
-        update={
-            "classified_intent": classified,
-            "messages": state.messages
-            + [
-                Message(
-                    role="system",
-                    content=f"Classified intent: {classified.intent.value} (confidence: {classified.confidence})",
-                )
-            ],
-        }
+    msg = Message(
+        role="system",
+        content=f"Classified intent: {classified.intent.value} (confidence: {classified.confidence})",
     )
+    return {
+        "classified_intent": classified,
+        "messages": state.messages + [msg],
+    }
 
 
-def _route_intent(classified: ClassifiedIntent) -> str:
-    if classified.intent == IntentType.GENERAL:
-        return "fallback"
-    return _INTENT_TOOL_MAP.get(classified.intent, "fallback")
-
-
-def _execute_sql_node(state: AgentState, ctx: GraphContext) -> AgentState:
+def _execute_sql_node_fn(state: AgentState, ctx: GraphContext) -> dict[str, Any]:
     tool_name = "get_dataset_metadata"
     request = ToolCallRequest(tool_name=tool_name, parameters={})
     try:
@@ -96,15 +100,13 @@ def _execute_sql_node(state: AgentState, ctx: GraphContext) -> AgentState:
     except Exception as exc:
         result = ToolCallResult(tool_name=tool_name, success=False, error=str(exc))
 
-    return state.model_copy(
-        update={
-            "tool_calls": state.tool_calls + [request],
-            "tool_results": state.tool_results + [result],
-        }
-    )
+    return {
+        "tool_calls": state.tool_calls + [request],
+        "tool_results": state.tool_results + [result],
+    }
 
 
-def _pipeline_status_node(state: AgentState, ctx: GraphContext) -> AgentState:
+def _pipeline_status_node_fn(state: AgentState, ctx: GraphContext) -> dict[str, Any]:
     tool_name = "get_pipeline_status"
     request = ToolCallRequest(tool_name=tool_name, parameters={})
     try:
@@ -127,15 +129,13 @@ def _pipeline_status_node(state: AgentState, ctx: GraphContext) -> AgentState:
     except Exception as exc:
         result = ToolCallResult(tool_name=tool_name, success=False, error=str(exc))
 
-    return state.model_copy(
-        update={
-            "tool_calls": state.tool_calls + [request],
-            "tool_results": state.tool_results + [result],
-        }
-    )
+    return {
+        "tool_calls": state.tool_calls + [request],
+        "tool_results": state.tool_results + [result],
+    }
 
 
-def _data_quality_node(state: AgentState, ctx: GraphContext) -> AgentState:
+def _data_quality_node_fn(state: AgentState, ctx: GraphContext) -> dict[str, Any]:
     tool_name = "get_data_quality"
     request = ToolCallRequest(tool_name=tool_name, parameters={})
     try:
@@ -158,15 +158,13 @@ def _data_quality_node(state: AgentState, ctx: GraphContext) -> AgentState:
     except Exception as exc:
         result = ToolCallResult(tool_name=tool_name, success=False, error=str(exc))
 
-    return state.model_copy(
-        update={
-            "tool_calls": state.tool_calls + [request],
-            "tool_results": state.tool_results + [result],
-        }
-    )
+    return {
+        "tool_calls": state.tool_calls + [request],
+        "tool_results": state.tool_results + [result],
+    }
 
 
-def _source_health_node(state: AgentState, ctx: GraphContext) -> AgentState:
+def _source_health_node_fn(state: AgentState, ctx: GraphContext) -> dict[str, Any]:
     tool_name = "get_source_health"
     request = ToolCallRequest(tool_name=tool_name, parameters={})
     try:
@@ -189,29 +187,43 @@ def _source_health_node(state: AgentState, ctx: GraphContext) -> AgentState:
     except Exception as exc:
         result = ToolCallResult(tool_name=tool_name, success=False, error=str(exc))
 
-    return state.model_copy(
-        update={
-            "tool_calls": state.tool_calls + [request],
-            "tool_results": state.tool_results + [result],
-        }
+    return {
+        "tool_calls": state.tool_calls + [request],
+        "tool_results": state.tool_results + [result],
+    }
+
+
+def _fallback_node_fn(state: AgentState, ctx: GraphContext) -> dict[str, Any]:
+    msg = Message(
+        role="assistant",
+        content="I can help with pipeline status, data quality, source health, and price analytics. Could you rephrase your question?",
     )
+    return {"messages": state.messages + [msg]}
 
 
-def _fallback_node(state: AgentState, ctx: GraphContext) -> AgentState:
-    return state.model_copy(
-        update={
-            "messages": state.messages
-            + [
-                Message(
-                    role="assistant",
-                    content="I can help with pipeline status, data quality, source health, and price analytics. Could you rephrase your question?",
-                )
-            ],
-        }
-    )
+def _route_intent(classified: ClassifiedIntent) -> str:
+    """Map a classified intent to a graph node name."""
+    if classified.intent == IntentType.GENERAL:
+        return "fallback"
+    return _INTENT_TOOL_MAP.get(classified.intent, "fallback")
 
 
-def _compose_response_node(state: AgentState, ctx: GraphContext) -> AgentState:
+def _compose_response_node(state: AgentState, ctx: GraphContext) -> dict[str, Any]:
+    """Compose the final agent response from tool results."""
+    existing_assistant = [m for m in state.messages if m.role == "assistant"]
+    if existing_assistant:
+        answer = existing_assistant[-1].content
+        classified = state.classified_intent
+        if classified is not None:
+            response = AgentResponse(
+                answer=answer,
+                intent=classified.intent,
+                confidence=classified.confidence,
+            )
+            return {"response": response}
+        response = AgentResponse(answer=answer, intent=IntentType.GENERAL, confidence=0.0)
+        return {"response": response}
+
     classified = state.classified_intent
     if classified is None:
         response = AgentResponse(
@@ -219,7 +231,7 @@ def _compose_response_node(state: AgentState, ctx: GraphContext) -> AgentState:
             intent=IntentType.GENERAL,
             confidence=0.0,
         )
-        return state.model_copy(update={"response": response})
+        return {"response": response}
 
     if classified.intent == IntentType.GENERAL:
         response = AgentResponse(
@@ -227,7 +239,7 @@ def _compose_response_node(state: AgentState, ctx: GraphContext) -> AgentState:
             intent=IntentType.GENERAL,
             confidence=classified.confidence,
         )
-        return state.model_copy(update={"response": response})
+        return {"response": response}
 
     tool_results = state.tool_results
     errors: list[str] = []
@@ -252,13 +264,11 @@ def _compose_response_node(state: AgentState, ctx: GraphContext) -> AgentState:
         sources=sources,
         confidence=classified.confidence,
     )
-    return state.model_copy(
-        update={
-            "response": response,
-            "errors": errors,
-            "messages": state.messages + [Message(role="assistant", content=answer)],
-        }
-    )
+    return {
+        "response": response,
+        "errors": errors,
+        "messages": state.messages + [Message(role="assistant", content=answer)],
+    }
 
 
 def _format_tool_answer(intent: IntentType, results: list[ToolCallResult]) -> str:
@@ -295,45 +305,74 @@ def _summarize_dict(data: dict[str, Any]) -> str:
     return f"Result with keys: {', '.join(str(k) for k in data.keys())}"
 
 
-_NODE_MAP: dict[str, NodeFunction] = {
-    "execute_sql": _execute_sql_node,
-    "pipeline_status": _pipeline_status_node,
-    "data_quality": _data_quality_node,
-    "source_health": _source_health_node,
-    "fallback": _fallback_node,
-}
+# ---------------------------------------------------------------------------
+# Graph construction using LangGraph StateGraph
+# ---------------------------------------------------------------------------
+
+
+def _build_graph(ctx: GraphContext) -> Any:
+    """Build and compile the LangGraph StateGraph."""
+
+    graph = StateGraph(AgentState)
+
+    graph.add_node("classify", lambda state: _classify_node_fn(state, ctx))
+    graph.add_node("execute_sql", lambda state: _execute_sql_node_fn(state, ctx))
+    graph.add_node("pipeline_status", lambda state: _pipeline_status_node_fn(state, ctx))
+    graph.add_node("data_quality", lambda state: _data_quality_node_fn(state, ctx))
+    graph.add_node("source_health", lambda state: _source_health_node_fn(state, ctx))
+    graph.add_node("fallback", lambda state: _fallback_node_fn(state, ctx))
+    graph.add_node("compose", lambda state: _compose_response_node(state, ctx))
+
+    graph.add_edge(START, "classify")
+    graph.add_conditional_edges(
+        "classify",
+        lambda state: (
+            _route_intent(state.classified_intent) if state.classified_intent else "fallback"
+        ),
+        {
+            "execute_sql": "execute_sql",
+            "pipeline_status": "pipeline_status",
+            "data_quality": "data_quality",
+            "source_health": "source_health",
+            "fallback": "fallback",
+        },
+    )
+    graph.add_edge("execute_sql", "compose")
+    graph.add_edge("pipeline_status", "compose")
+    graph.add_edge("data_quality", "compose")
+    graph.add_edge("source_health", "compose")
+    graph.add_edge("fallback", "compose")
+    graph.add_edge("compose", END)
+
+    return graph.compile()
 
 
 @dataclass
 class AgentGraph:
-    """Compiled agent routing graph.
+    """Compiled LangGraph agent routing graph.
 
-    Executes the pipeline: classify → route → tool → compose_response.
+    Wraps a compiled ``StateGraph`` from the ``langgraph`` library.
+    Executes the pipeline: classify -> route -> tool -> compose.
     """
 
     context: GraphContext = field(default_factory=GraphContext)
+    _compiled: Any = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self._compiled is None:
+            self._compiled = _build_graph(self.context)
 
     def run(self, question: str) -> AgentState:
-        state = AgentState(
-            question=question,
-            messages=[Message(role="user", content=question)],
-        )
-
-        state = _classify_node(state, self.context)
-
-        if state.classified_intent is None:
-            return _compose_response_node(state, self.context)
-
-        route = _route_intent(state.classified_intent)
-
-        tool_node = _NODE_MAP.get(route, _fallback_node)
-        state = tool_node(state, self.context)
-
-        state = _compose_response_node(state, self.context)
-
-        return state
+        initial = {
+            "question": question,
+            "messages": [Message(role="user", content=question)],
+        }
+        result = self._compiled.invoke(initial)
+        if isinstance(result, AgentState):
+            return result
+        return AgentState(**result)
 
 
 def build_agent_graph(context: Optional[GraphContext] = None) -> AgentGraph:
-    """Construct a compiled agent graph with the given context."""
+    """Construct a compiled LangGraph agent graph with the given context."""
     return AgentGraph(context=context or GraphContext())
