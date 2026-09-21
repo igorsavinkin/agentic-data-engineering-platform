@@ -4,12 +4,12 @@ Demonstrates the full failure lifecycle:
 
     Baseline -> Failure -> Detection (exception/log) -> Recovery -> No silent data loss
 
-Scenario:
-1. Load observations into PostgreSQL via the warehouse loader (baseline).
-2. Stop the PostgreSQL container; verify the loader raises on connection failure.
-3. Restart PostgreSQL; verify the loader recovers and loads successfully.
-4. Re-load the same data; verify idempotent semantics prevent duplicates.
-5. Verify all committed data survives the restart intact.
+The PostgreSQL container is stopped (simulating a restart) to verify that:
+- The warehouse loader raises a connection error (detection).
+- The loader logs the failure (structured log assertion via caplog).
+- After restart, the loader recovers and loads successfully.
+- Re-loading the same data creates no duplicates (idempotent semantics).
+- Committed data survives the restart intact.
 
 Run with: pytest tests/warehouse/test_postgresql_failure.py -v -m integration
 """
@@ -17,11 +17,13 @@ Run with: pytest tests/warehouse/test_postgresql_failure.py -v -m integration
 # mypy: disable-error-code="import-untyped,no-untyped-def,import-not-found,no-any-return"
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import subprocess
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -37,6 +39,15 @@ from warehouse.loader.batch_loader import WarehouseLoader
 pytestmark = pytest.mark.integration
 
 
+@dataclass(frozen=True)
+class ComposeContext:
+    """Shared state for a single Docker Compose PostgreSQL lifecycle."""
+
+    port: int
+    env: dict[str, str]
+    compose_cmd: list[str]
+
+
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
@@ -47,14 +58,12 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 @pytest.fixture
-def pg_port() -> int:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
+def compose_project() -> Iterator[ComposeContext]:
+    """Start an isolated PostgreSQL container and yield its context.
 
-
-@pytest.fixture
-def real_postgres(pg_port: int) -> Iterator[int]:
+    A single fixture owns the project name, env, port, and compose command
+    so that stop/start always target the same container.
+    """
     try:
         probe = subprocess.run(["docker", "info"], capture_output=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
@@ -62,11 +71,15 @@ def real_postgres(pg_port: int) -> Iterator[int]:
     if probe.returncode:
         pytest.skip("Docker daemon unavailable")
 
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+
     project = f"task102-test-{uuid4().hex[:10]}"
     env = os.environ.copy()
     env["COMPOSE_PROJECT_NAME"] = project
     env["PLATFORM_NETWORK_NAME"] = project
-    env["POSTGRES_HOST_PORT"] = str(pg_port)
+    env["POSTGRES_HOST_PORT"] = str(port)
 
     compose_file = Path(__file__).resolve().parents[2] / "docker-compose.yml"
     compose_cmd = ["docker", "compose", "-f", str(compose_file)]
@@ -80,8 +93,8 @@ def real_postgres(pg_port: int) -> Iterator[int]:
             env=env,
         )
         assert result.returncode == 0, f"Failed to start PostgreSQL: {result.stderr}"
-        _wait_for_postgres(pg_port, timeout=30)
-        yield pg_port
+        _wait_for_postgres(port, timeout=30)
+        yield ComposeContext(port=port, env=env, compose_cmd=compose_cmd)
     finally:
         subprocess.run(
             [*compose_cmd, "down", "--volumes", "--remove-orphans"],
@@ -110,46 +123,30 @@ def _wait_for_postgres(port: int, timeout: float = 30.0) -> None:
     raise TimeoutError(f"PostgreSQL did not become ready on port {port}")
 
 
-def _stop_postgres(compose_cmd: list[str], env: dict[str, str]) -> None:
+def _stop_postgres(ctx: ComposeContext) -> None:
     subprocess.run(
-        [*compose_cmd, "stop", "postgres"],
+        [*ctx.compose_cmd, "stop", "postgres"],
         capture_output=True,
         check=True,
         timeout=30,
-        env=env,
+        env=ctx.env,
     )
 
 
-def _start_postgres(compose_cmd: list[str], env: dict[str, str], port: int) -> None:
+def _start_postgres(ctx: ComposeContext) -> None:
     subprocess.run(
-        [*compose_cmd, "start", "postgres"],
+        [*ctx.compose_cmd, "start", "postgres"],
         capture_output=True,
         check=True,
         timeout=120,
-        env=env,
+        env=ctx.env,
     )
-    _wait_for_postgres(port, timeout=60)
+    _wait_for_postgres(ctx.port, timeout=60)
 
 
 @pytest.fixture
-def compose_env(pg_port: int) -> dict[str, str]:
-    project = f"task102-test-{uuid4().hex[:10]}"
-    env = os.environ.copy()
-    env["COMPOSE_PROJECT_NAME"] = project
-    env["PLATFORM_NETWORK_NAME"] = project
-    env["POSTGRES_HOST_PORT"] = str(pg_port)
-    return env
-
-
-@pytest.fixture
-def compose_cmd() -> list[str]:
-    compose_file = Path(__file__).resolve().parents[2] / "docker-compose.yml"
-    return ["docker", "compose", "-f", str(compose_file)]
-
-
-@pytest.fixture
-def test_db_url(real_postgres: int) -> Iterator[str]:
-    port = real_postgres
+def test_db_url(compose_project: ComposeContext) -> Iterator[str]:
+    port = compose_project.port
     admin_url = f"postgresql://platform:platform-local@127.0.0.1:{port}/postgres"
     db_name = f"warehouse_failure_test_{uuid4().hex[:8]}"
 
@@ -174,6 +171,7 @@ def test_db_url(real_postgres: int) -> Iterator[str]:
     loader_url = test_url.replace("postgresql://", "postgresql+psycopg2://")
     yield loader_url
 
+    _wait_for_postgres(port, timeout=30)
     conn = psycopg2.connect(admin_url)
     conn.autocommit = True
     cur = conn.cursor()
@@ -230,9 +228,8 @@ def test_postgres_restart_no_duplicate_data(
     loader: WarehouseLoader,
     tmp_path: Path,
     query_url: str,
-    compose_cmd: list[str],
-    compose_env: dict[str, str],
-    real_postgres: int,
+    compose_project: ComposeContext,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Full lifecycle: load -> stop -> fail -> restart -> idempotent reload."""
     batch1 = _make_parquet(tmp_path, "batch1", count=3)
@@ -242,17 +239,19 @@ def test_postgres_restart_no_duplicate_data(
     assert result1.observations_created == 3
     assert _count_observations(query_url) == 3
 
-    _stop_postgres(compose_cmd, compose_env)
+    _stop_postgres(compose_project)
 
     batch2 = _make_parquet(tmp_path, "batch2", count=2)
-    with pytest.raises(Exception) as exc_info:
-        loader.load_from_parquet_files([batch2])
-    assert (
-        "connection" in str(exc_info.value).lower()
-        or "could not connect" in str(exc_info.value).lower()
-    )
+    with caplog.at_level(logging.ERROR, logger="warehouse.loader.batch_loader"):
+        with pytest.raises(psycopg2.OperationalError):
+            loader.load_from_parquet_files([batch2])
 
-    _start_postgres(compose_cmd, compose_env, real_postgres)
+    assert any(
+        "batch_rolled_back" in record.message or "load_failed" in record.message
+        for record in caplog.records
+    ), "Loader must log the failure for detection"
+
+    _start_postgres(compose_project)
 
     result2 = loader.load_from_parquet_files([batch2])
     assert result2.success
@@ -269,11 +268,10 @@ def test_postgres_restart_no_duplicate_data(
 def test_loader_connection_failure_detected(
     loader: WarehouseLoader,
     tmp_path: Path,
-    compose_cmd: list[str],
-    compose_env: dict[str, str],
+    compose_project: ComposeContext,
 ) -> None:
-    """Stopping PostgreSQL causes the loader to raise a connection error."""
-    _stop_postgres(compose_cmd, compose_env)
+    """Stopping PostgreSQL causes the loader to raise OperationalError."""
+    _stop_postgres(compose_project)
 
     batch = _make_parquet(tmp_path, "fail-detect", count=1)
     with pytest.raises(psycopg2.OperationalError):
@@ -284,9 +282,7 @@ def test_committed_data_survives_restart(
     loader: WarehouseLoader,
     tmp_path: Path,
     query_url: str,
-    compose_cmd: list[str],
-    compose_env: dict[str, str],
-    real_postgres: int,
+    compose_project: ComposeContext,
 ) -> None:
     """Data committed before a restart is intact after recovery."""
     batch = _make_parquet(tmp_path, "survive", count=4)
@@ -296,8 +292,8 @@ def test_committed_data_survives_restart(
     assert result.observations_created == 4
     assert _count_observations(query_url) == 4
 
-    _stop_postgres(compose_cmd, compose_env)
-    _start_postgres(compose_cmd, compose_env, real_postgres)
+    _stop_postgres(compose_project)
+    _start_postgres(compose_project)
 
     assert _count_observations(query_url) == 4
 
@@ -317,9 +313,7 @@ def test_idempotent_recovery_preserves_integrity(
     loader: WarehouseLoader,
     tmp_path: Path,
     query_url: str,
-    compose_cmd: list[str],
-    compose_env: dict[str, str],
-    real_postgres: int,
+    compose_project: ComposeContext,
 ) -> None:
     """After failure and recovery, replaying loaded data creates no duplicates."""
     batch1 = _make_parquet(tmp_path, "integ-b1", count=2)
@@ -329,12 +323,12 @@ def test_idempotent_recovery_preserves_integrity(
     assert r1.success
     assert r1.observations_created == 2
 
-    _stop_postgres(compose_cmd, compose_env)
+    _stop_postgres(compose_project)
 
-    with pytest.raises(Exception):
+    with pytest.raises(psycopg2.OperationalError):
         loader.load_from_parquet_files([batch2])
 
-    _start_postgres(compose_cmd, compose_env, real_postgres)
+    _start_postgres(compose_project)
 
     r2 = loader.load_from_parquet_files([batch2])
     assert r2.success
