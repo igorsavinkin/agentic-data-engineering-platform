@@ -277,6 +277,8 @@ def test_loader_connection_failure_detected(
     with pytest.raises(psycopg2.OperationalError):
         loader.load_from_parquet_files([batch])
 
+    _start_postgres(compose_project)
+
 
 def test_committed_data_survives_restart(
     loader: WarehouseLoader,
