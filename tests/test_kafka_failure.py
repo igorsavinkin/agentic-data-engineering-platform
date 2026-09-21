@@ -27,7 +27,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from confluent_kafka import Producer
 
 from libs.common.kafka_consumer import (
     ConsumerMessage,
@@ -171,12 +170,13 @@ def _consume_all(
 
 
 def _wait_for_broker(bootstrap: str, timeout: float = 60.0) -> None:
+    from confluent_kafka.admin import AdminClient
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            probe = Producer({"bootstrap.servers": bootstrap})
-            probe.produce("__probe__", value=b"ping", key=b"k")
-            probe.flush(timeout=3)
+            admin = AdminClient({"bootstrap.servers": bootstrap})
+            admin.list_topics(timeout=5)
             return
         except Exception:
             time.sleep(2)
@@ -236,13 +236,18 @@ class TestKafkaBrokerFailureAndRecovery:
         outage_consumer = KafkaConsumer(consumer_settings)
         try:
             outage_consumer.subscribe(["products.raw.v1"])
-            outage_consumer.poll(timeout=2.0)
-        except Exception:
-            pass
-        finally:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                try:
+                    outage_consumer.poll(timeout=2.0)
+                except Exception:
+                    pass
+                if outage_consumer.metrics.snapshot()[KafkaMetric.CONSUMER_ERRORS.value] > 0:
+                    break
             errors_during_outage = outage_consumer.metrics.snapshot()[
                 KafkaMetric.CONSUMER_ERRORS.value
             ]
+        finally:
             outage_consumer.close()
 
         assert errors_during_outage > 0, (
