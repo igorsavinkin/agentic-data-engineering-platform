@@ -194,6 +194,13 @@ class PipelineAlert(BaseModel):
     source: Optional[str] = None
 
 
+class ConsumerLagSummary(BaseModel):
+    """Kafka consumer lag aggregated across topics."""
+
+    total_lag: int = 0
+    topics: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class PipelineStatusResult(BaseModel):
     """Aggregated pipeline health status for agent reasoning."""
 
@@ -202,29 +209,34 @@ class PipelineStatusResult(BaseModel):
     total_runs: int = 0
     source_health: list[SourceHealthSummary] = Field(default_factory=list)
     alerts: list[PipelineAlert] = Field(default_factory=list)
+    consumer_lag: ConsumerLagSummary = Field(default_factory=ConsumerLagSummary)
+    processing_rate: Optional[float] = None
+    last_successful_write_at: Optional[str] = None
 
 
 class PipelineStatusProvider(Protocol):
     """Protocol for pipeline status data access.
 
-    Abstracts the repository layer so the agent tool can be tested
-    without a live database.
+    Abstracts the repository and metrics layer so the agent tool can be
+    tested without a live database or Kafka cluster.
     """
 
     def list_recent_runs(self, limit: int = 5) -> list[dict[str, Any]]: ...
     def get_total_run_count(self) -> int: ...
     def list_source_health(self) -> list[dict[str, Any]]: ...
+    def get_lag_samples(self) -> list[dict[str, Any]]: ...
 
 
 def get_pipeline_status(
     provider: PipelineStatusProvider,
     limit: int = 5,
 ) -> ToolResponse:
-    """Report current pipeline health: recent runs, source status, alerts."""
+    """Report current pipeline health: recent runs, source status, lag, alerts."""
     try:
         recent_runs_raw = provider.list_recent_runs(limit=limit)
         total_runs = provider.get_total_run_count()
         source_health_raw = provider.list_source_health()
+        lag_samples_raw = provider.get_lag_samples()
 
         recent_runs = [
             PipelineRunSummary(
@@ -249,6 +261,10 @@ def get_pipeline_status(
             for s in source_health_raw
         ]
 
+        consumer_lag = _aggregate_lag(lag_samples_raw)
+        processing_rate = _compute_processing_rate(recent_runs_raw)
+        last_write = _last_successful_write(recent_runs_raw)
+
         alerts = _derive_alerts(recent_runs_raw, source_health_raw)
 
         overall_health = _derive_overall_pipeline_health(recent_runs_raw, source_health_raw)
@@ -259,10 +275,60 @@ def get_pipeline_status(
             total_runs=total_runs,
             source_health=source_health,
             alerts=alerts,
+            consumer_lag=consumer_lag,
+            processing_rate=processing_rate,
+            last_successful_write_at=last_write,
         )
         return ToolResponse(success=True, data=result.model_dump())
     except Exception as e:
         return ToolResponse(success=False, error=str(e))
+
+
+def _aggregate_lag(lag_samples: list[dict[str, Any]]) -> ConsumerLagSummary:
+    topic_lag: dict[str, int] = {}
+    for s in lag_samples:
+        topic = s.get("topic", "unknown")
+        topic_lag[topic] = topic_lag.get(topic, 0) + s.get("lag", 0)
+
+    total = sum(topic_lag.values())
+    topics = [{"topic": t, "lag": lag} for t, lag in sorted(topic_lag.items())]
+    return ConsumerLagSummary(total_lag=total, topics=topics)
+
+
+def _compute_processing_rate(runs: list[dict[str, Any]]) -> Optional[float]:
+    completed = [
+        r
+        for r in runs
+        if r.get("finished_at") and r.get("started_at") and r.get("records_loaded") is not None
+    ]
+    if not completed:
+        return None
+
+    total_records = 0
+    total_seconds = 0.0
+    for r in completed:
+        try:
+            from datetime import datetime
+
+            start = datetime.fromisoformat(r["started_at"])
+            end = datetime.fromisoformat(r["finished_at"])
+            duration = (end - start).total_seconds()
+            if duration > 0:
+                total_records += r["records_loaded"]
+                total_seconds += duration
+        except (ValueError, TypeError):
+            continue
+
+    if total_seconds > 0:
+        return round(total_records / total_seconds, 2)
+    return None
+
+
+def _last_successful_write(runs: list[dict[str, Any]]) -> Optional[str]:
+    for r in runs:
+        if r.get("overall_status") == "healthy" and r.get("finished_at"):
+            return r["finished_at"]
+    return None
 
 
 def _derive_overall_pipeline_health(
@@ -300,7 +366,11 @@ def _derive_alerts(
         status = s.get("overall_status", "unknown")
         if status == "degraded":
             reasons = s.get("reasons")
-            detail = "; ".join(reasons.values()) if isinstance(reasons, dict) else "Degraded"
+            detail = (
+                "; ".join(str(v) for v in reasons.values())
+                if isinstance(reasons, dict)
+                else "Degraded"
+            )
             alerts.append(
                 PipelineAlert(
                     alert_type="source_degraded",

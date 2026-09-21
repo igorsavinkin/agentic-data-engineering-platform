@@ -13,8 +13,11 @@ from services.agent.tools import (
     SQLResult,
     TableMetadata,
     ToolResponse,
+    _aggregate_lag,
+    _compute_processing_rate,
     _derive_alerts,
     _derive_overall_pipeline_health,
+    _last_successful_write,
     execute_read_only_sql,
     get_dataset_metadata,
     get_pipeline_status,
@@ -373,11 +376,13 @@ class FakePipelineStatusProvider:
         runs: list[dict[str, Any]] | None = None,
         total_runs: int = 0,
         sources: list[dict[str, Any]] | None = None,
+        lag_samples: list[dict[str, Any]] | None = None,
         raise_on_runs: Exception | None = None,
     ) -> None:
         self._runs = runs if runs is not None else []
         self._total_runs = total_runs
         self._sources = sources if sources is not None else []
+        self._lag_samples = lag_samples if lag_samples is not None else []
         self._raise_on_runs = raise_on_runs
         self.last_limit: int | None = None
 
@@ -392,6 +397,9 @@ class FakePipelineStatusProvider:
 
     def list_source_health(self) -> list[dict[str, Any]]:
         return self._sources
+
+    def get_lag_samples(self) -> list[dict[str, Any]]:
+        return self._lag_samples
 
 
 class TestGetPipelineStatus:
@@ -727,3 +735,110 @@ class TestPipelineStatusModels:
         assert dumped["total_runs"] == 50
         assert len(dumped["recent_runs"]) == 1
         assert len(dumped["source_health"]) == 1
+
+
+class TestConsumerLag:
+    def test_lag_aggregated_by_topic(self) -> None:
+        samples = [
+            {"topic": "products.raw.v1", "partition": 0, "lag": 10},
+            {"topic": "products.raw.v1", "partition": 1, "lag": 20},
+            {"topic": "products.normalized.v1", "partition": 0, "lag": 5},
+        ]
+        result = _aggregate_lag(samples)
+        assert result.total_lag == 35
+        assert len(result.topics) == 2
+        assert result.topics[0]["topic"] == "products.normalized.v1"
+        assert result.topics[0]["lag"] == 5
+        assert result.topics[1]["topic"] == "products.raw.v1"
+        assert result.topics[1]["lag"] == 30
+
+    def test_empty_lag(self) -> None:
+        result = _aggregate_lag([])
+        assert result.total_lag == 0
+        assert result.topics == []
+
+    def test_lag_in_pipeline_status(self) -> None:
+        runs = [
+            {
+                "run_type": "ingestion",
+                "overall_status": "healthy",
+                "started_at": "2026-09-20T10:00:00",
+                "finished_at": "2026-09-20T10:05:00",
+                "records_loaded": 100,
+                "error_message": None,
+            }
+        ]
+        lag = [{"topic": "t1", "partition": 0, "lag": 42}]
+        provider = FakePipelineStatusProvider(runs=runs, total_runs=10, lag_samples=lag)
+
+        response = get_pipeline_status(provider)
+
+        result = PipelineStatusResult(**response.data)
+        assert result.consumer_lag.total_lag == 42
+        assert len(result.consumer_lag.topics) == 1
+
+
+class TestProcessingRate:
+    def test_rate_from_completed_runs(self) -> None:
+        runs = [
+            {
+                "started_at": "2026-09-20T10:00:00",
+                "finished_at": "2026-09-20T10:05:00",
+                "records_loaded": 300,
+            }
+        ]
+        rate = _compute_processing_rate(runs)
+        assert rate == 1.0
+
+    def test_rate_none_when_no_completed_runs(self) -> None:
+        runs = [{"started_at": "2026-09-20T10:00:00", "finished_at": None, "records_loaded": None}]
+        assert _compute_processing_rate(runs) is None
+
+    def test_rate_in_pipeline_status(self) -> None:
+        runs = [
+            {
+                "run_type": "ingestion",
+                "overall_status": "healthy",
+                "started_at": "2026-09-20T10:00:00",
+                "finished_at": "2026-09-20T10:02:00",
+                "records_loaded": 600,
+                "error_message": None,
+            }
+        ]
+        provider = FakePipelineStatusProvider(runs=runs, total_runs=5)
+
+        response = get_pipeline_status(provider)
+
+        result = PipelineStatusResult(**response.data)
+        assert result.processing_rate == 5.0
+
+
+class TestLastSuccessfulWrite:
+    def test_last_write_from_healthy_run(self) -> None:
+        runs = [
+            {"overall_status": "healthy", "finished_at": "2026-09-20T10:05:00"},
+            {"overall_status": "failed", "finished_at": None},
+        ]
+        assert _last_successful_write(runs) == "2026-09-20T10:05:00"
+
+    def test_last_write_none_when_no_success(self) -> None:
+        runs = [{"overall_status": "failed", "finished_at": None}]
+        assert _last_successful_write(runs) is None
+
+    def test_last_write_in_pipeline_status(self) -> None:
+        runs = [
+            {
+                "run_type": "ingestion",
+                "overall_status": "healthy",
+                "started_at": "2026-09-20T10:00:00",
+                "finished_at": "2026-09-20T10:05:00",
+                "records_loaded": 100,
+                "error_message": None,
+            }
+        ]
+        provider = FakePipelineStatusProvider(runs=runs, total_runs=10)
+
+        response = get_pipeline_status(provider)
+
+        result = PipelineStatusResult(**response.data)
+        assert result.last_successful_write_at == "2026-09-20T10:05:00"
