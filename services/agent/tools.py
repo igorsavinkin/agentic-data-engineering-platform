@@ -182,7 +182,7 @@ class SourceHealthSummary(BaseModel):
     overall_status: str
     freshness_state: str
     freshness_age_seconds: Optional[float] = None
-    reasons: Optional[dict[str, Any]] = None
+    reasons: Optional[list[str]] = None
 
 
 class PipelineAlert(BaseModel):
@@ -366,11 +366,7 @@ def _derive_alerts(
         status = s.get("overall_status", "unknown")
         if status == "degraded":
             reasons = s.get("reasons")
-            detail = (
-                "; ".join(str(v) for v in reasons.values())
-                if isinstance(reasons, dict)
-                else "Degraded"
-            )
+            detail = "; ".join(str(v) for v in reasons) if isinstance(reasons, list) else "Degraded"
             alerts.append(
                 PipelineAlert(
                     alert_type="source_degraded",
@@ -549,7 +545,7 @@ class SourceHealthDetail(BaseModel):
     freshness_state: str
     freshness_age_seconds: Optional[float] = None
     assessed_at: str
-    reasons: Optional[dict[str, Any]] = None
+    reasons: Optional[list[str]] = None
     signals: Optional[dict[str, Any]] = None
 
 

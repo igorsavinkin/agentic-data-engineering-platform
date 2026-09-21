@@ -17,7 +17,7 @@ class FakeSourceHealthEntry:
     freshness_state: str
     freshness_age_seconds: Optional[float]
     assessed_at: str
-    reasons: Optional[dict[str, Any]]
+    reasons: Optional[list[str]]
     signals: Optional[dict[str, Any]] = None
 
 
@@ -46,7 +46,7 @@ class TestRepositorySourceHealthProvider:
                 freshness_state="fresh",
                 freshness_age_seconds=10.0,
                 assessed_at="2026-09-21T10:00:00",
-                reasons={"detail": "Connection refused"},
+                reasons=["Connection refused"],
                 signals={"success_ratio": 0.0, "failed_fetches": 5},
             ),
         ]

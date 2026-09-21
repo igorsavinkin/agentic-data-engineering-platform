@@ -76,7 +76,7 @@ class SourceHealthEntry:
     freshness_state: str
     freshness_age_seconds: Optional[float]
     assessed_at: str
-    reasons: Optional[dict[str, Any]]
+    reasons: Optional[list[str]]
     signals: Optional[dict[str, Any]] = None
 
 
@@ -180,7 +180,7 @@ class PipelineStatusRepository:
                     freshness_state=row.freshness_state,
                     freshness_age_seconds=row.freshness_age_seconds,
                     assessed_at=row.assessed_at.isoformat(),
-                    reasons=row.reasons,
+                    reasons=list(row.reasons) if row.reasons else None,
                     signals=row.signals,
                 )
             )

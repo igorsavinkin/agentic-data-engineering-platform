@@ -487,7 +487,7 @@ class TestGetPipelineStatus:
                 "overall_status": "degraded",
                 "freshness_state": "stale",
                 "freshness_age_seconds": 7200.0,
-                "reasons": {"malformed_ratio": "0.3 exceeds threshold"},
+                "reasons": ["malformed_ratio 0.3 exceeds threshold"],
             }
         ]
         provider = FakePipelineStatusProvider(runs=runs, total_runs=20, sources=sources)
@@ -584,7 +584,7 @@ class TestGetPipelineStatus:
                 "overall_status": "degraded",
                 "freshness_state": "fresh",
                 "freshness_age_seconds": 30.0,
-                "reasons": {"empty_fetches": "3 consecutive"},
+                "reasons": ["3 consecutive empty fetches"],
             },
             {
                 "source_name": "best_buy",
@@ -654,7 +654,7 @@ class TestDeriveAlerts:
             {
                 "overall_status": "degraded",
                 "source_name": "ebay",
-                "reasons": {"key": "value"},
+                "reasons": ["source degraded"],
             }
         ]
         alerts = _derive_alerts([], sources)
@@ -1198,7 +1198,7 @@ class TestGetSourceHealth:
                     "freshness_state": "fresh",
                     "freshness_age_seconds": 10.0,
                     "assessed_at": "2026-09-21T10:00:00",
-                    "reasons": {"detail": "Connection refused"},
+                    "reasons": ["Connection refused"],
                     "signals": {"success_ratio": 0.0, "failed_fetches": 5},
                 },
             ]
@@ -1301,7 +1301,7 @@ class TestGetSourceHealth:
                     "freshness_state": "fresh",
                     "freshness_age_seconds": 5.0,
                     "assessed_at": "2026-09-21T10:00:00",
-                    "reasons": {"parse_error": "3 of 100 records malformed"},
+                    "reasons": ["3 of 100 records malformed"],
                     "signals": {
                         "malformed_ratio": 0.03,
                         "success_ratio": 0.97,
@@ -1317,7 +1317,7 @@ class TestGetSourceHealth:
         source = response.data["sources"][0]
         assert source["degradation_state"] == "partially_parseable"
         assert source["signals"]["malformed_ratio"] == 0.03
-        assert source["reasons"]["parse_error"] == "3 of 100 records malformed"
+        assert source["reasons"][0] == "3 of 100 records malformed"
 
 
 class TestDeriveOverallSourceHealth:

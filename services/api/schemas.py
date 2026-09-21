@@ -213,7 +213,7 @@ class SourceHealthResponse(BaseModel):
     freshness_state: str
     freshness_age_seconds: Optional[float] = None
     assessed_at: str
-    reasons: Optional[dict[str, Any]] = None
+    reasons: Optional[list[str]] = None
 
 
 class SourceHealthListResponse(BaseModel):
