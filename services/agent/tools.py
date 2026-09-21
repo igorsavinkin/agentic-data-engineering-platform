@@ -1,15 +1,16 @@
-"""Read-only SQL and dataset metadata agent tools (TASK-094).
+"""Read-only SQL, dataset metadata, and pipeline status agent tools.
 
 Tools enforce read-only constraints at the query level: DDL, DML,
 and any non-SELECT statements are rejected before execution.
+Pipeline status tool aggregates from existing health/metrics endpoints.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SQLResult(BaseModel):
@@ -161,3 +162,163 @@ def get_dataset_metadata(
         return ToolResponse(success=True, data=result.model_dump())
     except Exception as e:
         return ToolResponse(success=False, error=str(e))
+
+
+class PipelineRunSummary(BaseModel):
+    """Summary of a single pipeline run for agent consumption."""
+
+    run_type: str
+    overall_status: str
+    started_at: str
+    finished_at: Optional[str] = None
+    records_loaded: Optional[int] = None
+    error_message: Optional[str] = None
+
+
+class SourceHealthSummary(BaseModel):
+    """Source health snapshot for agent consumption."""
+
+    source_name: str
+    overall_status: str
+    freshness_state: str
+    freshness_age_seconds: Optional[float] = None
+    reasons: Optional[dict[str, Any]] = None
+
+
+class PipelineAlert(BaseModel):
+    """Active alert derived from failed runs or degraded sources."""
+
+    alert_type: str
+    severity: str
+    message: str
+    source: Optional[str] = None
+
+
+class PipelineStatusResult(BaseModel):
+    """Aggregated pipeline health status for agent reasoning."""
+
+    overall_health: str
+    recent_runs: list[PipelineRunSummary] = Field(default_factory=list)
+    total_runs: int = 0
+    source_health: list[SourceHealthSummary] = Field(default_factory=list)
+    alerts: list[PipelineAlert] = Field(default_factory=list)
+
+
+class PipelineStatusProvider(Protocol):
+    """Protocol for pipeline status data access.
+
+    Abstracts the repository layer so the agent tool can be tested
+    without a live database.
+    """
+
+    def list_recent_runs(self, limit: int = 5) -> list[dict[str, Any]]: ...
+    def get_total_run_count(self) -> int: ...
+    def list_source_health(self) -> list[dict[str, Any]]: ...
+
+
+def get_pipeline_status(
+    provider: PipelineStatusProvider,
+    limit: int = 5,
+) -> ToolResponse:
+    """Report current pipeline health: recent runs, source status, alerts."""
+    try:
+        recent_runs_raw = provider.list_recent_runs(limit=limit)
+        total_runs = provider.get_total_run_count()
+        source_health_raw = provider.list_source_health()
+
+        recent_runs = [
+            PipelineRunSummary(
+                run_type=r["run_type"],
+                overall_status=r["overall_status"],
+                started_at=r["started_at"],
+                finished_at=r.get("finished_at"),
+                records_loaded=r.get("records_loaded"),
+                error_message=r.get("error_message"),
+            )
+            for r in recent_runs_raw
+        ]
+
+        source_health = [
+            SourceHealthSummary(
+                source_name=s["source_name"],
+                overall_status=s["overall_status"],
+                freshness_state=s["freshness_state"],
+                freshness_age_seconds=s.get("freshness_age_seconds"),
+                reasons=s.get("reasons"),
+            )
+            for s in source_health_raw
+        ]
+
+        alerts = _derive_alerts(recent_runs_raw, source_health_raw)
+
+        overall_health = _derive_overall_pipeline_health(recent_runs_raw, source_health_raw)
+
+        result = PipelineStatusResult(
+            overall_health=overall_health,
+            recent_runs=recent_runs,
+            total_runs=total_runs,
+            source_health=source_health,
+            alerts=alerts,
+        )
+        return ToolResponse(success=True, data=result.model_dump())
+    except Exception as e:
+        return ToolResponse(success=False, error=str(e))
+
+
+def _derive_overall_pipeline_health(
+    runs: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> str:
+    if any(r.get("overall_status") == "failed" for r in runs):
+        return "degraded"
+    if any(s.get("overall_status") in ("degraded", "stale") for s in sources):
+        return "degraded"
+    if not runs:
+        return "unknown"
+    return "healthy"
+
+
+def _derive_alerts(
+    runs: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[PipelineAlert]:
+    alerts: list[PipelineAlert] = []
+
+    for r in runs:
+        if r.get("overall_status") == "failed":
+            error_msg = r.get("error_message", "Unknown error")
+            alerts.append(
+                PipelineAlert(
+                    alert_type="pipeline_failure",
+                    severity="high",
+                    message=f"Pipeline run failed: {error_msg}",
+                    source=r.get("run_type"),
+                )
+            )
+
+    for s in sources:
+        status = s.get("overall_status", "unknown")
+        if status == "degraded":
+            reasons = s.get("reasons")
+            detail = "; ".join(reasons.values()) if isinstance(reasons, dict) else "Degraded"
+            alerts.append(
+                PipelineAlert(
+                    alert_type="source_degraded",
+                    severity="medium",
+                    message=f"Source '{s['source_name']}' is degraded: {detail}",
+                    source=s["source_name"],
+                )
+            )
+        elif status == "stale":
+            age = s.get("freshness_age_seconds")
+            age_str = f"{age:.0f}s" if age is not None else "unknown age"
+            alerts.append(
+                PipelineAlert(
+                    alert_type="source_stale",
+                    severity="medium",
+                    message=f"Source '{s['source_name']}' is stale ({age_str})",
+                    source=s["source_name"],
+                )
+            )
+
+    return alerts
