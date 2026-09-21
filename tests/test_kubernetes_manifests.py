@@ -846,6 +846,14 @@ ALL_DEPLOYMENTS = {
     "kafka": KAFKA_DEPLOYMENT,
 }
 
+MINIO_STATEFULSET = REPO_ROOT / "kubernetes" / "deployments" / "minio-statefulset.yaml"
+POSTGRESQL_STATEFULSET = REPO_ROOT / "kubernetes" / "deployments" / "postgresql-statefulset.yaml"
+
+ALL_STATEFULSETS = {
+    "minio": MINIO_STATEFULSET,
+    "postgresql": POSTGRESQL_STATEFULSET,
+}
+
 KAFKA_DEPENDENT_DEPLOYMENTS = {
     "ingestion": INGESTION_DEPLOYMENT,
     "processor": PROCESSOR_DEPLOYMENT,
@@ -1034,3 +1042,241 @@ class TestTroubleshootingGuide:
         content = TROUBLESHOOTING_GUIDE.read_text(encoding="utf-8")
         assert "ConfigMap" in content or "configmap" in content
         assert "Secret" in content or "secret" in content
+
+
+class TestMinioStatefulSet:
+    def test_minio_statefulset_exists(self) -> None:
+        assert MINIO_STATEFULSET.exists(), f"minio statefulset not found at {MINIO_STATEFULSET}"
+
+    def test_minio_statefulset_is_statefulset_resource(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "StatefulSet"
+
+    def test_minio_statefulset_namespace(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_minio_statefulset_labels(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "minio"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_minio_pod_labels_match_service_selector(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        service = _load_yaml(MINIO_SERVICE)
+        selector = service["spec"]["selector"]
+        pod_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert pod_labels.get(key) == value, (
+                f"MinIO pod label {key}={pod_labels.get(key)} does not match "
+                f"service selector {key}={value}"
+            )
+
+    def test_minio_statefulset_selector_matches_template(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_minio_exposes_api_and_console_ports(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        ports = container["ports"]
+        assert any(p["containerPort"] == 9000 for p in ports)
+        assert any(p["containerPort"] == 9001 for p in ports)
+
+    def test_minio_uses_secret_for_credentials(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        secret_envs = [
+            e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
+        ]
+        secret_names = {e["valueFrom"]["secretKeyRef"]["name"] for e in secret_envs}
+        assert "minio-credentials" in secret_names
+
+    def test_minio_has_liveness_probe(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "livenessProbe" in container
+        probe = container["livenessProbe"]
+        assert "initialDelaySeconds" in probe
+        assert "periodSeconds" in probe
+
+    def test_minio_has_readiness_probe(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "readinessProbe" in container
+        probe = container["readinessProbe"]
+        assert "initialDelaySeconds" in probe
+        assert "periodSeconds" in probe
+
+    def test_minio_has_resource_requests_and_limits(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        resources = container["resources"]
+        assert "requests" in resources
+        assert "cpu" in resources["requests"]
+        assert "memory" in resources["requests"]
+        assert "limits" in resources
+        assert "cpu" in resources["limits"]
+        assert "memory" in resources["limits"]
+
+    def test_minio_has_volume_mount(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "volumeMounts" in container
+        mount_paths = [vm["mountPath"] for vm in container["volumeMounts"]]
+        assert "/data" in mount_paths
+
+    def test_minio_has_volume_claim_templates(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        vcts = manifest["spec"]["volumeClaimTemplates"]
+        assert len(vcts) >= 1
+        names = [v["metadata"]["name"] for v in vcts]
+        assert "minio-data" in names
+        spec = vcts[0]["spec"]
+        assert "ReadWriteOnce" in spec["accessModes"]
+        assert "storage" in spec["resources"]["requests"]
+
+    def test_minio_has_security_context(self) -> None:
+        manifest = _load_yaml(MINIO_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "securityContext" in container
+        sc = container["securityContext"]
+        assert sc.get("allowPrivilegeEscalation") is False
+
+
+class TestPostgreSQLStatefulSet:
+    def test_postgresql_statefulset_exists(self) -> None:
+        assert POSTGRESQL_STATEFULSET.exists(), (
+            f"postgresql statefulset not found at {POSTGRESQL_STATEFULSET}"
+        )
+
+    def test_postgresql_statefulset_is_statefulset_resource(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        assert manifest["apiVersion"] == "apps/v1"
+        assert manifest["kind"] == "StatefulSet"
+
+    def test_postgresql_statefulset_namespace(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_postgresql_statefulset_labels(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "postgresql"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_postgresql_pod_labels_match_service_selector(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        service = _load_yaml(POSTGRESQL_SERVICE)
+        selector = service["spec"]["selector"]
+        pod_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert pod_labels.get(key) == value, (
+                f"PostgreSQL pod label {key}={pod_labels.get(key)} does not match "
+                f"service selector {key}={value}"
+            )
+
+    def test_postgresql_statefulset_selector_matches_template(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        selector = manifest["spec"]["selector"]["matchLabels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in selector.items():
+            assert template_labels.get(key) == value
+
+    def test_postgresql_exposes_port_5432(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        ports = container["ports"]
+        assert any(p["containerPort"] == 5432 for p in ports)
+
+    def test_postgresql_uses_secret_for_password(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        secret_envs = [
+            e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
+        ]
+        secret_names = {e["valueFrom"]["secretKeyRef"]["name"] for e in secret_envs}
+        assert "database-credentials" in secret_names
+
+    def test_postgresql_has_liveness_probe(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "livenessProbe" in container
+        probe = container["livenessProbe"]
+        assert "initialDelaySeconds" in probe
+        assert "periodSeconds" in probe
+
+    def test_postgresql_has_readiness_probe(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "readinessProbe" in container
+        probe = container["readinessProbe"]
+        assert "initialDelaySeconds" in probe
+        assert "periodSeconds" in probe
+
+    def test_postgresql_has_resource_requests_and_limits(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        resources = container["resources"]
+        assert "requests" in resources
+        assert "cpu" in resources["requests"]
+        assert "memory" in resources["requests"]
+        assert "limits" in resources
+        assert "cpu" in resources["limits"]
+        assert "memory" in resources["limits"]
+
+    def test_postgresql_has_volume_mount(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "volumeMounts" in container
+        mount_paths = [vm["mountPath"] for vm in container["volumeMounts"]]
+        assert "/var/lib/postgresql/data" in mount_paths
+
+    def test_postgresql_has_volume_claim_templates(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        vcts = manifest["spec"]["volumeClaimTemplates"]
+        assert len(vcts) >= 1
+        names = [v["metadata"]["name"] for v in vcts]
+        assert "postgresql-data" in names
+        spec = vcts[0]["spec"]
+        assert "ReadWriteOnce" in spec["accessModes"]
+        assert "storage" in spec["resources"]["requests"]
+
+    def test_postgresql_has_security_context(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert "securityContext" in container
+        sc = container["securityContext"]
+        assert sc.get("allowPrivilegeEscalation") is False
+
+
+class TestStatefulSetServiceCompatibility:
+    def test_minio_service_still_clusterip(self) -> None:
+        manifest = _load_yaml(MINIO_SERVICE)
+        assert manifest["spec"]["type"] == "ClusterIP"
+
+    def test_postgresql_service_still_clusterip(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_SERVICE)
+        assert manifest["spec"]["type"] == "ClusterIP"
+
+    def test_minio_service_ports_unchanged(self) -> None:
+        manifest = _load_yaml(MINIO_SERVICE)
+        ports = {p["name"]: p["port"] for p in manifest["spec"]["ports"]}
+        assert ports["api"] == 9000
+        assert ports["console"] == 9001
+
+    def test_postgresql_service_port_unchanged(self) -> None:
+        manifest = _load_yaml(POSTGRESQL_SERVICE)
+        ports = {p["name"]: p["port"] for p in manifest["spec"]["ports"]}
+        assert ports["postgres"] == 5432
+
+    def test_service_names_stable(self) -> None:
+        minio_svc = _load_yaml(MINIO_SERVICE)
+        pg_svc = _load_yaml(POSTGRESQL_SERVICE)
+        assert minio_svc["metadata"]["name"] == "minio"
+        assert pg_svc["metadata"]["name"] == "postgresql"

@@ -26,7 +26,9 @@ kubernetes/
 │   ├── api-deployment.yaml          # API service Deployment (TASK-076)
 │   ├── api-service.yaml             # API ClusterIP Service (TASK-076)
 │   ├── minio-service.yaml           # MinIO ClusterIP Service (TASK-078)
+│   ├── minio-statefulset.yaml       # MinIO StatefulSet workload (TASK-K8S-FIX-001)
 │   ├── postgresql-service.yaml      # PostgreSQL ClusterIP Service (TASK-078)
+│   ├── postgresql-statefulset.yaml  # PostgreSQL StatefulSet workload (TASK-K8S-FIX-001)
 │   ├── kafka-deployment.yaml        # Kafka broker Deployment (TASK-077)
 │   ├── kafka-service.yaml           # Kafka NodePort Service (TASK-077)
 │   └── kafka-topics-job.yaml        # Kafka topic creation Job (TASK-077)
@@ -335,10 +337,12 @@ kubectl apply -f kubernetes/namespaces/
 kubectl apply -f kubernetes/config/
 bash scripts/create-local-secrets.sh
 
-# 3. Infrastructure services (Kafka, MinIO, PostgreSQL)
+# 3. Infrastructure workloads + services
 kubectl apply -f kubernetes/deployments/kafka-deployment.yaml
 kubectl apply -f kubernetes/deployments/kafka-service.yaml
+kubectl apply -f kubernetes/deployments/minio-statefulset.yaml
 kubectl apply -f kubernetes/deployments/minio-service.yaml
+kubectl apply -f kubernetes/deployments/postgresql-statefulset.yaml
 kubectl apply -f kubernetes/deployments/postgresql-service.yaml
 
 # 4. Kafka topics
@@ -352,6 +356,48 @@ kubectl apply -f kubernetes/deployments/lake-writer-deployment.yaml
 kubectl apply -f kubernetes/deployments/warehouse-loader-deployment.yaml
 kubectl apply -f kubernetes/deployments/api-deployment.yaml
 kubectl apply -f kubernetes/deployments/api-service.yaml
+```
+
+## Infrastructure Workloads (TASK-K8S-FIX-001)
+
+MinIO and PostgreSQL run as StatefulSets with PVC-backed storage. This makes the kind deployment self-contained — no Docker Compose dependency.
+
+### MinIO
+
+```bash
+kubectl apply -f kubernetes/deployments/minio-statefulset.yaml
+kubectl apply -f kubernetes/deployments/minio-service.yaml
+kubectl get statefulset minio -n ai-data-platform
+kubectl get pods -l app.kubernetes.io/name=minio -n ai-data-platform
+```
+
+MinIO exposes port 9000 (S3 API) and 9001 (web console). Credentials come from the `minio-credentials` Secret.
+
+### PostgreSQL
+
+```bash
+kubectl apply -f kubernetes/deployments/postgresql-statefulset.yaml
+kubectl apply -f kubernetes/deployments/postgresql-service.yaml
+kubectl get statefulset postgresql -n ai-data-platform
+kubectl get pods -l app.kubernetes.io/name=postgresql -n ai-data-platform
+```
+
+PostgreSQL exposes port 5432. The `warehouse` database is created automatically from the `POSTGRES_DB` env var. Credentials come from the `database-credentials` Secret.
+
+### Verification
+
+```bash
+# All infrastructure endpoints should have real pod IPs (no <none>)
+kubectl get endpoints -n ai-data-platform
+
+# PVCs should be Bound
+kubectl get pvc -n ai-data-platform
+
+# Pods should be Ready
+kubectl get pods -n ai-data-platform
+
+# Recent events
+kubectl get events -n ai-data-platform --sort-by='.lastTimestamp'
 ```
 
 ## Port Mappings

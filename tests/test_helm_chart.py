@@ -127,6 +127,8 @@ class TestChartStructure:
             "services/kafka.yaml",
             "services/minio.yaml",
             "services/postgresql.yaml",
+            "statefulsets/minio.yaml",
+            "statefulsets/postgresql.yaml",
             "jobs/kafka-topics.yaml",
             "monitoring/prometheus-configmap.yaml",
             "monitoring/prometheus-deployment.yaml",
@@ -252,13 +254,13 @@ class TestHelmLint:
 
 
 class TestHelmTemplate:
-    def test_default_renders_18_resources(self) -> None:
+    def test_default_renders_20_resources(self) -> None:
         docs = _helm_template()
-        assert len(docs) == 18
+        assert len(docs) == 20
 
-    def test_local_renders_18_resources(self) -> None:
+    def test_local_renders_20_resources(self) -> None:
         docs = _helm_template([VALUES_LOCAL])
-        assert len(docs) == 18
+        assert len(docs) == 20
 
     def test_production_renders_21_resources(self) -> None:
         docs = _helm_template([VALUES_PROD])
@@ -455,3 +457,83 @@ class TestHelmTemplate:
         assert "dashboards" in volume_names
         dash_vol = [v for v in spec["volumes"] if v["name"] == "dashboards"][0]
         assert dash_vol["configMap"]["name"] == "grafana-dashboards"
+
+
+class TestHelmStatefulSets:
+    def test_default_renders_minio_statefulset(self) -> None:
+        docs = _helm_template()
+        statefulsets = [d for d in docs if d["kind"] == "StatefulSet"]
+        names = {ss["metadata"]["name"] for ss in statefulsets}
+        assert "minio" in names
+
+    def test_default_renders_postgresql_statefulset(self) -> None:
+        docs = _helm_template()
+        statefulsets = [d for d in docs if d["kind"] == "StatefulSet"]
+        names = {ss["metadata"]["name"] for ss in statefulsets}
+        assert "postgresql" in names
+
+    def test_production_disables_statefulsets(self) -> None:
+        docs = _helm_template([VALUES_PROD])
+        statefulsets = [d for d in docs if d["kind"] == "StatefulSet"]
+        assert len(statefulsets) == 0
+
+    def test_minio_statefulset_has_correct_labels(self) -> None:
+        docs = _helm_template()
+        minio_ss = [
+            d for d in docs if d["kind"] == "StatefulSet" and d["metadata"]["name"] == "minio"
+        ][0]
+        labels = minio_ss["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "minio"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_postgresql_statefulset_has_correct_labels(self) -> None:
+        docs = _helm_template()
+        pg_ss = [
+            d for d in docs if d["kind"] == "StatefulSet" and d["metadata"]["name"] == "postgresql"
+        ][0]
+        labels = pg_ss["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "postgresql"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+
+    def test_statefulset_pod_labels_match_service_selectors(self) -> None:
+        docs = _helm_template()
+        services = {
+            d["metadata"]["name"]: d
+            for d in docs
+            if d["kind"] == "Service" and d["metadata"]["name"] in ("minio", "postgresql")
+        }
+        statefulsets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "StatefulSet"}
+        for svc_name in ("minio", "postgresql"):
+            selector = services[svc_name]["spec"]["selector"]
+            pod_labels = statefulsets[svc_name]["spec"]["template"]["metadata"]["labels"]
+            for key, value in selector.items():
+                assert pod_labels.get(key) == value, f"{svc_name} pod label mismatch for {key}"
+
+    def test_statefulsets_have_probes_and_resources(self) -> None:
+        docs = _helm_template()
+        statefulsets = [d for d in docs if d["kind"] == "StatefulSet"]
+        for ss in statefulsets:
+            container = ss["spec"]["template"]["spec"]["containers"][0]
+            assert "livenessProbe" in container, f"{ss['metadata']['name']} missing livenessProbe"
+            assert "readinessProbe" in container, f"{ss['metadata']['name']} missing readinessProbe"
+            assert "resources" in container, f"{ss['metadata']['name']} missing resources"
+
+    def test_statefulsets_use_secrets_not_plaintext(self) -> None:
+        docs = _helm_template()
+        statefulsets = [d for d in docs if d["kind"] == "StatefulSet"]
+        for ss in statefulsets:
+            container = ss["spec"]["template"]["spec"]["containers"][0]
+            secret_envs = [
+                e for e in container["env"] if "valueFrom" in e and "secretKeyRef" in e["valueFrom"]
+            ]
+            assert len(secret_envs) > 0, (
+                f"{ss['metadata']['name']} should reference Secrets for credentials"
+            )
+
+    def test_statefulsets_have_volume_claim_templates(self) -> None:
+        docs = _helm_template()
+        statefulsets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "StatefulSet"}
+        for name in ("minio", "postgresql"):
+            vcts = statefulsets[name]["spec"]["volumeClaimTemplates"]
+            assert len(vcts) >= 1, f"{name} missing volumeClaimTemplates"
+            assert "storage" in vcts[0]["spec"]["resources"]["requests"]

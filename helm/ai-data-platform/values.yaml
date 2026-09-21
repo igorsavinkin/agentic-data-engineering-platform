@@ -12,7 +12,7 @@
 #   database         – ConfigMap: database-config (WAREHOUSE_DB_* env vars)
 #   secrets          – base64-encoded local-dev placeholders (never real creds)
 #   <component>      – per-component: replicas, resources, probes, app config
-#   minio/postgresql – infrastructure Service definitions (no Deployment)
+#   minio/postgresql – infrastructure: optional in-cluster StatefulSets + Service
 #   ingress          – Ingress resource for the API (disabled by default)
 #   hpa              – HorizontalPodAutoscaler for the API (disabled by default)
 #   networkPolicy    – NetworkPolicy for the platform namespace (disabled by default)
@@ -293,22 +293,64 @@ kafka:
         memory: 256Mi
 
 # ===========================================================================
-# Infrastructure services (no Deployment — external or Compose-managed)
+# Infrastructure services
 # ===========================================================================
-# These Service resources provide in-cluster DNS for infrastructure that
-# is not deployed by this chart (e.g. MinIO and PostgreSQL run via Docker
-# Compose or are provided externally).
+# MinIO and PostgreSQL can run as in-cluster StatefulSets (enabled: true)
+# for a self-contained kind deployment, or be treated as external services
+# (enabled: false) where only the Service resource is created for DNS.
 
 minio:
+  enabled: true
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2024-10-02T17-50-41Z"
   service:
     type: ClusterIP
     apiPort: 9000
     consolePort: 9001
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+  storage:
+    size: 1Gi
 
 postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16"
   service:
     type: ClusterIP
     port: 5432
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+  storage:
+    size: 1Gi
 
 # ===========================================================================
 # Optional resources — disabled by default, enabled per environment

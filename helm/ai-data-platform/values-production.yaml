@@ -109,6 +109,15 @@ kafka:
       cpu: "2"
       memory: 2Gi
 
+# Production uses managed database and object storage (RDS, S3).
+# Disable in-cluster MinIO/PostgreSQL workloads; the Service resources
+# still render for DNS but point to external endpoints.
+minio:
+  enabled: false
+
+postgresql:
+  enabled: false
+
 # Enable Ingress for external API access.
 # Update hosts and TLS for the actual domain.
 ingress:
