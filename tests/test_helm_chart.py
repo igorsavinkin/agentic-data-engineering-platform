@@ -537,3 +537,15 @@ class TestHelmStatefulSets:
             vcts = statefulsets[name]["spec"]["volumeClaimTemplates"]
             assert len(vcts) >= 1, f"{name} missing volumeClaimTemplates"
             assert "storage" in vcts[0]["spec"]["resources"]["requests"]
+
+    def test_statefulsets_volume_mounts_match_vct_names(self) -> None:
+        docs = _helm_template()
+        statefulsets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "StatefulSet"}
+        for name in ("minio", "postgresql"):
+            ss = statefulsets[name]
+            container = ss["spec"]["template"]["spec"]["containers"][0]
+            mount_names = {vm["name"] for vm in container.get("volumeMounts", [])}
+            vct_names = {v["metadata"]["name"] for v in ss["spec"]["volumeClaimTemplates"]}
+            assert mount_names == vct_names, (
+                f"{name}: volumeMount names {mount_names} != volumeClaimTemplate names {vct_names}"
+            )
