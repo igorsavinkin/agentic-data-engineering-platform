@@ -54,7 +54,14 @@ class DatasetMetadataResult(BaseModel):
 
 _BLOCKED_KEYWORDS = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE"
-    r"|EXEC|EXECUTE|CALL|MERGE|REPLACE|LOAD)\b",
+    r"|EXEC|EXECUTE|CALL|MERGE|REPLACE|LOAD|INTO)\b",
+    re.IGNORECASE,
+)
+
+_SIDEEFFECT_FUNCTIONS = re.compile(
+    r"\b(setval|nextval|currval|lo_from_bytea|lo_creat|lo_unlink"
+    r"|dblink_exec|pg_notify|pg_terminate_backend|pg_cancel_backend"
+    r"|set_config|pg_reload_conf)\b\s*\(",
     re.IGNORECASE,
 )
 
@@ -82,9 +89,16 @@ def validate_read_only(query: str) -> str | None:
     if not stripped.upper().startswith("SELECT") and not stripped.upper().startswith("WITH"):
         return "Only SELECT and WITH (CTE) queries are allowed"
 
+    if ";" in stripped.rstrip(";"):
+        return "Multiple statements are not allowed"
+
     match = _BLOCKED_KEYWORDS.search(stripped)
     if match:
         return f"Blocked keyword found: {match.group(0).upper()}"
+
+    side_effect = _SIDEEFFECT_FUNCTIONS.search(stripped)
+    if side_effect:
+        return f"Side-effecting function not allowed: {side_effect.group(1).upper()}"
 
     return None
 

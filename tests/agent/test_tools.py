@@ -151,6 +151,29 @@ class TestValidateReadOnly:
         assert result is not None
         assert "DROP" in result
 
+    def test_select_into_rejected(self) -> None:
+        result = validate_read_only("SELECT * INTO new_table FROM products")
+        assert result is not None
+        assert "INTO" in result
+
+    def test_side_effecting_function_rejected(self) -> None:
+        result = validate_read_only("SELECT setval('seq', 1)")
+        assert result is not None
+        assert "SETVAL" in result
+
+    def test_nextval_rejected(self) -> None:
+        result = validate_read_only("SELECT nextval('my_seq')")
+        assert result is not None
+        assert "NEXTVAL" in result
+
+    def test_multi_statement_rejected(self) -> None:
+        result = validate_read_only("SELECT 1; SELECT 2")
+        assert result is not None
+        assert "Multiple" in result
+
+    def test_trailing_semicolon_allowed(self) -> None:
+        assert validate_read_only("SELECT 1;") is None
+
 
 # --- execute_read_only_sql ---
 
@@ -191,6 +214,7 @@ class TestExecuteReadOnlySql:
         response = execute_read_only_sql("SELECT 1", db)
 
         assert response.success is False
+        assert response.error is not None
         assert "connection lost" in response.error
 
     def test_query_passed_to_db(self) -> None:
@@ -258,11 +282,12 @@ class TestGetDatasetMetadata:
 
     def test_database_error(self) -> None:
         db = FakeDatabaseConnection()
-        db.list_tables = lambda schema: (_ for _ in ()).throw(RuntimeError("db down"))  # type: ignore[assignment]
+        db.list_tables = lambda schema: (_ for _ in ()).throw(RuntimeError("db down"))  # type: ignore[method-assign]
 
         response = get_dataset_metadata(db)
 
         assert response.success is False
+        assert response.error is not None
         assert "db down" in response.error
 
     def test_multiple_tables(self) -> None:
