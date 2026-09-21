@@ -327,7 +327,7 @@ def _compute_processing_rate(runs: list[dict[str, Any]]) -> Optional[float]:
 def _last_successful_write(runs: list[dict[str, Any]]) -> Optional[str]:
     for r in runs:
         if r.get("overall_status") == "healthy" and r.get("finished_at"):
-            return r["finished_at"]
+            return str(r["finished_at"])
     return None
 
 
