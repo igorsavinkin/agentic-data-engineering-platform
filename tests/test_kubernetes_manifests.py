@@ -1265,10 +1265,16 @@ class TestPostgreSQLStatefulSet:
 
     def test_postgresql_has_security_context(self) -> None:
         manifest = _load_yaml(POSTGRESQL_STATEFULSET)
+        pod_sc = manifest["spec"]["template"]["spec"].get("securityContext", {})
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert "securityContext" in container
         sc = container["securityContext"]
         assert sc.get("allowPrivilegeEscalation") is False
+        assert sc.get("capabilities", {}).get("drop") == ["ALL"]
+        assert sc.get("runAsNonRoot") is True
+        assert sc.get("runAsUser") == 999
+        assert sc.get("runAsGroup") == 999
+        assert pod_sc.get("fsGroup") == 999
 
 
 class TestStatefulSetVolumeMountPVCConsistency:
