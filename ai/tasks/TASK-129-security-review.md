@@ -21,3 +21,8 @@ Objective and acceptance behavior are verified by focused tests, checks pass, do
 
 ## Agent Instructions
 Implement TASK-129 only.
+
+Technical debt:  
+  
+kubectl apply -f kubernetes/deployments/kafka-service.yaml
+Warning: would violate PodSecurity "restricted:latest": allowPrivilegeEscalation != false (container "kafka" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "kafka" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "kafka" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "kafka" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
