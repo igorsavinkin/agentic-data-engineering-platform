@@ -166,6 +166,21 @@ class TestValidateReadOnly:
         assert result is not None
         assert "NEXTVAL" in result
 
+    def test_lo_import_rejected(self) -> None:
+        result = validate_read_only("SELECT lo_import('/etc/passwd')")
+        assert result is not None
+        assert "LO_IMPORT" in result
+
+    def test_lo_export_rejected(self) -> None:
+        result = validate_read_only("SELECT lo_export(12345, '/tmp/out')")
+        assert result is not None
+        assert "LO_EXPORT" in result
+
+    def test_dblink_connect_rejected(self) -> None:
+        result = validate_read_only("SELECT dblink_connect('host=evil.com')")
+        assert result is not None
+        assert "DBLINK_CONNECT" in result
+
     def test_multi_statement_rejected(self) -> None:
         result = validate_read_only("SELECT 1; SELECT 2")
         assert result is not None

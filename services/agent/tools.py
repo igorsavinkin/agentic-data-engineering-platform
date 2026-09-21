@@ -60,14 +60,21 @@ _BLOCKED_KEYWORDS = re.compile(
 
 _SIDEEFFECT_FUNCTIONS = re.compile(
     r"\b(setval|nextval|currval|lo_from_bytea|lo_creat|lo_unlink"
-    r"|dblink_exec|pg_notify|pg_terminate_backend|pg_cancel_backend"
+    r"|lo_import|lo_export|dblink_exec|dblink_connect"
+    r"|pg_notify|pg_terminate_backend|pg_cancel_backend"
     r"|set_config|pg_reload_conf)\b\s*\(",
     re.IGNORECASE,
 )
 
 
 class DatabaseConnection(Protocol):
-    """Protocol for database connections used by agent tools."""
+    """Protocol for database connections used by agent tools.
+
+    Concrete implementations MUST enforce connection-level read-only access
+    (e.g. ``default_transaction_read_only=on`` or a read-only PostgreSQL role).
+    The query-level validation in this module is a defense-in-depth measure;
+    the connection itself must prevent any write operation.
+    """
 
     def execute(
         self, query: str, params: tuple[Any, ...] | None = None
