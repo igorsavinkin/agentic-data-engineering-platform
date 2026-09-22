@@ -258,44 +258,30 @@ class TestRuntimeImportChains:
         crash with ModuleNotFoundError even though ingestion doesn't use
         health persistence.
         """
+        import subprocess
         import sys
 
-        # Temporarily hide psycopg2 to simulate container environment
-        psycopg2_module = sys.modules.pop("psycopg2", None)
-        psycopg2_extras_module = sys.modules.pop("psycopg2.extras", None)
-
-        try:
-            # Block psycopg2 imports
-            sys.modules["psycopg2"] = None  # type: ignore
-            sys.modules["psycopg2.extras"] = None  # type: ignore
-
-            # Clear cached observability modules
-            for key in list(sys.modules.keys()):
-                if key.startswith("libs.observability"):
-                    del sys.modules[key]
-
-            # This should succeed without psycopg2
-            from libs.observability import (
-                SourceHealthTracker,
-                create_prometheus_registry,
-                setup_opentelemetry,
-            )
-
-            # Verify we got the symbols
-            assert SourceHealthTracker is not None
-            assert create_prometheus_registry is not None
-            assert setup_opentelemetry is not None
-
-        finally:
-            # Restore psycopg2 modules
-            if psycopg2_module is not None:
-                sys.modules["psycopg2"] = psycopg2_module
-            else:
-                sys.modules.pop("psycopg2", None)
-            if psycopg2_extras_module is not None:
-                sys.modules["psycopg2.extras"] = psycopg2_extras_module
-            else:
-                sys.modules.pop("psycopg2.extras", None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; "
+                "sys.modules['psycopg2'] = None; "
+                "sys.modules['psycopg2.extras'] = None; "
+                "from libs.observability import SourceHealthTracker, create_prometheus_registry, setup_opentelemetry; "
+                "assert SourceHealthTracker is not None; "
+                "assert create_prometheus_registry is not None; "
+                "assert setup_opentelemetry is not None; "
+                "print('OK')",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"Import failed without psycopg2:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
 
     def test_health_persistence_not_in_observability_init(self) -> None:
         """health_persistence symbols should not be in libs.observability.__all__.
