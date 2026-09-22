@@ -92,6 +92,10 @@ The harness writes a structured JSON report to the configured output path:
   with the target rate to identify bottlenecks.
 - **latency_ms.p50/p90/p95/p99**: Produce-to-ack latency distribution.
   High p99 values indicate tail latency issues (broker pressure, GC pauses).
+  **Scope note:** this measures producer-side latency only (from submit to
+  broker ack).  End-to-end pipeline latency — including consumer processing,
+  deduplication, and silver writes — is not measured by this harness and is
+  out of scope for the current milestone.
 - **error_count**: Number of failed produce attempts.  Non-zero values
   indicate infrastructure issues.
 - **resource.peak_rss_mb**: Peak resident set size.  Useful for sizing

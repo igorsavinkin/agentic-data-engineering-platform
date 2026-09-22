@@ -32,8 +32,9 @@ class LoadTestSettings(BaseAppSettings):
         default=0,
         ge=0,
         description=(
-            "If positive, produce exactly this many events instead of running "
-            "for duration_sec.  When both are set, the first limit wins."
+            "If positive, produce at least this many events instead of running "
+            "for duration_sec.  When both are set, the first limit wins. "
+            "Multi-worker runs may overshoot slightly due to race conditions."
         ),
     )
     kafka_bootstrap_servers: str = "localhost:9092"

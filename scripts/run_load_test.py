@@ -16,7 +16,10 @@ import argparse
 import json
 import logging
 import sys
+from pathlib import Path
 from typing import Any, Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from libs.common.config import load_settings
 from libs.event_contracts import ProductObservationEvent
@@ -76,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         "--total-events",
         type=int,
         default=None,
-        help="Produce exactly this many events (overrides --duration when reached first).",
+        help="Produce at least this many events (overshoots slightly with multiple workers).",
     )
     parser.add_argument(
         "--workers",
@@ -138,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings(LoadTestSettings)
     if overrides:
-        settings = settings.model_copy(update=overrides)
+        settings = LoadTestSettings(**{**settings.model_dump(), **overrides})
 
     if args.dry_run:
         produce_fn = _build_noop_produce_fn()

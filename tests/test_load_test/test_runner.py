@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 from typing import Any
 
 from libs.event_contracts import ProductObservationEvent
@@ -107,3 +108,52 @@ def test_runner_with_multiple_workers() -> None:
 
     assert report["results"]["produced_count"] > 0
     assert report["configuration"]["worker_count"] == 4
+
+
+def test_multi_worker_rate_is_global_not_per_worker() -> None:
+    """Rate is a global target; 4 workers at 200 eps should yield ~200 total."""
+    target_rate = 200.0
+    workers = 4
+    duration = 2.0
+
+    settings = _make_settings(
+        target_events_per_sec=target_rate,
+        duration_sec=duration,
+        worker_count=workers,
+    )
+    runner = LoadTestRunner(settings=settings, produce_fn=_noop_produce)
+
+    report = runner.run()
+
+    actual_throughput = report["results"]["throughput_events_per_sec"]
+    assert actual_throughput < target_rate * 2.0, (
+        f"throughput {actual_throughput} is too high — rate should be global "
+        f"({target_rate}), not per-worker ({target_rate * workers})"
+    )
+    assert actual_throughput > target_rate * 0.3, (
+        f"throughput {actual_throughput} is too low for target {target_rate}"
+    )
+
+
+def test_multi_worker_produces_unique_event_ids() -> None:
+    """Each worker must produce unique events (no shared generator races)."""
+    collected_ids: list[str] = []
+    lock = threading.Lock()
+
+    def collecting_produce(event: ProductObservationEvent) -> str:
+        with lock:
+            collected_ids.append(event.event_id)
+        return event.event_id
+
+    settings = _make_settings(
+        target_events_per_sec=2000,
+        duration_sec=0.5,
+        worker_count=4,
+    )
+    runner = LoadTestRunner(settings=settings, produce_fn=collecting_produce)
+    runner.run()
+
+    assert len(collected_ids) == len(set(collected_ids)), (
+        f"duplicate event_ids detected: "
+        f"{len(collected_ids)} total, {len(set(collected_ids))} unique"
+    )

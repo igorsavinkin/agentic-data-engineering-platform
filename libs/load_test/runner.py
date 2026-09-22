@@ -47,10 +47,6 @@ class LoadTestRunner:
     ) -> None:
         self._settings = settings
         self._produce_fn = produce_fn
-        self._generator = EventGenerator(
-            source=settings.source_name,
-            seed=settings.seed,
-        )
         self._metrics = MetricsCollector()
         self._run_id = str(uuid.uuid4())
 
@@ -117,12 +113,16 @@ class LoadTestRunner:
         return report
 
     def _start_workers(self, stop_event: threading.Event) -> list[threading.Thread]:
-        """Start producer worker that share the event generator and metrics."""
+        """Start producer worker threads, each with its own event generator."""
         workers: list[threading.Thread] = []
         for i in range(self._settings.worker_count):
+            generator = EventGenerator(
+                source=self._settings.source_name,
+                seed=self._settings.seed + i,
+            )
             t = threading.Thread(
                 target=self._worker_loop,
-                args=(stop_event, i),
+                args=(stop_event, i, generator),
                 daemon=True,
                 name=f"load-test-worker-{i}",
             )
@@ -130,15 +130,21 @@ class LoadTestRunner:
             workers.append(t)
         return workers
 
-    def _worker_loop(self, stop_event: threading.Event, worker_id: int) -> None:
+    def _worker_loop(
+        self,
+        stop_event: threading.Event,
+        worker_id: int,
+        generator: EventGenerator,
+    ) -> None:
         """Single worker loop: produce events at the target rate."""
-        interval = 1.0 / self._settings.target_events_per_sec
+        worker_count = self._settings.worker_count
+        interval = worker_count / self._settings.target_events_per_sec
         while not stop_event.is_set():
             if self._settings.total_events > 0:
                 if self._metrics.produced_count >= self._settings.total_events:
                     return
 
-            event = self._generator.next_event()
+            event = generator.next_event()
             start = time.monotonic()
             try:
                 self._produce_fn(event)
