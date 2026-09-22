@@ -71,23 +71,64 @@ bash scripts/kind-cluster.sh delete
 bash scripts/kind-cluster.sh recreate
 ```
 
-### Load local Docker images
+### Build application images
 
-After building service images locally, load them into the kind cluster so pods can use them without a registry:
+Build all six application service images from the repository root. The build script uses a single shared Dockerfile and produces images matching the names referenced by the Kubernetes manifests and Helm chart:
 
 ```bash
-bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev
-bash scripts/kind-cluster.sh load ai-data-platform/processor:dev
-bash scripts/kind-cluster.sh load ai-data-platform/raw-writer:dev
-bash scripts/kind-cluster.sh load ai-data-platform/lake-writer:dev
-bash scripts/kind-cluster.sh load ai-data-platform/warehouse-loader:dev
-bash scripts/kind-cluster.sh load ai-data-platform/api:dev
+bash scripts/build-local-images.sh
 ```
 
-Multiple images can be loaded at once:
+This builds:
+
+- `ai-data-platform/ingestion:dev`
+- `ai-data-platform/processor:dev`
+- `ai-data-platform/raw-writer:dev`
+- `ai-data-platform/lake-writer:dev`
+- `ai-data-platform/warehouse-loader:dev`
+- `ai-data-platform/api:dev`
+
+To build and load into kind in one step:
+
+```bash
+bash scripts/build-local-images.sh --load
+```
+
+### Load images into kind
+
+After building (or if images were built separately), load them into the kind cluster so pods can use them without a registry:
 
 ```bash
 bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev ai-data-platform/lake-writer:dev ai-data-platform/warehouse-loader:dev ai-data-platform/api:dev
+```
+
+### Full local E2E workflow
+
+The complete workflow from a clean checkout:
+
+```bash
+# 1. Build application images
+bash scripts/build-local-images.sh
+
+# 2. Create (or reuse) the kind cluster
+bash scripts/kind-cluster.sh create
+
+# 3. Load application images into the cluster
+bash scripts/kind-cluster.sh load \
+  ai-data-platform/ingestion:dev \
+  ai-data-platform/processor:dev \
+  ai-data-platform/raw-writer:dev \
+  ai-data-platform/lake-writer:dev \
+  ai-data-platform/warehouse-loader:dev \
+  ai-data-platform/api:dev
+
+# 4. Apply ConfigMaps, Secrets, and manifests
+kubectl apply -f kubernetes/config/
+bash scripts/create-local-secrets.sh
+kubectl apply -f kubernetes/deployments/
+
+# 5. Verify pods are running
+kubectl get pods -n ai-data-platform
 ```
 
 ## Manual Commands

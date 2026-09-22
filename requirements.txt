@@ -33,6 +33,9 @@ fastapi>=0.115,<1
 uvicorn>=0.32,<1
 sqlalchemy>=2.0
 
+# PostgreSQL adapter for warehouse-loader and health persistence (TASK-059, TASK-075).
+psycopg2-binary>=2.9
+
 # Prometheus metrics export (TASK-084).
 prometheus-client>=0.21,<1
 
