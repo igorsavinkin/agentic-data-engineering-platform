@@ -240,3 +240,81 @@ class TestBuildWorkflowDocumentation:
             assert f"{IMAGE_REGISTRY}/{service}" in content, (
                 f"README missing image reference for {service}"
             )
+
+
+class TestRuntimeImportChains:
+    """Verify that services can import their dependencies at runtime.
+
+    Catches the class of failure where a service crashes at startup due to
+    missing dependencies or unnecessary import coupling (e.g., ingestion
+    failing because libs.observability eagerly imports psycopg2).
+    """
+
+    def test_ingestion_can_import_observability_without_psycopg2(self) -> None:
+        """Ingestion should not require psycopg2 to import observability modules.
+
+        Regression: libs.observability.__init__ used to eagerly import
+        health_persistence which requires psycopg2, causing ingestion to
+        crash with ModuleNotFoundError even though ingestion doesn't use
+        health persistence.
+        """
+        import sys
+
+        # Temporarily hide psycopg2 to simulate container environment
+        psycopg2_module = sys.modules.pop("psycopg2", None)
+        psycopg2_extras_module = sys.modules.pop("psycopg2.extras", None)
+
+        try:
+            # Block psycopg2 imports
+            sys.modules["psycopg2"] = None  # type: ignore
+            sys.modules["psycopg2.extras"] = None  # type: ignore
+
+            # Clear cached observability modules
+            for key in list(sys.modules.keys()):
+                if key.startswith("libs.observability"):
+                    del sys.modules[key]
+
+            # This should succeed without psycopg2
+            from libs.observability import (
+                SourceHealthTracker,
+                create_prometheus_registry,
+                setup_opentelemetry,
+            )
+
+            # Verify we got the symbols
+            assert SourceHealthTracker is not None
+            assert create_prometheus_registry is not None
+            assert setup_opentelemetry is not None
+
+        finally:
+            # Restore psycopg2 modules
+            if psycopg2_module is not None:
+                sys.modules["psycopg2"] = psycopg2_module
+            else:
+                sys.modules.pop("psycopg2", None)
+            if psycopg2_extras_module is not None:
+                sys.modules["psycopg2.extras"] = psycopg2_extras_module
+            else:
+                sys.modules.pop("psycopg2.extras", None)
+
+    def test_health_persistence_not_in_observability_init(self) -> None:
+        """health_persistence symbols should not be in libs.observability.__all__.
+
+        This prevents accidental eager imports that force all services to
+        have psycopg2 even if they only need Kafka metrics.
+        """
+        import libs.observability
+
+        all_symbols = libs.observability.__all__
+        health_persistence_symbols = [
+            "HealthPersistenceConfig",
+            "HealthWriteResult",
+            "IngestionHealthResultReader",
+            "IngestionHealthResultRow",
+            "IngestionHealthResultWriter",
+        ]
+        for symbol in health_persistence_symbols:
+            assert symbol not in all_symbols, (
+                f"{symbol} should not be in libs.observability.__all__ — "
+                "import directly from libs.observability.health_persistence"
+            )

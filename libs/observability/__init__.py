@@ -14,13 +14,6 @@ from libs.observability.health_evaluation import (
     SourceHealthEvaluationConfig,
     SourceObservation,
 )
-from libs.observability.health_persistence import (
-    HealthPersistenceConfig,
-    HealthWriteResult,
-    IngestionHealthResultReader,
-    IngestionHealthResultRow,
-    IngestionHealthResultWriter,
-)
 from libs.observability.metrics_http_server import MetricsHTTPServer
 from libs.observability.otel_config import (
     OTelSettings,
@@ -44,13 +37,8 @@ from libs.observability.source_metrics import (
 
 __all__ = [
     "FreshnessState",
-    "HealthPersistenceConfig",
-    "HealthWriteResult",
     "IngestionHealthEvaluation",
     "IngestionHealthEvaluator",
-    "IngestionHealthResultReader",
-    "IngestionHealthResultRow",
-    "IngestionHealthResultWriter",
     "MetricsHTTPServer",
     "OTelSettings",
     "PlatformMetricsCollector",
