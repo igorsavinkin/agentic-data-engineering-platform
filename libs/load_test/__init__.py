@@ -1,7 +1,7 @@
 """Reusable load-test harness for the AI Data Platform (TASK-108).
 
 Produces canonical product-observation events at configurable rates and
-measures end-to-end latency, throughput, and resource utilization.  The
+measures producer-side latency, ingestion throughput, and resource utilization.  The
 harness is source-adapter independent and produces structured JSON results.
 
 See ``docs/load-test-harness.md`` for usage instructions.

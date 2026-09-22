@@ -1,7 +1,7 @@
 # Load Test Harness (TASK-108)
 
 Reusable load-test harness that produces canonical product-observation events
-at configurable rates and measures end-to-end pipeline latency, throughput,
+at configurable rates and measures producer-side latency, ingestion throughput,
 and resource utilization.
 
 ## Overview
@@ -102,6 +102,10 @@ The harness writes a structured JSON report to the configured output path:
   container memory limits.
 - **resource.total_cpu_sec**: Total CPU time consumed.  Divide by
   duration_sec to get average CPU utilization.
+
+> **Platform note:** Resource metrics (`peak_rss_mb`, `total_cpu_sec`) are
+> Linux-only — they read from `/proc/<pid>/status`.  On other platforms
+> (macOS, Windows) these values report `0.0`.
 
 ## Reuse Across Load Levels
 
