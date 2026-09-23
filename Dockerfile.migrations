@@ -1,0 +1,35 @@
+# Dedicated Dockerfile for warehouse database migrations.
+# Build context: repository root.
+#
+# Usage:
+#   docker build -f Dockerfile.migrations -t ai-data-platform/warehouse-migrations:dev .
+#
+# This image contains only Alembic + the migration scripts. It is NOT used
+# for any application runtime — it exists solely to run:
+#   python -m warehouse.migrations upgrade head
+# as a Kubernetes Job before warehouse-loader/API start.
+
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN pip install \
+    "alembic>=1.13" \
+    "sqlalchemy>=2.0" \
+    "psycopg2-binary>=2.9"
+
+RUN groupadd --gid 1001 migrations && \
+    useradd --uid 1001 --gid migrations --shell /usr/sbin/nologin migrations
+
+COPY warehouse/migrations/ warehouse/migrations/
+COPY pyproject.toml .
+
+USER migrations
+
+CMD ["python", "-m", "warehouse.migrations", "upgrade", "head"]

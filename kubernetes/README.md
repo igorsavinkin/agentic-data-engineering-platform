@@ -31,7 +31,8 @@ kubernetes/
 │   ├── postgresql-statefulset.yaml  # PostgreSQL StatefulSet workload (TASK-K8S-FIX-001)
 │   ├── kafka-deployment.yaml        # Kafka broker Deployment (TASK-077)
 │   ├── kafka-service.yaml           # Kafka NodePort Service (TASK-077)
-│   └── kafka-topics-job.yaml        # Kafka topic creation Job (TASK-077)
+│   ├── kafka-topics-job.yaml        # Kafka topic creation Job (TASK-077)
+│   ├── warehouse-migration-job.yaml # Alembic schema migration Job (TASK-K8S-FIX-003)
 └── README.md                        # This file
 ```
 
@@ -87,6 +88,7 @@ This builds:
 - `ai-data-platform/lake-writer:dev`
 - `ai-data-platform/warehouse-loader:dev`
 - `ai-data-platform/api:dev`
+- `ai-data-platform/warehouse-migrations:dev`
 
 To build and load into kind in one step:
 
@@ -99,7 +101,7 @@ bash scripts/build-local-images.sh --load
 After building (or if images were built separately), load them into the kind cluster so pods can use them without a registry:
 
 ```bash
-bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev ai-data-platform/lake-writer:dev ai-data-platform/warehouse-loader:dev ai-data-platform/api:dev
+bash scripts/kind-cluster.sh load ai-data-platform/ingestion:dev ai-data-platform/processor:dev ai-data-platform/raw-writer:dev ai-data-platform/lake-writer:dev ai-data-platform/warehouse-loader:dev ai-data-platform/api:dev ai-data-platform/warehouse-migrations:dev
 ```
 
 ### Full local E2E workflow
@@ -120,14 +122,18 @@ bash scripts/kind-cluster.sh load \
   ai-data-platform/raw-writer:dev \
   ai-data-platform/lake-writer:dev \
   ai-data-platform/warehouse-loader:dev \
-  ai-data-platform/api:dev
+  ai-data-platform/api:dev \
+  ai-data-platform/warehouse-migrations:dev
 
 # 4. Apply ConfigMaps, Secrets, and manifests
 kubectl apply -f kubernetes/config/
 bash scripts/create-local-secrets.sh
 kubectl apply -f kubernetes/deployments/
 
-# 5. Verify pods are running
+# 5. Run warehouse schema migrations
+kubectl apply -f kubernetes/deployments/warehouse-migration-job.yaml
+
+# 6. Verify pods are running
 kubectl get pods -n ai-data-platform
 ```
 
@@ -389,7 +395,10 @@ kubectl apply -f kubernetes/deployments/postgresql-service.yaml
 # 4. Kafka topics
 kubectl apply -f kubernetes/deployments/kafka-topics-job.yaml
 
-# 5. Application services
+# 5. Warehouse schema migrations (must complete before warehouse-loader/API)
+kubectl apply -f kubernetes/deployments/warehouse-migration-job.yaml
+
+# 6. Application services
 kubectl apply -f kubernetes/deployments/ingestion-deployment.yaml
 kubectl apply -f kubernetes/deployments/processor-deployment.yaml
 kubectl apply -f kubernetes/deployments/raw-writer-deployment.yaml
@@ -440,6 +449,72 @@ kubectl get pods -n ai-data-platform
 # Recent events
 kubectl get events -n ai-data-platform --sort-by='.lastTimestamp'
 ```
+
+## Warehouse Schema Migrations (TASK-K8S-FIX-003)
+
+After PostgreSQL is running and before warehouse-loader or API start, apply the Alembic schema migrations:
+
+```bash
+# Build and load the migration image
+docker build -f Dockerfile.migrations -t ai-data-platform/warehouse-migrations:dev .
+kind load docker-image ai-data-platform/warehouse-migrations:dev --name ai-data-platform
+
+# Run the migration Job
+kubectl apply -f kubernetes/deployments/warehouse-migration-job.yaml
+
+# Check Job status
+kubectl get job warehouse-migration -n ai-data-platform
+kubectl logs job/warehouse-migration -n ai-data-platform
+```
+
+The migration Job runs `python -m warehouse.migrations upgrade head` using the existing Alembic migration chain (001–006). It is idempotent — running it again on an already-migrated database is a safe no-op.
+
+### Deployment Order
+
+The migration Job must complete before any service that reads the warehouse schema:
+
+```text
+PostgreSQL
+    ↓
+warehouse migration Job
+    ↓
+warehouse-loader / API
+```
+
+### Verification
+
+```bash
+# Job should show COMPLETIONS 1/1
+kubectl get job warehouse-migration -n ai-data-platform
+
+# Check alembic_version
+kubectl exec -n ai-data-platform statefulset/postgresql -- \
+  psql -U postgres -d warehouse -c "SELECT version_num FROM alembic_version;"
+
+# Expected tables should exist
+kubectl exec -n ai-data-platform statefulset/postgresql -- \
+  psql -U postgres -d warehouse -c "\dt"
+```
+
+Expected tables include: `sources`, `products`, `source_products`, `product_observations`, `pipeline_runs`, `data_quality_results`, `ingestion_health_results`, `daily_metrics`.
+
+## Health Probes (TASK-079)
+
+All deployments include liveness and readiness probes to detect failures and control traffic routing:
+
+| Service | Liveness | Readiness |
+|---------|----------|-----------|
+| api | HTTP GET `/api/v1/health:8000` | HTTP GET `/api/v1/ready:8000` |
+| kafka | TCP socket `:29092` | TCP socket `:29092` |
+| ingestion | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| processor | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| raw-writer | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| lake-writer | exec (PID 1 check) | exec (Kafka TCP connectivity) |
+| warehouse-loader | exec (PID 1 check) | exec (PostgreSQL TCP connectivity) |
+
+Worker services (ingestion, processor, raw-writer, lake-writer) use exec probes that verify Kafka broker reachability as a readiness indicator. The warehouse-loader checks PostgreSQL reachability instead, since it does not consume Kafka.
+
+All deployments have CPU and memory requests/limits set for local development. See `docs/kubernetes-troubleshooting.md` for diagnosing probe failures, OOMKilled events, and other common issues.
 
 ## Port Mappings
 

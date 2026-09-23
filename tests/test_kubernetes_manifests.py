@@ -1364,3 +1364,158 @@ class TestStatefulSetServiceCompatibility:
         pg_svc = _load_yaml(POSTGRESQL_SERVICE)
         assert minio_svc["metadata"]["name"] == "minio"
         assert pg_svc["metadata"]["name"] == "postgresql"
+
+
+WAREHOUSE_MIGRATION_JOB = REPO_ROOT / "kubernetes" / "deployments" / "warehouse-migration-job.yaml"
+MIGRATION_DOCKERFILE = REPO_ROOT / "Dockerfile.migrations"
+
+
+class TestWarehouseMigrationJob:
+    def test_migration_job_exists(self) -> None:
+        assert WAREHOUSE_MIGRATION_JOB.exists(), (
+            f"warehouse migration job not found at {WAREHOUSE_MIGRATION_JOB}"
+        )
+
+    def test_migration_job_is_job_resource(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        assert manifest["apiVersion"] == "batch/v1"
+        assert manifest["kind"] == "Job"
+
+    def test_migration_job_namespace(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        assert manifest["metadata"]["namespace"] == "ai-data-platform"
+
+    def test_migration_job_labels(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        labels = manifest["metadata"]["labels"]
+        assert labels["app.kubernetes.io/name"] == "warehouse-migration"
+        assert labels["app.kubernetes.io/part-of"] == "ai-data-platform"
+        assert labels["app.kubernetes.io/component"] == "warehouse"
+
+    def test_migration_job_template_labels_match(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        meta_labels = manifest["metadata"]["labels"]
+        template_labels = manifest["spec"]["template"]["metadata"]["labels"]
+        for key, value in meta_labels.items():
+            assert template_labels.get(key) == value
+
+    def test_migration_job_runs_alembic_upgrade_head(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == ["python", "-m", "warehouse.migrations", "upgrade", "head"]
+
+    def test_migration_job_uses_database_config_configmap(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        configmap_envs = [
+            e
+            for e in container["env"]
+            if "valueFrom" in e and "configMapKeyRef" in e.get("valueFrom", {})
+        ]
+        configmap_names = {e["valueFrom"]["configMapKeyRef"]["name"] for e in configmap_envs}
+        assert "database-config" in configmap_names
+
+    def test_migration_job_has_all_db_env_vars(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        env_names = {e["name"] for e in container["env"]}
+        expected = {
+            "WAREHOUSE_DB_HOST",
+            "WAREHOUSE_DB_PORT",
+            "WAREHOUSE_DB_NAME",
+            "WAREHOUSE_DB_USER",
+            "WAREHOUSE_DB_PASSWORD",
+        }
+        assert expected.issubset(env_names)
+
+    def test_migration_job_db_config_from_configmap(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        for var in (
+            "WAREHOUSE_DB_HOST",
+            "WAREHOUSE_DB_PORT",
+            "WAREHOUSE_DB_NAME",
+            "WAREHOUSE_DB_USER",
+        ):
+            env = next(e for e in container["env"] if e["name"] == var)
+            ref = env["valueFrom"]["configMapKeyRef"]
+            assert ref["name"] == "database-config"
+            assert ref["key"] == var
+
+    def test_migration_job_password_from_secret(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        pw_env = next(e for e in container["env"] if e["name"] == "WAREHOUSE_DB_PASSWORD")
+        ref = pw_env["valueFrom"]["secretKeyRef"]
+        assert ref["name"] == "database-credentials"
+        assert ref["key"] == "db-password"
+
+    def test_migration_job_no_hardcoded_credentials(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        for env in container["env"]:
+            if env["name"] == "WAREHOUSE_DB_PASSWORD":
+                assert "value" not in env, "password must not be hardcoded"
+                assert "valueFrom" in env
+
+    def test_migration_job_security_context(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        pod_sc = manifest["spec"]["template"]["spec"]["securityContext"]
+        container_sc = manifest["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+
+        assert pod_sc.get("runAsNonRoot") is True
+        assert pod_sc.get("seccompProfile", {}).get("type") == "RuntimeDefault"
+        assert container_sc.get("allowPrivilegeEscalation") is False
+        assert container_sc.get("capabilities", {}).get("drop") == ["ALL"]
+
+    def test_migration_job_restart_policy(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        assert manifest["spec"]["template"]["spec"]["restartPolicy"] == "OnFailure"
+
+    def test_migration_job_backoff_limit(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        assert manifest["spec"]["backoffLimit"] == 3
+
+    def test_migration_job_has_resource_limits(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        resources = container["resources"]
+        assert "requests" in resources
+        assert "limits" in resources
+        assert "cpu" in resources["requests"]
+        assert "memory" in resources["requests"]
+
+    def test_migration_job_image(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        container = manifest["spec"]["template"]["spec"]["containers"][0]
+        assert container["image"].startswith("ai-data-platform/warehouse-migrations:")
+
+
+class TestMigrationDockerfile:
+    def test_migration_dockerfile_exists(self) -> None:
+        assert MIGRATION_DOCKERFILE.exists(), (
+            f"migration Dockerfile not found at {MIGRATION_DOCKERFILE}"
+        )
+
+    def test_migration_dockerfile_installs_alembic(self) -> None:
+        content = MIGRATION_DOCKERFILE.read_text(encoding="utf-8")
+        assert "alembic" in content.lower()
+
+    def test_migration_dockerfile_copies_migrations(self) -> None:
+        content = MIGRATION_DOCKERFILE.read_text(encoding="utf-8")
+        assert "warehouse/migrations/" in content
+
+    def test_migration_dockerfile_runs_as_non_root(self) -> None:
+        content = MIGRATION_DOCKERFILE.read_text(encoding="utf-8")
+        assert "USER" in content
+        assert "1001" in content
+
+    def test_migration_dockerfile_default_command(self) -> None:
+        content = MIGRATION_DOCKERFILE.read_text(encoding="utf-8")
+        assert "warehouse.migrations" in content
+        assert "upgrade" in content
+        assert "head" in content
+
+    def test_migration_dockerfile_does_not_install_full_requirements(self) -> None:
+        content = MIGRATION_DOCKERFILE.read_text(encoding="utf-8")
+        assert "requirements.txt" not in content

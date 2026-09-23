@@ -61,6 +61,9 @@ images:
   kafka:
     repository: apache/kafka
     tag: "4.3.1"
+  warehouseMigration:
+    repository: ai-data-platform/warehouse-migrations
+    tag: dev
 
 # ---------------------------------------------------------------------------
 # Platform configuration — rendered into ConfigMap "platform-config"
@@ -223,6 +226,20 @@ warehouseLoader:
     initialDelaySeconds: 5
     periodSeconds: 10
     timeoutSeconds: 5
+
+# ---------------------------------------------------------------------------
+# Warehouse Migration — Alembic schema migration Job (runs before loader/API)
+# ---------------------------------------------------------------------------
+warehouse:
+  migration:
+    backoffLimit: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
 
 # ---------------------------------------------------------------------------
 # API — FastAPI serving layer (the only component with inbound HTTP)
