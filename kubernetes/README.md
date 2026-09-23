@@ -493,7 +493,7 @@ kubectl logs job/warehouse-migration -n ai-data-platform
 
 The migration Job includes an initContainer that waits for PostgreSQL to accept connections before running Alembic. The Job runs `python -m warehouse.migrations upgrade head` using the existing Alembic migration chain (001–006). It is idempotent — running it again on an already-migrated database is a safe no-op.
 
-When deploying with Helm, the migration Job runs automatically as a `pre-install`/`pre-upgrade` hook, ensuring migrations complete before application workloads start.
+When deploying with Helm, the migration Job runs as a `post-install`/`pre-upgrade` hook. On first install, Helm creates all normal resources (including PostgreSQL) first, then runs the post-install migration Job. On upgrades, the pre-upgrade hook runs migrations before Helm updates existing resources. Note that in a single Helm release, `post-install` does not strictly gate application Deployment startup — Helm creates Deployments before running post-install hooks. Application services that depend on the warehouse schema rely on Kubernetes restart behavior (CrashLoopBackOff / readiness probes) until migrations complete. For strict ordering, use the raw Kubernetes workflow with explicit `kubectl wait`.
 
 ### Deployment Order
 

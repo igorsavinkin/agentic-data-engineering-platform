@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 KIND_CONFIG = REPO_ROOT / "kubernetes" / "kind" / "kind-config.yaml"
 NAMESPACE_MANIFEST = REPO_ROOT / "kubernetes" / "namespaces" / "platform-namespace.yaml"
@@ -1572,6 +1574,10 @@ class TestMigrationDockerfile:
 
 
 class TestMigrationCLI:
+    @staticmethod
+    def setup_method() -> None:
+        pytest.importorskip("alembic")
+
     def test_cli_entry_point_prints_usage_without_args(self) -> None:
         import subprocess
 
@@ -1596,7 +1602,8 @@ class TestMigrationCLI:
             cwd=str(REPO_ROOT),
         )
         assert result.returncode == 0
-        assert "001" in result.stdout or "rev" in result.stdout.lower() or len(result.stdout) > 0
+        assert "<base> -> 001" in result.stdout
+        assert "006 (head)" in result.stdout
 
     def test_cli_unknown_command_exits_nonzero(self) -> None:
         import subprocess

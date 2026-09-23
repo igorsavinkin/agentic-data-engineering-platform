@@ -630,8 +630,10 @@ class TestHelmWarehouseMigrationJob:
         ][0]
         annotations = job["metadata"]["annotations"]
         assert "helm.sh/hook" in annotations
-        assert "pre-install" in annotations["helm.sh/hook"]
-        assert "pre-upgrade" in annotations["helm.sh/hook"]
+        hook = annotations["helm.sh/hook"]
+        assert "post-install" in hook
+        assert "pre-upgrade" in hook
+        assert "pre-install" not in hook
         assert "helm.sh/hook-delete-policy" in annotations
         assert "before-hook-creation" in annotations["helm.sh/hook-delete-policy"]
 
