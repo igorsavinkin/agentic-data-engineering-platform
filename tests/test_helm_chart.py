@@ -87,6 +87,7 @@ class TestChartStructure:
             "rawWriter",
             "lakeWriter",
             "warehouseLoader",
+            "warehouse",
             "api",
             "kafka",
             "minio",
@@ -130,6 +131,7 @@ class TestChartStructure:
             "statefulsets/minio.yaml",
             "statefulsets/postgresql.yaml",
             "jobs/kafka-topics.yaml",
+            "jobs/warehouse-migration.yaml",
             "monitoring/prometheus-configmap.yaml",
             "monitoring/prometheus-deployment.yaml",
             "monitoring/prometheus-service.yaml",
@@ -254,17 +256,17 @@ class TestHelmLint:
 
 
 class TestHelmTemplate:
-    def test_default_renders_20_resources(self) -> None:
+    def test_default_renders_21_resources(self) -> None:
         docs = _helm_template()
-        assert len(docs) == 20
-
-    def test_local_renders_20_resources(self) -> None:
-        docs = _helm_template([VALUES_LOCAL])
-        assert len(docs) == 20
-
-    def test_production_renders_21_resources(self) -> None:
-        docs = _helm_template([VALUES_PROD])
         assert len(docs) == 21
+
+    def test_local_renders_21_resources(self) -> None:
+        docs = _helm_template([VALUES_LOCAL])
+        assert len(docs) == 21
+
+    def test_production_renders_22_resources(self) -> None:
+        docs = _helm_template([VALUES_PROD])
+        assert len(docs) == 22
 
     def test_default_has_no_ing(self) -> None:
         docs = _helm_template()
@@ -549,3 +551,120 @@ class TestHelmStatefulSets:
             assert mount_names == vct_names, (
                 f"{name}: volumeMount names {mount_names} != volumeClaimTemplate names {vct_names}"
             )
+
+
+class TestHelmWarehouseMigrationJob:
+    def test_migration_job_renders(self) -> None:
+        docs = _helm_template()
+        jobs = [d for d in docs if d["kind"] == "Job"]
+        job_names = {j["metadata"]["name"] for j in jobs}
+        assert "warehouse-migration" in job_names
+
+    def test_migration_job_command(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == ["python", "-m", "warehouse.migrations", "upgrade", "head"]
+
+    def test_migration_job_image(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        assert container["image"] == "ai-data-platform/warehouse-migrations:dev"
+
+    def test_migration_job_security_context(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        pod_sc = job["spec"]["template"]["spec"]["securityContext"]
+        container_sc = job["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+        assert pod_sc.get("runAsNonRoot") is True
+        assert pod_sc.get("seccompProfile", {}).get("type") == "RuntimeDefault"
+        assert container_sc.get("allowPrivilegeEscalation") is False
+        assert container_sc.get("capabilities", {}).get("drop") == ["ALL"]
+
+    def test_migration_job_uses_database_config(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        configmap_envs = [
+            e
+            for e in container["env"]
+            if "valueFrom" in e and "configMapKeyRef" in e.get("valueFrom", {})
+        ]
+        configmap_names = {e["valueFrom"]["configMapKeyRef"]["name"] for e in configmap_envs}
+        assert "database-config" in configmap_names
+
+    def test_migration_job_password_from_secret(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        pw_env = next(e for e in container["env"] if e["name"] == "WAREHOUSE_DB_PASSWORD")
+        ref = pw_env["valueFrom"]["secretKeyRef"]
+        assert ref["name"] == "database-credentials"
+        assert ref["key"] == "db-password"
+
+    def test_migration_job_has_resources(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        assert "resources" in container
+        assert "requests" in container["resources"]
+        assert "limits" in container["resources"]
+
+    def test_migration_job_has_helm_hook_annotations(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        annotations = job["metadata"]["annotations"]
+        assert "helm.sh/hook" in annotations
+        hook = annotations["helm.sh/hook"]
+        assert "post-install" in hook
+        assert "pre-upgrade" in hook
+        assert "pre-install" not in hook
+        assert "helm.sh/hook-delete-policy" in annotations
+        assert "before-hook-creation" in annotations["helm.sh/hook-delete-policy"]
+
+    def test_migration_job_has_postgresql_readiness_initcontainer(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        init_containers = job["spec"]["template"]["spec"].get("initContainers", [])
+        assert len(init_containers) >= 1
+        wait = init_containers[0]
+        assert wait["name"] == "wait-for-postgresql"
+        assert "socket" in wait["command"][2]
+
+    def test_migration_job_initcontainer_security_context(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        wait = job["spec"]["template"]["spec"]["initContainers"][0]
+        sc = wait["securityContext"]
+        assert sc.get("allowPrivilegeEscalation") is False
+        assert sc.get("capabilities", {}).get("drop") == ["ALL"]
+
+    def test_production_migration_image_not_dev(self) -> None:
+        docs = _helm_template([VALUES_PROD])
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        assert not container["image"].endswith(":dev"), (
+            f"production migration image should not use :dev tag, got {container['image']}"
+        )
+        assert "warehouse-migrations" in container["image"]

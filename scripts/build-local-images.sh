@@ -13,10 +13,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKERFILE="${REPO_ROOT}/Dockerfile"
+MIGRATION_DOCKERFILE="${REPO_ROOT}/Dockerfile.migrations"
 IMAGE_TAG="${IMAGE_TAG:-dev}"
 IMAGE_REGISTRY="${IMAGE_REGISTRY:-ai-data-platform}"
 
-ALL_SERVICES="ingestion processor raw-writer lake-writer warehouse-loader api"
+ALL_SERVICES="ingestion processor raw-writer lake-writer warehouse-loader api warehouse-migrations"
 
 declare -A SERVICE_MODULES=(
     [ingestion]="services.ingestion"
@@ -46,6 +47,9 @@ if [[ ${#SELECTED_SERVICES[@]} -eq 0 ]]; then
 fi
 
 for name in "${SELECTED_SERVICES[@]}"; do
+    if [[ "${name}" == "warehouse-migrations" ]]; then
+        continue
+    fi
     if [[ -z "${SERVICE_MODULES[${name}]+x}" ]]; then
         echo "ERROR: unknown service '${name}'" >&2
         echo "Available: ${ALL_SERVICES}" >&2
@@ -62,8 +66,24 @@ FAILED=()
 BUILT_IMAGES=()
 
 for service_name in "${SELECTED_SERVICES[@]}"; do
-    module="${SERVICE_MODULES[${service_name}]}"
     image="${IMAGE_REGISTRY}/${service_name}:${IMAGE_TAG}"
+
+    if [[ "${service_name}" == "warehouse-migrations" ]]; then
+        echo "==> Building ${image} (Dockerfile.migrations)"
+        if docker build \
+            -t "${image}" \
+            -f "${MIGRATION_DOCKERFILE}" \
+            "${REPO_ROOT}"; then
+            echo "    OK: ${image}"
+            BUILT_IMAGES+=("${image}")
+        else
+            echo "    FAIL: ${image}" >&2
+            FAILED+=("${image}")
+        fi
+        continue
+    fi
+
+    module="${SERVICE_MODULES[${service_name}]}"
 
     echo "==> Building ${image} (module: ${module})"
     if docker build \
