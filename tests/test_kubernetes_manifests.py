@@ -7,6 +7,7 @@ a live cluster — they validate file content, not cluster state.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -1490,6 +1491,55 @@ class TestWarehouseMigrationJob:
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         assert container["image"].startswith("ai-data-platform/warehouse-migrations:")
 
+    def test_migration_job_has_postgresql_readiness_initcontainer(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        init_containers = manifest["spec"]["template"]["spec"].get("initContainers", [])
+        assert len(init_containers) >= 1, "migration Job should have an initContainer"
+        wait = init_containers[0]
+        assert wait["name"] == "wait-for-postgresql"
+
+    def test_migration_initcontainer_uses_same_image(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        init_containers = manifest["spec"]["template"]["spec"]["initContainers"]
+        wait = init_containers[0]
+        migration_image = manifest["spec"]["template"]["spec"]["containers"][0]["image"]
+        assert wait["image"] == migration_image
+
+    def test_migration_initcontainer_waits_for_tcp(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        wait = manifest["spec"]["template"]["spec"]["initContainers"][0]
+        command = wait["command"]
+        assert command[0] == "python"
+        script = command[2]
+        assert "socket" in script
+        assert "create_connection" in script
+
+    def test_migration_initcontainer_reads_db_config(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        wait = manifest["spec"]["template"]["spec"]["initContainers"][0]
+        env_names = {e["name"] for e in wait["env"]}
+        assert "WAREHOUSE_DB_HOST" in env_names
+        assert "WAREHOUSE_DB_PORT" in env_names
+        for var in ("WAREHOUSE_DB_HOST", "WAREHOUSE_DB_PORT"):
+            env = next(e for e in wait["env"] if e["name"] == var)
+            ref = env["valueFrom"]["configMapKeyRef"]
+            assert ref["name"] == "database-config"
+            assert ref["key"] == var
+
+    def test_migration_initcontainer_security_context(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        wait = manifest["spec"]["template"]["spec"]["initContainers"][0]
+        sc = wait["securityContext"]
+        assert sc.get("allowPrivilegeEscalation") is False
+        assert sc.get("capabilities", {}).get("drop") == ["ALL"]
+
+    def test_migration_initcontainer_has_resources(self) -> None:
+        manifest = _load_yaml(WAREHOUSE_MIGRATION_JOB)
+        wait = manifest["spec"]["template"]["spec"]["initContainers"][0]
+        resources = wait["resources"]
+        assert "requests" in resources
+        assert "limits" in resources
+
 
 class TestMigrationDockerfile:
     def test_migration_dockerfile_exists(self) -> None:
@@ -1519,3 +1569,44 @@ class TestMigrationDockerfile:
     def test_migration_dockerfile_does_not_install_full_requirements(self) -> None:
         content = MIGRATION_DOCKERFILE.read_text(encoding="utf-8")
         assert "requirements.txt" not in content
+
+
+class TestMigrationCLI:
+    def test_cli_entry_point_prints_usage_without_args(self) -> None:
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-m", "warehouse.migrations"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(REPO_ROOT),
+        )
+        assert result.returncode == 1
+        assert "upgrade" in result.stdout
+
+    def test_cli_history_command_works_without_database(self) -> None:
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-m", "warehouse.migrations", "history"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(REPO_ROOT),
+        )
+        assert result.returncode == 0
+        assert "001" in result.stdout or "rev" in result.stdout.lower() or len(result.stdout) > 0
+
+    def test_cli_unknown_command_exits_nonzero(self) -> None:
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-m", "warehouse.migrations", "bogus"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(REPO_ROOT),
+        )
+        assert result.returncode != 0
+        assert "Unknown command" in result.stdout or "bogus" in result.stdout

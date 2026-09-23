@@ -125,15 +125,35 @@ bash scripts/kind-cluster.sh load \
   ai-data-platform/api:dev \
   ai-data-platform/warehouse-migrations:dev
 
-# 4. Apply ConfigMaps, Secrets, and manifests
+# 4. Apply ConfigMaps and Secrets
 kubectl apply -f kubernetes/config/
 bash scripts/create-local-secrets.sh
-kubectl apply -f kubernetes/deployments/
 
-# 5. Run warehouse schema migrations
+# 5. Apply infrastructure workloads (Kafka, MinIO, PostgreSQL)
+kubectl apply -f kubernetes/deployments/kafka-deployment.yaml
+kubectl apply -f kubernetes/deployments/kafka-service.yaml
+kubectl apply -f kubernetes/deployments/minio-statefulset.yaml
+kubectl apply -f kubernetes/deployments/minio-service.yaml
+kubectl apply -f kubernetes/deployments/postgresql-statefulset.yaml
+kubectl apply -f kubernetes/deployments/postgresql-service.yaml
+
+# 6. Create Kafka topics
+kubectl apply -f kubernetes/deployments/kafka-topics-job.yaml
+
+# 7. Run warehouse schema migrations and wait for completion
 kubectl apply -f kubernetes/deployments/warehouse-migration-job.yaml
+kubectl wait --for=condition=complete job/warehouse-migration -n ai-data-platform --timeout=120s
 
-# 6. Verify pods are running
+# 8. Apply application services (after migrations are complete)
+kubectl apply -f kubernetes/deployments/ingestion-deployment.yaml
+kubectl apply -f kubernetes/deployments/processor-deployment.yaml
+kubectl apply -f kubernetes/deployments/raw-writer-deployment.yaml
+kubectl apply -f kubernetes/deployments/lake-writer-deployment.yaml
+kubectl apply -f kubernetes/deployments/warehouse-loader-deployment.yaml
+kubectl apply -f kubernetes/deployments/api-deployment.yaml
+kubectl apply -f kubernetes/deployments/api-service.yaml
+
+# 9. Verify pods are running
 kubectl get pods -n ai-data-platform
 ```
 
@@ -397,6 +417,7 @@ kubectl apply -f kubernetes/deployments/kafka-topics-job.yaml
 
 # 5. Warehouse schema migrations (must complete before warehouse-loader/API)
 kubectl apply -f kubernetes/deployments/warehouse-migration-job.yaml
+kubectl wait --for=condition=complete job/warehouse-migration -n ai-data-platform --timeout=120s
 
 # 6. Application services
 kubectl apply -f kubernetes/deployments/ingestion-deployment.yaml
@@ -462,12 +483,17 @@ kind load docker-image ai-data-platform/warehouse-migrations:dev --name ai-data-
 # Run the migration Job
 kubectl apply -f kubernetes/deployments/warehouse-migration-job.yaml
 
+# Wait for the migration to complete before starting application services
+kubectl wait --for=condition=complete job/warehouse-migration -n ai-data-platform --timeout=120s
+
 # Check Job status
 kubectl get job warehouse-migration -n ai-data-platform
 kubectl logs job/warehouse-migration -n ai-data-platform
 ```
 
-The migration Job runs `python -m warehouse.migrations upgrade head` using the existing Alembic migration chain (001–006). It is idempotent — running it again on an already-migrated database is a safe no-op.
+The migration Job includes an initContainer that waits for PostgreSQL to accept connections before running Alembic. The Job runs `python -m warehouse.migrations upgrade head` using the existing Alembic migration chain (001–006). It is idempotent — running it again on an already-migrated database is a safe no-op.
+
+When deploying with Helm, the migration Job runs automatically as a `pre-install`/`pre-upgrade` hook, ensuring migrations complete before application workloads start.
 
 ### Deployment Order
 

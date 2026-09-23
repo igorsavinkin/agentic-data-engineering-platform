@@ -23,6 +23,49 @@ spec:
         runAsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgresql
+          image: ai-data-platform/warehouse-migrations:dev
+          command:
+            - python
+            - -c
+            - |
+              import os, socket, time, sys
+              host = os.environ["WAREHOUSE_DB_HOST"]
+              port = int(os.environ["WAREHOUSE_DB_PORT"])
+              for attempt in range(1, 31):
+                  try:
+                      with socket.create_connection((host, port), timeout=2):
+                          print(f"PostgreSQL {host}:{port} ready (attempt {attempt})")
+                          sys.exit(0)
+                  except OSError:
+                      print(f"Waiting for PostgreSQL {host}:{port} (attempt {attempt}/30)")
+                      time.sleep(2)
+              print("Timed out waiting for PostgreSQL", file=sys.stderr)
+              sys.exit(1)
+          env:
+            - name: WAREHOUSE_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_HOST
+            - name: WAREHOUSE_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_PORT
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
       containers:
         - name: migration
           image: ai-data-platform/warehouse-migrations:dev

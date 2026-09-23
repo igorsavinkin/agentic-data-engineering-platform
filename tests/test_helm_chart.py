@@ -622,3 +622,47 @@ class TestHelmWarehouseMigrationJob:
         assert "resources" in container
         assert "requests" in container["resources"]
         assert "limits" in container["resources"]
+
+    def test_migration_job_has_helm_hook_annotations(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        annotations = job["metadata"]["annotations"]
+        assert "helm.sh/hook" in annotations
+        assert "pre-install" in annotations["helm.sh/hook"]
+        assert "pre-upgrade" in annotations["helm.sh/hook"]
+        assert "helm.sh/hook-delete-policy" in annotations
+        assert "before-hook-creation" in annotations["helm.sh/hook-delete-policy"]
+
+    def test_migration_job_has_postgresql_readiness_initcontainer(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        init_containers = job["spec"]["template"]["spec"].get("initContainers", [])
+        assert len(init_containers) >= 1
+        wait = init_containers[0]
+        assert wait["name"] == "wait-for-postgresql"
+        assert "socket" in wait["command"][2]
+
+    def test_migration_job_initcontainer_security_context(self) -> None:
+        docs = _helm_template()
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        wait = job["spec"]["template"]["spec"]["initContainers"][0]
+        sc = wait["securityContext"]
+        assert sc.get("allowPrivilegeEscalation") is False
+        assert sc.get("capabilities", {}).get("drop") == ["ALL"]
+
+    def test_production_migration_image_not_dev(self) -> None:
+        docs = _helm_template([VALUES_PROD])
+        job = [
+            d for d in docs if d["kind"] == "Job" and d["metadata"]["name"] == "warehouse-migration"
+        ][0]
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        assert not container["image"].endswith(":dev"), (
+            f"production migration image should not use :dev tag, got {container['image']}"
+        )
+        assert "warehouse-migrations" in container["image"]
