@@ -259,23 +259,28 @@ postgresql-0   1/1 Running
 
 PostgreSQL находится дальше по pipeline.
 
-Идея архитектуры:
+Текущая реализованная архитектура downstream-потока:
 
 ```text
-Silver
-   ↓
-Airflow transformations
-   ↓
-Gold
+Silver (Parquet в MinIO)
    ↓
 Warehouse Loader
    ↓
-PostgreSQL
+PostgreSQL: product_observations
    ↓
-FastAPI
-   ↓
-LangGraph Agent
+   ├──────────────→ FastAPI
+   │
+   ├──────────────→ LangGraph Agent
+   │
+   └→ Airflow transformations
+          ↓
+      PostgreSQL analytical / Gold tables
+      (например daily_metrics, quality_results, health_results)
 ```
+
+Важно: **Airflow transformations идут после Warehouse Loader и PostgreSQL** для тех DAG'ов, которые строят аналитические результаты из warehouse-таблиц. Например, `build_daily_metrics` читает `product_observations` из PostgreSQL и записывает рассчитанные `daily_metrics` обратно в PostgreSQL.
+
+При этом Airflow в проекте выполняет не только Gold-трансформации: отдельные DAG'и отвечают за ingestion health, data quality и Parquet compaction. Поэтому Airflow — это orchestration/analytics layer, а не обязательный линейный шаг между Silver и Warehouse Loader.
 
 То есть MinIO и PostgreSQL имеют разные роли.
 
@@ -300,22 +305,27 @@ API-serving layer
 agent queries
 ```
 
-Например Gold может содержать подготовленные данные о товарах, а Warehouse Loader загрузит их в таблицу PostgreSQL:
+Warehouse Loader читает **Silver Parquet** и загружает нормализованные наблюдения в warehouse-таблицы PostgreSQL (в частности `product_observations` и связанные таблицы `sources`, `products`, `source_products`).
+
+После этого Airflow может читать warehouse-данные и строить производные аналитические результаты. Например:
 
 ```text
-products
-──────────────────────────────
-product_id
-name
-current_price
-currency
-source
-category
-updated_at
-...
+Silver / MinIO
+      ↓
+Warehouse Loader
+      ↓
+PostgreSQL
+  product_observations
+      ↓
+Airflow: build_daily_metrics
+      ↓
+PostgreSQL
+  daily_metrics
 ```
 
-После чего FastAPI сможет делать:
+То есть в текущей реализации **Gold — это не обязательный Parquet-слой перед Warehouse Loader**. Часть Gold/analytical результатов хранится в PostgreSQL и создаётся Airflow уже после загрузки Silver в warehouse.
+
+FastAPI затем может выполнять SQL-запросы к serving/warehouse-таблицам, например:
 
 ```sql
 SELECT *
@@ -457,8 +467,13 @@ Job exits successfully
 | **processor**          | validates/processes/deduplicates raw observations            |
 | **lake-writer**        | превращает validated Kafka events в Parquet                  |
 | **MinIO**              | локальный S3-compatible Data Lake                            |
-| **PostgreSQL**         | SQL/serving warehouse для API и Agent                        |
-| **kafka-topics-setup** | один раз создаёт/проверяет Kafka topics                      |
+| **PostgreSQL**         | SQL warehouse/serving layer; хранит observations и analytical/Gold tables |
+| **Warehouse Loader**   | читает Silver Parquet и idempotent UPSERT'ит данные в PostgreSQL |
+| **Airflow**            | orchestration: health/data-quality jobs, compaction и analytical/Gold transformations |
+| **FastAPI**            | предоставляет API поверх warehouse/analytical данных          |
+| **LangGraph Agent**    | использует данные/инструменты поверх serving layer            |
+| **kafka-topics-setup** | один раз создаёт/проверяет Kafka topics                       |
+| **warehouse-migration** | применяет Alembic migrations к PostgreSQL перед использованием warehouse schema |
 
 И самое ценное сейчас в нашем ручном E2E — это не просто наличие этих Pod'ов. Мы уже своими руками доказали реальный поток:
 
@@ -485,7 +500,9 @@ MinIO / Silver Parquet ✓
 
       ↓ NEXT
 
-Airflow → Gold → Warehouse Loader → PostgreSQL → FastAPI → Agent
+Warehouse Loader → PostgreSQL → Airflow analytical/Gold transformations
+                         ├→ FastAPI
+                         └→ LangGraph Agent
 ```
 
 Именно такое понимание компонентов намного полезнее для Kubernetes/Data Engineering, чем просто уметь выполнить `kubectl apply`.
