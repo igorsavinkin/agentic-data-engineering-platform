@@ -25,7 +25,7 @@ the TASK-108 load-test harness.
 |------------------------|--------------------------------|
 | Platform               | Windows 11 (10.0.26200)        |
 | Python                 | 3.14.0                         |
-| Kubernetes             | kind cluster `kind-ai-data-platform` |
+| Kubernetes             | kind cluster `ai-data-platform` (context `kind-ai-data-platform`) |
 | Namespace              | `ai-data-platform`             |
 | Kafka                  | Single broker, KRaft mode, 512MB heap |
 | Kafka advertised       | `PLAINTEXT_HOST://localhost:9092` |
@@ -76,9 +76,9 @@ by the Kafka broker.
 ### Throughput Gap
 
 The achieved throughput of ~19 events/sec is bounded by the synchronous
-produce-to-ack latency. With a p50 latency of ~47ms per event and a single
-worker thread, the theoretical maximum is approximately `1000ms / 47ms ≈ 21
-events/sec`, which aligns with the measured 18.86 events/sec.
+produce-to-ack latency. With a mean latency of ~52.8ms per event and a single
+worker thread, the theoretical maximum is approximately `1000ms / 52.8ms ≈ 18.9
+events/sec`, which aligns almost exactly with the measured 18.86 events/sec.
 
 ### Latency Profile
 
@@ -105,7 +105,8 @@ saturated at this throughput.
 
 1. **Multiple workers**: The harness supports `--workers N`. With N=5 workers,
    the global rate controller would distribute 100 events/sec across 5 threads,
-   each requiring only ~100ms per event cycle.
+   each with a per-worker budget of ~50ms. This is marginal given the ~47ms
+   produce latency; N=6 or higher would provide more headroom.
 2. **Async produce**: Switching from synchronous produce-wait to batch/async
    production would allow higher throughput per worker.
 3. These are configuration changes, not pipeline code changes.
