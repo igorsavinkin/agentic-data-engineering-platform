@@ -257,7 +257,7 @@ Silver/*.parquet   ✓
 postgresql-0   1/1 Running
 ```
 
-PostgreSQL находится дальше по pipeline.
+PostgreSQL уже является проверенной частью pipeline и служит warehouse/serving layer для downstream-компонентов.
 
 Текущая реализованная архитектура downstream-потока:
 
@@ -332,6 +332,53 @@ SELECT *
 FROM products
 WHERE category = 'electronics';
 ```
+
+---
+
+### Что идёт после PostgreSQL и что уже проверено
+
+PostgreSQL — это warehouse/serving layer. После него данные используются несколькими downstream-компонентами:
+
+```text
+PostgreSQL ✓
+    │
+    ├──────────────→ FastAPI ✓
+    │                    │
+    │                    ├→ /api/v1/health ✓
+    │                    ├→ /api/v1/ready ✓
+    │                    ├→ /api/v1/products ✓
+    │                    ├→ /api/v1/products/{id} ✓
+    │                    └→ /api/v1/products/{id}/history ✓
+    │
+    ├──────────────→ Airflow analytical/Gold transformations
+    │                    │
+    │                    └→ PostgreSQL analytical tables
+    │                        (daily_metrics, quality_results, health_results)
+    │
+    └──────────────→ LangGraph Agent
+```
+
+FastAPI serving path уже проверен вручную: Deployment `api` запустился как `1/1 Running`, `/api/v1/ready` подтвердил `database: connected`, а product list, detail и history вернули реальные warehouse-данные.
+
+Проверенные запросы:
+
+```text
+GET /api/v1/products?page_size=5                 ✓
+GET /api/v1/products/1                           ✓
+GET /api/v1/products/1/history?page_size=5       ✓
+```
+
+Canonical product `id=1` — SanDisk SSD PLUS 1TB Internal SSD, цена 109 USD, источник `fake_store`. History вернул реальные `product_observations`, включая observation `id=1132422`.
+
+Важно: `id` в `/products` — это `products.id`, а `id` элемента history — `product_observations.id`. На момент контрольного запроса API сообщил `total=2553`; это snapshot живой системы, которая продолжала принимать данные.
+
+Таким образом, вручную подтверждён путь:
+
+```text
+Silver → Warehouse Loader ✓ → PostgreSQL ✓ → FastAPI ✓ → Product list/detail/history ✓
+```
+
+Airflow analytical/Gold transformations и LangGraph Agent являются отдельными downstream-ветками; FastAPI E2E сам по себе не подтверждает их работу.
 
 ---
 
@@ -497,12 +544,16 @@ Kafka validated ✓
       │
       ▼
 MinIO / Silver Parquet ✓
-
-      ↓ NEXT
-
-Warehouse Loader → PostgreSQL → Airflow analytical/Gold transformations
-                         ├→ FastAPI
-                         └→ LangGraph Agent
+      │
+      ▼
+Warehouse Loader ✓
+      │
+      ▼
+ PostgreSQL ✓
+      │
+      ├→ FastAPI ✓ → Product list / detail / history ✓
+      ├→ Airflow analytical/Gold transformations
+      └→ LangGraph Agent
 ```
 
 Именно такое понимание компонентов намного полезнее для Kubernetes/Data Engineering, чем просто уметь выполнить `kubectl apply`.
