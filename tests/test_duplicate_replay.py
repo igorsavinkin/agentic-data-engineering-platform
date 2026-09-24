@@ -22,8 +22,6 @@ Run with: pytest tests/test_duplicate_replay.py -v -m integration
 # mypy: disable-error-code="import-untyped,no-untyped-def,import-not-found,no-any-return"
 from __future__ import annotations
 
-import json
-import logging
 import os
 import socket
 import subprocess
@@ -49,10 +47,7 @@ from libs.common.kafka_producer import (
     KafkaEventProducer,
     KafkaProducerSettings,
 )
-from libs.common.kafka_validated_producer import (
-    VALIDATED_TOPIC,
-    KafkaValidatedOutputProducer,
-)
+from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
 from libs.common.minio_storage import MinIOStorage
 from libs.event_contracts import ProductObservationEvent, deserialize_event
 from libs.observability.processor_metrics import ProcessorMetric, ProcessorMetrics
@@ -64,7 +59,6 @@ from warehouse.loader.batch_loader import WarehouseLoader
 pytestmark = pytest.mark.integration
 
 RAW_TOPIC = "products.raw.v1"
-INVALID_TOPIC = "products.invalid.v1"
 _SAME_EXTERNAL_ID = "dup-replay-product"
 
 
@@ -325,38 +319,6 @@ def _consume_raw_messages(
     return messages
 
 
-def _consume_validated_json(
-    broker: str,
-    group_id: str,
-    expected: int,
-    timeout: float = 15.0,
-) -> list[dict]:
-    from confluent_kafka import Consumer
-
-    consumer = Consumer(
-        {
-            "bootstrap.servers": broker,
-            "group.id": group_id,
-            "auto.offset.reset": "earliest",
-            "enable.auto.commit": True,
-        }
-    )
-    consumer.subscribe([VALIDATED_TOPIC])
-    results: list[dict] = []
-    deadline = time.monotonic() + timeout
-    try:
-        while len(results) < expected and time.monotonic() < deadline:
-            msg = consumer.poll(1.0)
-            if msg is None or msg.error() is not None:
-                continue
-            value = msg.value()
-            if value is not None:
-                results.append(json.loads(value.decode("utf-8")))
-    finally:
-        consumer.close()
-    return results
-
-
 def _build_pipeline(
     validated_settings: KafkaProducerSettings,
     invalid_settings: KafkaProducerSettings,
@@ -529,20 +491,17 @@ class TestKafkaReplayDeduplication:
             finally:
                 validated_prod.close()
                 invalid_prod.close()
-
-            for msg in original_messages:
-                original_consumer.commit_message(msg)
         finally:
             original_consumer.close()
 
         replay_consumer = KafkaConsumer(consumer_settings)
         try:
             replay_consumer.subscribe([RAW_TOPIC])
-            replay_messages = _consume_raw_messages(replay_consumer, expected=3, timeout=10.0)
-        finally:
-            replay_consumer.close()
+            replay_messages = _consume_raw_messages(replay_consumer, expected=3, timeout=15.0)
+            assert len(replay_messages) == 3, (
+                "Replay consumer must receive all 3 messages (no committed offsets)"
+            )
 
-        if replay_messages:
             metrics2 = ProcessorMetrics()
             pipeline2, vp2, ip2 = _build_pipeline(
                 validated_producer_settings,
@@ -556,17 +515,17 @@ class TestKafkaReplayDeduplication:
                 assert result2.published_valid == 0, (
                     "Replay with shared dedup state must publish zero new events"
                 )
-                assert result2.duplicates_skipped == len(replay_messages), (
-                    "All replayed events must be detected as duplicates"
+                assert result2.duplicates_skipped == 3, (
+                    "All 3 replayed events must be detected as duplicates"
                 )
 
                 snapshot2 = metrics2.snapshot()
-                assert snapshot2[ProcessorMetric.EVENTS_DUPLICATE] == len(replay_messages)
+                assert snapshot2[ProcessorMetric.EVENTS_DUPLICATE] == 3
             finally:
                 vp2.close()
                 ip2.close()
-        else:
-            assert dedup_state.size == 3
+        finally:
+            replay_consumer.close()
 
 
 # ============================================================================
@@ -610,21 +569,23 @@ class TestCrossBatchDeduplication:
 
 
 # ============================================================================
-# Scenario 4: End-to-end duplicate/replay across service boundaries
+# Scenario 4: Independent dedup boundaries — processor and warehouse
 # ============================================================================
 
 
-class TestEndToEndDuplicateReplay:
-    """Full lifecycle across Kafka -> Processor -> PostgreSQL boundary.
+class TestIndependentDedupBoundaries:
+    """Processor and warehouse each independently prevent duplicates.
 
-    Failure: duplicate events produced to Kafka (at-least-once delivery).
-    Detection: processor dedup catches within-process duplicates (metrics/logs);
-    PostgreSQL UNIQUE constraint catches any that slip through.
-    Recovery: pipeline continues, warehouse loader idempotent.
-    No silent data loss: every unique event appears exactly once in PostgreSQL.
+    This scenario verifies two separate dedup boundaries:
+    1. Processor: DeduplicationState catches within-process duplicates (metrics).
+    2. Warehouse: PostgreSQL UNIQUE constraint on event_id prevents duplicates
+       via ON CONFLICT DO NOTHING.
+
+    These are independent safeguards — each protects against duplicates even
+    if the other layer's state is lost (e.g., processor restart).
     """
 
-    def test_end_to_end_duplicate_no_postgresql_duplicates(
+    def test_processor_and_warehouse_each_prevent_duplicates(
         self,
         real_broker: str,
         producer_settings: KafkaProducerSettings,
@@ -634,9 +595,8 @@ class TestEndToEndDuplicateReplay:
         loader: WarehouseLoader,
         tmp_path: Path,
         query_url: str,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Duplicates at Kafka level do not create duplicates in PostgreSQL."""
+        """Processor dedup and warehouse idempotency are independent safeguards."""
         unique_events = [_make_event(f"e2e-{i}") for i in range(3)]
 
         with KafkaEventProducer(producer_settings) as producer:
@@ -653,28 +613,25 @@ class TestEndToEndDuplicateReplay:
             dedup_state = DeduplicationState()
             metrics = ProcessorMetrics()
 
-            with caplog.at_level(logging.DEBUG, logger="services.processor"):
-                pipeline, validated_prod, invalid_prod = _build_pipeline(
-                    validated_producer_settings,
-                    invalid_producer_settings,
-                    dedup_state=dedup_state,
-                    metrics=metrics,
-                )
-                try:
-                    result = pipeline.process_batch(messages)
+            pipeline, validated_prod, invalid_prod = _build_pipeline(
+                validated_producer_settings,
+                invalid_producer_settings,
+                dedup_state=dedup_state,
+                metrics=metrics,
+            )
+            try:
+                result = pipeline.process_batch(messages)
 
-                    assert result.published_valid == 3, "Only 3 unique events should be published"
-                    assert result.duplicates_skipped == 3, (
-                        "3 duplicates must be detected and skipped"
-                    )
-                    assert result.total == 6, "All 6 input records must be accounted for"
+                assert result.published_valid == 3, "Only 3 unique events should be published"
+                assert result.duplicates_skipped == 3, "3 duplicates must be detected and skipped"
+                assert result.total == 6, "All 6 input records must be accounted for"
 
-                    snapshot = metrics.snapshot()
-                    assert snapshot[ProcessorMetric.EVENTS_DUPLICATE] == 3
-                    assert snapshot[ProcessorMetric.EVENTS_VALID] == 3
-                finally:
-                    validated_prod.close()
-                    invalid_prod.close()
+                snapshot = metrics.snapshot()
+                assert snapshot[ProcessorMetric.EVENTS_DUPLICATE] == 3
+                assert snapshot[ProcessorMetric.EVENTS_VALID] == 3
+            finally:
+                validated_prod.close()
+                invalid_prod.close()
         finally:
             raw_consumer.close()
 
@@ -698,12 +655,12 @@ class TestEndToEndDuplicateReplay:
 
 
 # ============================================================================
-# Scenario 5: Replay does not create duplicate Parquet records
+# Scenario 5: Multiple processor replay passes emit no duplicates
 # ============================================================================
 
 
-class TestReplayNoParquetDuplicates:
-    """Replay at the processor level does not emit duplicate validated events.
+class TestMultipleProcessorReplays:
+    """Multiple replay passes at the processor level emit duplicates only once.
 
     Failure: same batch processed multiple times (simulates replay).
     Detection: dedup state marks subsequent passes as duplicates.
@@ -720,7 +677,7 @@ class TestReplayNoParquetDuplicates:
         invalid_producer_settings: KafkaProducerSettings,
     ) -> None:
         """Processing the same batch 3 times emits validated events only on the first pass."""
-        events = [_make_event(f"parquet-replay-{i}") for i in range(4)]
+        events = [_make_event(f"multi-replay-{i}") for i in range(4)]
 
         with KafkaEventProducer(producer_settings) as producer:
             for evt in events:
