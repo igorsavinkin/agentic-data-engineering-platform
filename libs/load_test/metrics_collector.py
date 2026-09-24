@@ -19,6 +19,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -222,7 +223,7 @@ class MetricsCollector:
             "total_ms": sorted(t.t_total_ms for t in timings),
         }
 
-        result = {}
+        result: dict[str, Any] = {}
         for name, values in components.items():
             result[name] = _compute_percentiles(values)
 
