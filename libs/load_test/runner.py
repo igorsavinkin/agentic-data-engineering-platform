@@ -57,7 +57,7 @@ class LoadTestRunner:
         self._produce_fn = produce_fn
         self._metrics = MetricsCollector()
         self._run_id = str(uuid.uuid4())
-        self._run_id_short = self._run_id[:8]
+        self._run_id_short = self._run_id.replace("-", "")
 
     @property
     def metrics(self) -> MetricsCollector:
@@ -126,7 +126,11 @@ class LoadTestRunner:
         """Scale workers up when the configured count can't sustain the rate."""
         configured = self._settings.worker_count
         needed = math.ceil(self._settings.target_events_per_sec / _ESTIMATED_EPS_PER_WORKER * 1.5)
-        return max(configured, min(needed, 64))
+        effective = max(configured, min(needed, 64))
+        total_events = self._settings.total_events
+        if total_events > 0:
+            effective = min(effective, max(total_events, 1))
+        return effective
 
     def _start_workers(
         self,
