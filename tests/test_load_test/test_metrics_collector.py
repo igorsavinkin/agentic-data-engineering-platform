@@ -102,3 +102,29 @@ def test_compute_percentiles_sorted_input() -> None:
     assert result["min"] == 1.0
     assert result["max"] == 100.0
     assert 49.0 <= result["p50"] <= 51.0
+
+
+def test_concurrent_record_latency() -> None:
+    """Lock-free record_latency must produce correct totals under concurrency."""
+    import threading
+
+    mc = MetricsCollector()
+    mc.mark_start()
+    num_threads = 8
+    per_thread = 1000
+
+    def _worker(start: int) -> None:
+        for i in range(per_thread):
+            mc.record_latency(f"evt-{start + i}", float(i))
+
+    threads = [threading.Thread(target=_worker, args=(t * per_thread,)) for t in range(num_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    mc.mark_end()
+    summary = mc.get_summary()
+    assert summary["produced_count"] == num_threads * per_thread
+    assert summary["error_count"] == 0
+    assert len(summary["latency_ms"]) > 0

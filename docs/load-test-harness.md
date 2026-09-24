@@ -103,9 +103,9 @@ The harness writes a structured JSON report to the configured output path:
 - **resource.total_cpu_sec**: Total CPU time consumed.  Divide by
   duration_sec to get average CPU utilization.
 
-> **Platform note:** Resource metrics (`peak_rss_mb`, `total_cpu_sec`) are
-> Linux-only — they read from `/proc/<pid>/status`.  On other platforms
-> (macOS, Windows) these values report `0.0`.
+> **Platform note:** `peak_rss_mb` reads from `/proc/<pid>/status` and is
+> Linux-only; on other platforms (macOS, Windows) it reports `0.0`.
+> `total_cpu_sec` uses `os.times()` and works on all platforms.
 
 ## Reuse Across Load Levels
 
