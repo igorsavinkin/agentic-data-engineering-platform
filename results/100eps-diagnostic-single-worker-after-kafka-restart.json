@@ -1,0 +1,71 @@
+{
+  "run_id": "035a4901-87c3-4452-9b00-62b8f680b3f3",
+  "timestamp": "2026-09-24T17:10:28.283087+00:00",
+  "environment": {
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "python_version": "3.12.14",
+    "execution_context": "in-cluster-ingestion-pod"
+  },
+  "configuration": {
+    "target_events_per_sec": 100.0,
+    "duration_sec": 60.0,
+    "worker_count": 1,
+    "kafka_bootstrap_servers": "kafka:29092",
+    "kafka_raw_topic": "products.raw.v1",
+    "kafka_client_id": "ingestion",
+    "source_name": "load-test",
+    "seed": 42,
+    "total_events": 0,
+    "output_path": "/tmp/100eps-diagnostic-single-worker-after-kafka-restart.json",
+    "note": "Post-Kafka-restart single-worker diagnostic (Run D)"
+  },
+  "results": {
+    "duration_sec": 60.002,
+    "produced_count": 14698,
+    "error_count": 0,
+    "throughput_events_per_sec": 244.96,
+    "latency_ms": {
+      "min": 1.165,
+      "max": 101.698,
+      "mean": 3.898,
+      "p50": 2.768,
+      "p90": 4.404,
+      "p95": 6.953,
+      "p99": 37.405
+    },
+    "resource": {
+      "peak_rss_mb": 0.0,
+      "total_cpu_sec": 0.0
+    }
+  },
+  "diagnostic_timing": {
+    "sample_count": 14698,
+    "produce_ms": {
+      "min": 1.165,
+      "max": 101.698,
+      "mean": 3.898,
+      "p50": 2.768,
+      "p90": 4.404,
+      "p95": 6.953,
+      "p99": 37.405
+    },
+    "gen_ms": {
+      "min": 0.052,
+      "max": 22.127,
+      "mean": 0.169,
+      "p50": 0.155,
+      "p90": 0.227,
+      "p95": 0.272,
+      "p99": 0.4
+    },
+    "total_ms": {
+      "min": 1.256,
+      "max": 101.882,
+      "mean": 4.081,
+      "p50": 2.952,
+      "p90": 4.639,
+      "p95": 7.247,
+      "p99": 37.615
+    }
+  }
+}

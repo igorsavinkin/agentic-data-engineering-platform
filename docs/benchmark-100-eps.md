@@ -150,3 +150,176 @@ The full JSON report is at `results/100eps.json`.
 - **No downstream backpressure measurement**: The benchmark measures only the
   producer side. Consumer lag, processing queue depth, and write amplification
   are not captured.
+
+  
+
+
+
+## Follow-up Verification
+
+The original TASK-109 benchmark achieved 18.86 events/sec against the
+configured target of 100 events/sec. The initial run identified the
+single-worker synchronous producer as a load-generator limitation.
+
+After PERF-FIX-001 introduced concurrent load generation and automatic
+effective-worker scaling, additional verification and diagnostic runs
+were performed.
+
+### Verification History
+
+| Run | Environment | Effective Workers | Actual Throughput | Result |
+|---|---|---:|---:|---|
+| Original TASK-109 | Windows / kind / localhost Kafka | 1 | 18.86 events/sec | Target not reached |
+| Windows verification | Windows / kind / localhost Kafka | 3 | ~79 events/sec | Target not reached |
+| Linux in-cluster verification | Kubernetes / Linux / `kafka:29092` | 3 | **95.55 events/sec** | Target not fully reached |
+
+The Windows diagnostic runs were useful for identifying limitations in
+the load-generation environment, but they should not be interpreted as
+measurements of the maximum processing capacity of the platform.
+
+### Linux / Kubernetes In-Cluster Verification
+
+The final follow-up run used the real load-test harness inside the
+Kubernetes cluster:
+
+- `LoadTestRunner`
+- `KafkaEventProducer`
+- `EventGenerator`
+- diagnostic `MetricsCollector`
+- Kafka service `kafka:29092`
+
+Configuration:
+
+| Parameter | Value |
+|---|---:|
+| Target rate | 100 events/sec |
+| Duration | 60 seconds |
+| Configured workers | 1 |
+| Effective workers | 3 |
+| Kafka topic | `products.raw.v1` |
+| Execution environment | Linux / Kubernetes |
+| Kafka connection | In-cluster `kafka:29092` |
+
+### Linux Verification Results
+
+| Metric | Value |
+|---|---:|
+| **Target throughput** | **100 events/sec** |
+| **Actual throughput** | **95.55 events/sec** |
+| **Events produced** | **5,734** |
+| **Producer errors** | **0** |
+| Duration | 60.008 sec |
+| Mean produce latency | 5.142 ms |
+| Produce latency p50 | 2.767 ms |
+| Produce latency p90 | 7.195 ms |
+| Produce latency p95 | 14.384 ms |
+| Produce latency p99 | 47.626 ms |
+| Mean iteration cycle | 31.360 ms |
+| Mean pacing wait overshoot | 0.404 ms |
+| Peak RSS | 59.8 MB |
+| Total CPU time | 8.85 sec |
+
+Worker activity was evenly distributed:
+
+| Worker | Iterations |
+|---|---:|
+| `worker_0` | 1,910 |
+| `worker_1` | 1,912 |
+| `worker_2` | 1,912 |
+
+### Remaining Throughput Gap
+
+With three effective workers and a target rate of 100 events/sec, the
+intended per-worker cycle interval is:
+
+```text
+3 / 100 = 0.03 sec = 30 ms
+```
+
+The measured mean iteration cycle was 31.360 ms.
+
+Using the measured cycle time:
+
+```text
+3 × 1000 / 31.360 ≈ 95.66 events/sec
+```
+
+This closely matches the observed throughput of 95.55 events/sec.
+
+The remaining approximately 4.45% gap therefore corresponds closely to
+the measured difference between the intended 30 ms worker interval and
+the observed 31.36 ms mean iteration cycle.
+
+No additional worker or pacing optimization was introduced as part of
+TASK-109.
+
+### Diagnostic Findings
+
+The diagnostic investigation also showed that benchmark results were
+sensitive to the execution environment.
+
+Earlier Windows/localhost runs showed substantially higher producer
+latency and pacing overhead than the Linux in-cluster verification.
+
+A separate controlled in-cluster producer experiment measured much
+lower synchronous producer operation latency than the corresponding
+Windows/localhost experiment.
+
+Because those experiments differed in multiple environmental variables,
+the difference must not be attributed to a single cause such as
+port-forward latency or Windows timer behavior without further isolated
+testing.
+
+For this reason, no Windows-specific performance optimization was
+introduced.
+
+### Downstream Observations
+
+The Linux verification directly proves producer-side load generation
+only.
+
+During the pre-flight and post-test inspection:
+
+- Kafka was running and the `products.raw.v1` topic existed.
+- Processor and lake-writer were running.
+- Raw-writer had a history of restarts and consumer connectivity issues.
+- Warehouse-loader also had a history of restarts.
+
+No consumer-lag measurement or complete produced-to-consumed event
+reconciliation was performed.
+
+Therefore this benchmark does **not** establish that all 5,734 produced
+events were processed by every downstream component during the
+60-second test.
+
+### Final TASK-109 Conclusion
+
+TASK-109 configured a target of 100 events/sec.
+
+The original benchmark generated 18.86 events/sec. After improving the
+load-test harness and repeating the experiment in a Linux/Kubernetes
+in-cluster environment, the real harness generated:
+
+**95.55 events/sec for 60 seconds with 0 producer errors.**
+
+The configured 100 events/sec target was therefore **not fully reached**;
+the measured producer-side result was approximately 95.6% of the target.
+
+The experiment demonstrates that the load generator can produce close
+to 100 events/sec in the Linux/Kubernetes environment, but it does not
+establish end-to-end pipeline sustainability at 100 events/sec.
+
+Consumer lag, downstream processing throughput, and end-to-end latency
+remain separate measurements for subsequent performance tasks.
+
+### Follow-up Result Artifacts
+
+Relevant diagnostic and verification artifacts:
+
+- `results/100eps-verification.json`
+- `results/100eps-diagnostic.json`
+- `results/diagnostic-dryrun.json`
+- `results/diagnostic-report.json`
+- `results/100eps-diagnostic-single-worker.json`
+- `results/100eps-diagnostic-single-worker-after-kafka-restart.json`
+- `results/100eps-linux-incluster-verification.json`
