@@ -122,6 +122,8 @@ python scripts/run_load_test.py --rate 1000 --duration 60 --output results/1000e
 
 - Docker Compose stack running (Kafka at `localhost:9092`)
 - Python 3.12+
+- `APP_ENVIRONMENT` set (e.g. `APP_ENVIRONMENT=production`); required by the
+  platform configuration layer
 - No changes to production-like infrastructure; the harness only produces
   events to the raw topic
 
