@@ -1,0 +1,116 @@
+{
+  "configuration": {
+    "duration_sec": 60.0,
+    "kafka_bootstrap_servers": "localhost:9092",
+    "kafka_client_id": "load-test-harness",
+    "kafka_raw_topic": "products.raw.v1",
+    "output_path": "results/100eps-diagnostic.json",
+    "seed": 42,
+    "source_name": "load-test",
+    "target_events_per_sec": 100.0,
+    "total_events": 0,
+    "worker_count": 1
+  },
+  "diagnostic_timing": {
+    "actual_wait_ms": {
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p95": 0.0,
+      "p99": 0.0
+    },
+    "gen_ms": {
+      "max": 1.942,
+      "mean": 0.12,
+      "min": 0.072,
+      "p50": 0.11,
+      "p90": 0.145,
+      "p95": 0.186,
+      "p99": 0.325
+    },
+    "overshoot_ms": {
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p95": 0.0,
+      "p99": 0.0
+    },
+    "per_worker": {
+      "worker_0": {
+        "iterations": 407,
+        "mean_overshoot_ms": 0.0,
+        "mean_produce_ms": 147.697,
+        "mean_total_ms": 147.838
+      },
+      "worker_1": {
+        "iterations": 406,
+        "mean_overshoot_ms": 0.0,
+        "mean_produce_ms": 147.768,
+        "mean_total_ms": 147.906
+      },
+      "worker_2": {
+        "iterations": 406,
+        "mean_overshoot_ms": 0.0,
+        "mean_produce_ms": 147.885,
+        "mean_total_ms": 148.029
+      }
+    },
+    "produce_ms": {
+      "max": 1408.809,
+      "mean": 147.783,
+      "min": 94.099,
+      "p50": 143.342,
+      "p90": 149.535,
+      "p95": 152.11,
+      "p99": 158.413
+    },
+    "requested_wait_ms": {
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p95": 0.0,
+      "p99": 0.0
+    },
+    "sample_count": 1219,
+    "total_ms": {
+      "max": 1408.959,
+      "mean": 147.924,
+      "min": 94.197,
+      "p50": 143.478,
+      "p90": 149.662,
+      "p95": 152.314,
+      "p99": 158.61
+    }
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python_version": "3.14.0"
+  },
+  "results": {
+    "duration_sec": 60.038,
+    "error_count": 0,
+    "latency_ms": {
+      "max": 1408.809,
+      "mean": 147.783,
+      "min": 94.099,
+      "p50": 143.342,
+      "p90": 149.535,
+      "p95": 152.11,
+      "p99": 158.413
+    },
+    "produced_count": 1219,
+    "resource": {
+      "peak_rss_mb": 0.0,
+      "total_cpu_sec": 2.062
+    },
+    "throughput_events_per_sec": 20.3
+  },
+  "run_id": "48d96001-73d3-4844-b3e3-76b4b9b664a4",
+  "timestamp": "2026-09-24T16:14:44.253204+00:00"
+}

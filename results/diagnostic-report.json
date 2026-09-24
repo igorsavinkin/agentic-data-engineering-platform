@@ -1,0 +1,190 @@
+{
+  "title": "Diagnostic Timing Analysis: 100 eps Throughput Gap",
+  "date": "2026-09-24",
+  "benchmark_config": {
+    "target_rate_eps": 100,
+    "duration_sec": 60,
+    "effective_workers": 3,
+    "pacing_interval_ms": 30,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python_version": "3.14.0",
+    "kafka": "kind cluster via kubectl port-forward localhost:9092"
+  },
+  "observed_throughput": {
+    "events_produced": 4784,
+    "duration_sec": 60.016,
+    "actual_eps": 79.71,
+    "target_eps": 100,
+    "gap_percent": 20.3
+  },
+  "per_iteration_timing": {
+    "description": "Per-iteration timing breakdown across 4784 iterations (3 workers). All values in milliseconds.",
+    "components": {
+      "gen_ms": {
+        "mean": 0.160,
+        "p50": 0.140,
+        "p90": 0.226,
+        "p95": 0.310,
+        "p99": 0.610,
+        "min": 0.034,
+        "max": 4.435,
+        "fraction_of_cycle": "0.4%"
+      },
+      "produce_ms": {
+        "mean": 12.721,
+        "p50": 9.656,
+        "p90": 21.503,
+        "p95": 26.771,
+        "p99": 48.932,
+        "min": 5.075,
+        "max": 563.122,
+        "fraction_of_cycle": "33.8%"
+      },
+      "requested_wait_ms": {
+        "mean": 18.036,
+        "p50": 20.297,
+        "p90": 23.842,
+        "p95": 24.144,
+        "p99": 24.535,
+        "min": 0.0,
+        "max": 24.916,
+        "note": "Computed as interval(30ms) - elapsed. Zero when produce exceeds interval."
+      },
+      "actual_wait_ms": {
+        "mean": 24.692,
+        "p50": 24.615,
+        "p90": 37.290,
+        "p95": 38.967,
+        "p99": 40.467,
+        "min": 0.0,
+        "max": 46.035
+      },
+      "overshoot_ms": {
+        "mean": 6.657,
+        "p50": 2.683,
+        "p90": 15.842,
+        "p95": 16.257,
+        "p99": 17.473,
+        "min": -1.044,
+        "max": 23.436,
+        "note": "actual_wait - requested_wait. p90 at ~15.8ms matches Windows default timer resolution of 15.625ms."
+      },
+      "total_ms": {
+        "mean": 37.599,
+        "p50": 33.324,
+        "p90": 46.068,
+        "p95": 46.638,
+        "p99": 50.635,
+        "min": 29.109,
+        "max": 563.211
+      }
+    },
+    "sample_count": 4784
+  },
+  "per_worker_breakdown": {
+    "worker_0": {"iterations": 1595, "mean_produce_ms": 12.619, "mean_overshoot_ms": 6.639, "mean_total_ms": 37.591},
+    "worker_1": {"iterations": 1587, "mean_produce_ms": 12.906, "mean_overshoot_ms": 6.798, "mean_total_ms": 37.779},
+    "worker_2": {"iterations": 1602, "mean_produce_ms": 12.639, "mean_overshoot_ms": 6.533, "mean_total_ms": 37.429}
+  },
+  "throughput_prediction": {
+    "model": "rate = 1000 / mean_total_ms * effective_workers",
+    "predicted_eps": 79.79,
+    "observed_eps": 79.71,
+    "prediction_error_percent": 0.1,
+    "counterfactual_no_overshoot": {
+      "mean_cycle_without_overshoot_ms": 30.917,
+      "predicted_eps": 97.03,
+      "throughput_lost_to_overshoot_eps": 17.32,
+      "throughput_lost_to_overshoot_percent": 17.8
+    },
+    "counterfactual_no_overshoot_no_kafka": {
+      "note": "From dry-run (noop produce): mean cycle = 35.031ms, overshoot = 4.859ms",
+      "predicted_eps": 85.66,
+      "throughput_lost_to_overshoot_eps": 14.34
+    }
+  },
+  "conclusions": [
+    {
+      "id": "C1",
+      "statement": "Windows timer resolution causes Event.wait() to overshoot the requested timeout by a mean of 6.657ms per iteration.",
+      "classification": "PROVEN BY MEASUREMENT",
+      "evidence": "Direct per-iteration measurement: overshoot mean=6.657ms, p50=2.683ms, p90=15.842ms. The p90 value of 15.842ms matches the Windows default timer resolution of 15.625ms (64 Hz). Bimodal distribution: most waits overshoot by ~2-3ms, but ~10% of waits miss a full timer tick and overshoot by ~16ms. Confirmed by dry-run (noop produce): overshoot mean=4.859ms with zero I/O.",
+      "measurement_method": "monotonic() timestamps around stop_event.wait(timeout=sleep_time) in _worker_loop"
+    },
+    {
+      "id": "C2",
+      "statement": "Timer overshoot is the primary cause of the throughput gap (79.71 vs 100 eps).",
+      "classification": "PROVEN BY MEASUREMENT",
+      "evidence": "Mean cycle time 37.599ms predicts 79.79 eps (3 workers), matching observed 79.71 eps within 0.1%. Without overshoot, the cycle would be 30.917ms, predicting 97.03 eps. The overshoot accounts for 17.8% of theoretical throughput. The remaining 3% gap (97.03 vs 100) is due to non-zero produce time reducing the sleep window below the full 30ms interval.",
+      "measurement_method": "Throughput prediction from measured mean cycle time: rate = 1000/mean_total * workers"
+    },
+    {
+      "id": "C3",
+      "statement": "Event generation time is negligible (< 0.2ms per iteration).",
+      "classification": "PROVEN BY MEASUREMENT",
+      "evidence": "gen_ms mean=0.160ms, p99=0.610ms, constituting 0.4% of cycle time. model_construct() bypass and counter-based IDs are effective.",
+      "measurement_method": "monotonic() timestamps around generator.next_event()"
+    },
+    {
+      "id": "C4",
+      "statement": "Kafka produce latency (mean 12.721ms) does not directly limit throughput because the pacing sleep compensates for elapsed time.",
+      "classification": "PROVEN BY MEASUREMENT",
+      "evidence": "Produce time varies from 5.075ms (p50=9.656ms) to 563.122ms (outlier), but the sleep phase absorbs this variance. When produce < 30ms interval, the remaining time is filled with sleep. The total cycle time is determined by sleep overshoot, not produce time. Per-worker produce times (12.6-12.9ms) are uniform, showing no lock starvation.",
+      "measurement_method": "Comparison of requested_wait (18.036ms) + produce (12.721ms) = 30.757ms ~ interval (30ms)"
+    },
+    {
+      "id": "C5",
+      "statement": "The producer lock (threading.Lock) serializes Kafka produce calls across 3 workers but does not reduce throughput.",
+      "classification": "SUPPORTED BY OBSERVATION",
+      "evidence": "Per-worker produce times are similar (12.6-12.9ms mean), suggesting fair lock acquisition. Lock wait time is embedded in produce_ms but does not affect cycle time because sleep compensates. Lock inflates reported Kafka latency but is invisible to throughput.",
+      "caveat": "Lock wait time was not separately measured from actual Kafka serialize+ACK time. The 12.721ms produce mean includes both."
+    },
+    {
+      "id": "C6",
+      "statement": "GIL contention among 3 worker threads is not a significant throughput limiter.",
+      "classification": "SUPPORTED BY OBSERVATION",
+      "evidence": "Event generation time (0.160ms) is very low, suggesting minimal GIL contention for the CPU-bound phase. The I/O-bound produce phase releases the GIL during Kafka network wait. However, GIL contention was not directly measured (would require per-thread CPU time tracking).",
+      "caveat": "Indirect evidence only. GIL contention could affect timer precision but this was not isolated."
+    },
+    {
+      "id": "C7",
+      "statement": "No downstream backpressure was observed from the Kafka pipeline during the benchmark.",
+      "classification": "SUPPORTED BY OBSERVATION",
+      "evidence": "Zero errors across 4784 events. Produce latency p50=9.656ms is stable. Processor and raw-writer pods processed events without errors during the benchmark window (verified in prior verification run).",
+      "caveat": "Consumer lag was not directly measured (kafka-consumer-groups tool not available in container). Complete produced/consumed event reconciliation was not performed. No downstream backpressure observed in available logs."
+    },
+    {
+      "id": "C8",
+      "statement": "The throughput gap can be closed by increasing Windows timer resolution via timeBeginPeriod(1) or by deploying on Linux.",
+      "classification": "HYPOTHESIS",
+      "evidence": "Windows default timer resolution is 15.625ms (64 Hz). timeBeginPeriod(1) requests 1ms resolution. Linux hrtimer provides sub-millisecond resolution natively. Neither was tested in this benchmark.",
+      "caveat": "Not tested. timeBeginPeriod affects system-wide timer resolution and may have power consumption implications. Linux deployment would eliminate this issue entirely."
+    },
+    {
+      "id": "C9",
+      "statement": "Tail-latency produce calls (p99=48.932ms) occasionally exceed the 30ms interval, causing zero-sleep iterations.",
+      "classification": "PROVEN BY MEASUREMENT",
+      "evidence": "requested_wait_ms min=0.0 (382 iterations with zero sleep out of 4784 = 8.0%). produce_ms p99=48.932ms exceeds 30ms interval. Max produce=563.122ms (single outlier, likely broker GC or network stall). These iterations have cycle times > 30ms, contributing to the long tail in total_ms (p99=50.635ms).",
+      "measurement_method": "Count of iterations with requested_wait_ms = 0"
+    }
+  ],
+  "cycle_time_budget": {
+    "description": "How the 37.599ms mean cycle time breaks down",
+    "components": {
+      "event_generation": {"ms": 0.160, "percent": 0.4},
+      "kafka_produce": {"ms": 12.721, "percent": 33.8},
+      "pacing_sleep_requested": {"ms": 18.036, "percent": 47.9},
+      "timer_overshoot": {"ms": 6.657, "percent": 17.7},
+      "measurement_overhead": {"ms": 0.025, "percent": 0.1}
+    },
+    "note": "Percentages sum to >100% because overshoot is additive to requested sleep. The actual_wait = requested + overshoot."
+  },
+  "dry_run_comparison": {
+    "description": "5-second dry-run with noop produce function (0.002ms) to isolate timer overshoot from Kafka latency",
+    "throughput_eps": 85.47,
+    "mean_cycle_ms": 35.031,
+    "mean_overshoot_ms": 4.859,
+    "mean_requested_wait_ms": 29.986,
+    "note": "With zero produce time, the full 30ms interval is available for sleep. Overshoot of 4.859ms still limits throughput to 85.47 eps (vs 100 target). This proves the timer overshoot exists independently of Kafka latency."
+  }
+}

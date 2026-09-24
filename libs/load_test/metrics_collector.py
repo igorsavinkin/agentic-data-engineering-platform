@@ -19,6 +19,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,24 @@ class ResourceSnapshot:
         return self.user_cpu_sec + self.system_cpu_sec
 
 
+@dataclass(frozen=True)
+class IterationTiming:
+    """Per-iteration timing breakdown for diagnostic runs.
+
+    All values in milliseconds.  Captures the full cycle decomposition:
+    event generation, Kafka produce (including lock wait), pacing sleep,
+    and the overshoot of the sleep beyond the requested timeout.
+    """
+
+    worker_id: int
+    t_gen_ms: float
+    t_produce_ms: float
+    t_requested_wait_ms: float
+    t_actual_wait_ms: float
+    t_overshoot_ms: float
+    t_total_ms: float
+
+
 class MetricsCollector:
     """Thread-safe collector for load-test metrics.
 
@@ -59,11 +78,13 @@ class MetricsCollector:
     per run) and touch shared mutable state that must be consistent.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, diagnostic: bool = False) -> None:
         self._lock = threading.Lock()
         self._latencies: list[LatencySample] = []
         self._errors: list[float] = []
         self._resource_snapshots: list[ResourceSnapshot] = []
+        self._iteration_timings: list[IterationTiming] = []
+        self._diagnostic = diagnostic
         self._start_time: float | None = None
         self._end_time: float | None = None
 
@@ -79,6 +100,30 @@ class MetricsCollector:
     def record_error(self) -> None:
         """Record a produce error (lock-free)."""
         self._errors.append(time.monotonic())
+
+    def record_iteration_timing(
+        self,
+        worker_id: int,
+        t_gen_ms: float,
+        t_produce_ms: float,
+        t_requested_wait_ms: float,
+        t_actual_wait_ms: float,
+        t_overshoot_ms: float,
+        t_total_ms: float,
+    ) -> None:
+        """Record a per-iteration timing breakdown (diagnostic mode only)."""
+        if not self._diagnostic:
+            return
+        sample = IterationTiming(
+            worker_id=worker_id,
+            t_gen_ms=t_gen_ms,
+            t_produce_ms=t_produce_ms,
+            t_requested_wait_ms=t_requested_wait_ms,
+            t_actual_wait_ms=t_actual_wait_ms,
+            t_overshoot_ms=t_overshoot_ms,
+            t_total_ms=t_total_ms,
+        )
+        self._iteration_timings.append(sample)
 
     def record_resource_snapshot(self) -> None:
         """Capture a point-in-time resource usage snapshot."""
@@ -155,6 +200,52 @@ class MetricsCollector:
                 "total_cpu_sec": round(total_cpu_sec, 3),
             },
         }
+
+    def get_timing_breakdown(self) -> dict | None:
+        """Compute per-component timing statistics from diagnostic data.
+
+        Returns None if diagnostic mode is not enabled or no data was collected.
+        Safe to call after all workers have joined.
+        """
+        if not self._diagnostic:
+            return None
+        with self._lock:
+            timings = list(self._iteration_timings)
+        if not timings:
+            return None
+
+        components = {
+            "gen_ms": sorted(t.t_gen_ms for t in timings),
+            "produce_ms": sorted(t.t_produce_ms for t in timings),
+            "requested_wait_ms": sorted(t.t_requested_wait_ms for t in timings),
+            "actual_wait_ms": sorted(t.t_actual_wait_ms for t in timings),
+            "overshoot_ms": sorted(t.t_overshoot_ms for t in timings),
+            "total_ms": sorted(t.t_total_ms for t in timings),
+        }
+
+        result: dict[str, Any] = {}
+        for name, values in components.items():
+            result[name] = _compute_percentiles(values)
+
+        result["sample_count"] = len(timings)
+
+        per_worker = {}
+        worker_ids = sorted({t.worker_id for t in timings})
+        for wid in worker_ids:
+            w_timings = [t for t in timings if t.worker_id == wid]
+            per_worker[f"worker_{wid}"] = {
+                "iterations": len(w_timings),
+                "mean_total_ms": round(sum(t.t_total_ms for t in w_timings) / len(w_timings), 3),
+                "mean_produce_ms": round(
+                    sum(t.t_produce_ms for t in w_timings) / len(w_timings), 3
+                ),
+                "mean_overshoot_ms": round(
+                    sum(t.t_overshoot_ms for t in w_timings) / len(w_timings), 3
+                ),
+            }
+        result["per_worker"] = per_worker
+
+        return result
 
 
 def _compute_percentiles(values: list[float]) -> dict:

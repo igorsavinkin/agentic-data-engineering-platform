@@ -115,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Enable debug logging.",
     )
+    parser.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="Collect per-iteration timing breakdown (gen, produce, wait, overshoot, total).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -149,7 +154,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         produce_fn, producer = _build_kafka_produce_fn(settings)
 
-    runner = LoadTestRunner(settings=settings, produce_fn=produce_fn)
+    runner = LoadTestRunner(
+        settings=settings,
+        produce_fn=produce_fn,
+        diagnostic=args.diagnostic,
+    )
 
     try:
         report = runner.run()

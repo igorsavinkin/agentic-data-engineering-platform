@@ -128,3 +128,154 @@ def test_concurrent_record_latency() -> None:
     assert summary["produced_count"] == num_threads * per_thread
     assert summary["error_count"] == 0
     assert len(summary["latency_ms"]) > 0
+
+
+def test_diagnostic_records_iteration_timings() -> None:
+    mc = MetricsCollector(diagnostic=True)
+    mc.record_iteration_timing(
+        worker_id=0,
+        t_gen_ms=0.1,
+        t_produce_ms=12.0,
+        t_requested_wait_ms=17.9,
+        t_actual_wait_ms=24.5,
+        t_overshoot_ms=6.6,
+        t_total_ms=37.0,
+    )
+    mc.record_iteration_timing(
+        worker_id=1,
+        t_gen_ms=0.2,
+        t_produce_ms=13.0,
+        t_requested_wait_ms=16.8,
+        t_actual_wait_ms=23.0,
+        t_overshoot_ms=6.2,
+        t_total_ms=36.0,
+    )
+
+    breakdown = mc.get_timing_breakdown()
+    assert breakdown is not None
+    assert breakdown["sample_count"] == 2
+
+
+def test_non_diagnostic_ignores_iteration_timings() -> None:
+    mc = MetricsCollector(diagnostic=False)
+    mc.record_iteration_timing(
+        worker_id=0,
+        t_gen_ms=0.1,
+        t_produce_ms=12.0,
+        t_requested_wait_ms=17.9,
+        t_actual_wait_ms=24.5,
+        t_overshoot_ms=6.6,
+        t_total_ms=37.0,
+    )
+
+    assert mc.get_timing_breakdown() is None
+
+
+def test_get_timing_breakdown_returns_none_when_disabled() -> None:
+    mc = MetricsCollector(diagnostic=False)
+    assert mc.get_timing_breakdown() is None
+
+
+def test_get_timing_breakdown_returns_none_when_empty() -> None:
+    mc = MetricsCollector(diagnostic=True)
+    assert mc.get_timing_breakdown() is None
+
+
+def test_get_timing_breakdown_structure() -> None:
+    mc = MetricsCollector(diagnostic=True)
+    for i in range(10):
+        mc.record_iteration_timing(
+            worker_id=i % 2,
+            t_gen_ms=0.1 * (i + 1),
+            t_produce_ms=10.0 + i,
+            t_requested_wait_ms=20.0 - i,
+            t_actual_wait_ms=25.0 - i,
+            t_overshoot_ms=5.0,
+            t_total_ms=35.0 + i,
+        )
+
+    breakdown = mc.get_timing_breakdown()
+    assert breakdown is not None
+    assert breakdown["sample_count"] == 10
+
+    for component in (
+        "gen_ms",
+        "produce_ms",
+        "requested_wait_ms",
+        "actual_wait_ms",
+        "overshoot_ms",
+        "total_ms",
+    ):
+        assert component in breakdown
+        stats = breakdown[component]
+        assert "min" in stats
+        assert "p50" in stats
+        assert "p90" in stats
+        assert "p95" in stats
+        assert "p99" in stats
+        assert "max" in stats
+        assert "mean" in stats
+        assert stats["min"] <= stats["p50"]
+        assert stats["p50"] <= stats["p90"]
+        assert stats["p90"] <= stats["p95"]
+        assert stats["p95"] <= stats["p99"]
+        assert stats["p99"] <= stats["max"]
+
+    assert "per_worker" in breakdown
+    assert "worker_0" in breakdown["per_worker"]
+    assert "worker_1" in breakdown["per_worker"]
+    assert breakdown["per_worker"]["worker_0"]["iterations"] == 5
+    assert breakdown["per_worker"]["worker_1"]["iterations"] == 5
+
+
+def test_get_timing_breakdown_percentiles_are_sorted() -> None:
+    """Percentiles must be computed from sorted values, not insertion order."""
+    mc = MetricsCollector(diagnostic=True)
+    mc.record_iteration_timing(
+        worker_id=0,
+        t_gen_ms=100.0,
+        t_produce_ms=1.0,
+        t_requested_wait_ms=1.0,
+        t_actual_wait_ms=1.0,
+        t_overshoot_ms=0.0,
+        t_total_ms=1.0,
+    )
+    mc.record_iteration_timing(
+        worker_id=0,
+        t_gen_ms=1.0,
+        t_produce_ms=50.0,
+        t_requested_wait_ms=1.0,
+        t_actual_wait_ms=1.0,
+        t_overshoot_ms=0.0,
+        t_total_ms=1.0,
+    )
+    mc.record_iteration_timing(
+        worker_id=0,
+        t_gen_ms=50.0,
+        t_produce_ms=100.0,
+        t_requested_wait_ms=1.0,
+        t_actual_wait_ms=1.0,
+        t_overshoot_ms=0.0,
+        t_total_ms=1.0,
+    )
+    mc.record_iteration_timing(
+        worker_id=0,
+        t_gen_ms=1.0,
+        t_produce_ms=1.0,
+        t_requested_wait_ms=1.0,
+        t_actual_wait_ms=1.0,
+        t_overshoot_ms=0.0,
+        t_total_ms=1.0,
+    )
+
+    breakdown = mc.get_timing_breakdown()
+    assert breakdown is not None
+
+    gen = breakdown["gen_ms"]
+    assert gen["min"] == 1.0
+    assert gen["max"] == 100.0
+
+    produce = breakdown["produce_ms"]
+    assert produce["min"] == 1.0
+    assert produce["max"] == 100.0
+    assert produce["p50"] <= produce["p90"]
