@@ -188,3 +188,44 @@ def test_auto_scaling_provisions_extra_workers() -> None:
         f"auto-scaling should increase workers beyond configured 2, got {effective}"
     )
     assert effective <= 64, f"auto-scaling must respect the 64-worker cap, got {effective}"
+
+
+def test_runner_diagnostic_includes_timing_breakdown() -> None:
+    settings = _make_settings(target_events_per_sec=500, duration_sec=0.3)
+    runner = LoadTestRunner(
+        settings=settings,
+        produce_fn=_noop_produce,
+        diagnostic=True,
+    )
+
+    report = runner.run()
+
+    assert "diagnostic_timing" in report
+    timing = report["diagnostic_timing"]
+    assert "sample_count" in timing
+    assert timing["sample_count"] > 0
+    for component in (
+        "gen_ms",
+        "produce_ms",
+        "requested_wait_ms",
+        "actual_wait_ms",
+        "overshoot_ms",
+        "total_ms",
+    ):
+        assert component in timing
+        assert "mean" in timing[component]
+        assert "p50" in timing[component]
+    assert "per_worker" in timing
+
+
+def test_runner_non_diagnostic_omits_timing_breakdown() -> None:
+    settings = _make_settings(target_events_per_sec=500, duration_sec=0.3)
+    runner = LoadTestRunner(
+        settings=settings,
+        produce_fn=_noop_produce,
+        diagnostic=False,
+    )
+
+    report = runner.run()
+
+    assert "diagnostic_timing" not in report

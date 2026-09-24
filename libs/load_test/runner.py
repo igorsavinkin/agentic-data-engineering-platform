@@ -52,10 +52,12 @@ class LoadTestRunner:
         self,
         settings: LoadTestSettings,
         produce_fn: ProduceFn,
+        diagnostic: bool = False,
     ) -> None:
         self._settings = settings
         self._produce_fn = produce_fn
-        self._metrics = MetricsCollector()
+        self._metrics = MetricsCollector(diagnostic=diagnostic)
+        self._diagnostic = diagnostic
         self._run_id = str(uuid.uuid4())
         self._run_id_short = self._run_id.replace("-", "")
 
@@ -107,6 +109,10 @@ class LoadTestRunner:
             metrics_summary=summary,
             run_id=self._run_id,
         )
+
+        timing_breakdown = self._metrics.get_timing_breakdown()
+        if timing_breakdown is not None:
+            report["diagnostic_timing"] = timing_breakdown
 
         output_path = write_report(report, self._settings.output_path)
         logger.info(
@@ -174,17 +180,25 @@ class LoadTestRunner:
         monotonic = time.monotonic
         stop_is_set = stop_event.is_set
         warn = logger.warning
+        diagnostic = self._diagnostic
+
+        iteration_start = monotonic()
 
         while not stop_is_set():
             if total_events_limit > 0 and metrics.produced_count >= total_events_limit:
                 return
 
+            t_gen_start = monotonic()
             event = generator.next_event()
+            t_gen_ms = (monotonic() - t_gen_start) * 1000
+
             t0 = monotonic()
             try:
                 produce_fn(event)
-                metrics.record_latency(event.event_id, (monotonic() - t0) * 1000)
+                t_produce_ms = (monotonic() - t0) * 1000
+                metrics.record_latency(event.event_id, t_produce_ms)
             except Exception:
+                t_produce_ms = (monotonic() - t0) * 1000
                 metrics.record_error()
                 warn(
                     "load_test_produce_error",
@@ -193,8 +207,31 @@ class LoadTestRunner:
 
             elapsed = monotonic() - t0
             sleep_time = interval - elapsed
+
+            t_requested_wait_ms = 0.0
+            t_actual_wait_ms = 0.0
+            t_overshoot_ms = 0.0
+
             if sleep_time > 0:
+                t_requested_wait_ms = sleep_time * 1000
+                wait_start = monotonic()
                 stop_event.wait(timeout=sleep_time)
+                t_actual_wait_ms = (monotonic() - wait_start) * 1000
+                t_overshoot_ms = t_actual_wait_ms - t_requested_wait_ms
+
+            if diagnostic:
+                t_total_ms = (monotonic() - iteration_start) * 1000
+                metrics.record_iteration_timing(
+                    worker_id=worker_id,
+                    t_gen_ms=t_gen_ms,
+                    t_produce_ms=t_produce_ms,
+                    t_requested_wait_ms=t_requested_wait_ms,
+                    t_actual_wait_ms=t_actual_wait_ms,
+                    t_overshoot_ms=t_overshoot_ms,
+                    t_total_ms=t_total_ms,
+                )
+
+            iteration_start = monotonic()
 
     def _start_resource_monitor(self, stop_event: threading.Event) -> threading.Thread:
         """Start a background thread that snapshots resource usage."""
