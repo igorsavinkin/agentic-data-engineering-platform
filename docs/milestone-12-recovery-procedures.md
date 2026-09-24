@@ -26,23 +26,24 @@ Kafka broker becomes unavailable — producer cannot publish, consumer loses con
 
 ### Detection
 
-- Producer publish failures raise exceptions caught by the ingestion runner; retry with exponential backoff.
+- Producer publish failures raise exceptions; events are not acknowledged until successfully published.
 - Consumer poll failures surface as connection errors; the consumer closes and requires restart with the same group ID.
+- Source adapter fetch failures trigger exponential backoff retry in the ingestion runner (`_fetch_and_publish`).
 - Consumer lag is tracked via `KafkaMetric` counters and the `kafka_consumer_lag` Prometheus gauge.
 
 ### Metric/Log Evidence
 
 | Signal | Type | Description |
 |--------|------|-------------|
-| `kafka_produce_errors_total` | Counter | Incremented on each publish failure |
+| `ingestion_errors_total` | Counter | Incremented on each producer publish failure (`KafkaMetric.PRODUCER_ERRORS`) |
 | `kafka_consumer_lag` | Gauge | Reports current consumer lag per topic-partition |
 | `kafka_processing_stopped` | Log (ERROR) | Emitted when consumer closes due to unrecoverable error |
-| `source_fetch_failure_total` | Counter | Incremented when adapter fetch fails due to Kafka unavailability |
+| `source_fetch_failure_total` | Counter | Incremented when source adapter fetch fails (`SourceMetric.FETCH_FAILURE`) |
 
 ### Recovery
 
 1. Kafka broker restarts or reconnects.
-2. Producer retries with exponential backoff; events are published once the broker is available.
+2. Source adapter retries with exponential backoff (1s, 2s, 4s, ...); events are published once the broker is available.
 3. Consumer restarts with the same `group.id`; Kafka delivers from the last committed offset.
 4. Uncommitted events are reprocessed (at-least-once semantics).
 
@@ -61,34 +62,34 @@ Kafka broker becomes unavailable — producer cannot publish, consumer loses con
 
 ### Failure
 
-PostgreSQL becomes unavailable or restarts while the warehouse loader is writing records.
+PostgreSQL becomes unavailable or restarts while the batch warehouse loader (`WarehouseLoader`) is writing Parquet-derived records to PostgreSQL.
 
 ### Detection
 
-- Warehouse loader catches connection/write exceptions and logs `warehouse_write_failed`.
-- The loader's retry mechanism detects the failure and backs off before retrying.
-- `KafkaMetric.PROCESSED` counter does not increment for failed writes.
+- Warehouse loader catches connection/write exceptions and logs `load_failed` or `batch_failed`.
+- Failed batches trigger `batch_rolled_back` after `conn.rollback()`.
+- The loader retries individual batches before failing the overall load.
 
 ### Metric/Log Evidence
 
 | Signal | Type | Description |
 |--------|------|-------------|
-| `warehouse_write_failed` | Log (ERROR) | Emitted with table name and record details |
-| `kafka_processing_stopped` | Log (ERROR) | Consumer closes on unrecoverable write failure |
-| Consumer offset not committed | Behavioral | Failed records are not acknowledged |
+| `load_failed` | Log (ERROR) | Emitted when `load_from_parquet_files` or `load_from_lake` fails |
+| `batch_failed` | Log (ERROR) | Emitted with batch details when a write batch fails |
+| `batch_rolled_back` | Log (ERROR) | Emitted after `conn.rollback()` for a failed batch |
 
 ### Recovery
 
 1. PostgreSQL restarts and accepts connections.
-2. Consumer restarts with the same `group.id`; Kafka re-delivers from the last committed offset.
-3. Warehouse loader retries idempotently — the `ON CONFLICT DO NOTHING` clause in INSERT statements prevents duplicate records.
+2. The warehouse loader is re-run (batch job) against the same Parquet input files.
+3. Idempotent INSERT with `ON CONFLICT (event_id) DO NOTHING` prevents duplicate records.
 4. All records are written exactly once.
 
 ### No Silent Data Loss
 
-- Idempotent INSERT with conflict handling ensures no duplicates even after replay.
-- Consumer offset is only committed after successful write.
-- Test verifies: after PostgreSQL restart, the same events are reprocessed and the final record count matches exactly (no duplicates, no missing records).
+- Idempotent INSERT with conflict handling ensures no duplicates even after re-run.
+- The batch loader processes all input Parquet files; re-running covers any previously failed batches.
+- Test verifies: after PostgreSQL restart, the loader is re-run and the final record count matches exactly (no duplicates, no missing records).
 
 ---
 
@@ -111,7 +112,7 @@ The processor crashes mid-batch — after consuming events from Kafka but before
 | Signal | Type | Description |
 |--------|------|-------------|
 | `kafka_processing_stopped` | Log (ERROR) | Emitted on consumer close before commit |
-| `kafka_processed_total` | Counter | Only incremented for successfully committed records |
+| `kafka_events_processed_total` | Counter | Only incremented for successfully committed records (`KafkaMetric.PROCESSED`) |
 | Consumer group rebalance | Kafka internal | New consumer instance triggers partition reassignment |
 
 ### Recovery
@@ -147,8 +148,8 @@ Duplicate events arrive via Kafka replay (e.g., consumer re-reads a range of off
 
 | Signal | Type | Description |
 |--------|------|-------------|
-| `kafka_processed_total` | Counter | Incremented per processed event (including duplicates that are deduplicated) |
-| `kafka_deduplicated_total` | Counter (if applicable) | Tracks deduplication events |
+| `kafka_events_processed_total` | Counter | Incremented per processed event (`KafkaMetric.PROCESSED`) |
+| `processor_events_duplicate_total` | Counter | Tracks deduplication events (`ProcessorMetric.EVENTS_DUPLICATE`) |
 | Database unique constraint | Behavioral | `ON CONFLICT DO NOTHING` prevents duplicate rows |
 
 ### Recovery
