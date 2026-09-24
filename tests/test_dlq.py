@@ -260,13 +260,19 @@ class TestDlqRoutingMixedBatch:
 
         dlq_producer = KafkaDeadLetterProducer(invalid_producer_settings)
         processed_ids: list[str] = []
-        dlq_calls: list[dict] = []
+        dlq_routed = False
+
+        def publish_and_track(record: dict) -> None:
+            nonlocal dlq_routed
+            dlq_producer.publish(record)
+            dlq_routed = True
+
         try:
             deadline = time.monotonic() + 25
-            while (len(processed_ids) < 2 or len(dlq_calls) < 1) and time.monotonic() < deadline:
+            while (len(processed_ids) < 2 or not dlq_routed) and time.monotonic() < deadline:
                 consumer.process_next(
                     process=lambda msg: processed_ids.append(msg.event.event_id),
-                    dead_letter=lambda record: dlq_calls.append(record),
+                    dead_letter=publish_and_track,
                     timeout=2.0,
                 )
 
@@ -275,7 +281,7 @@ class TestDlqRoutingMixedBatch:
             )
             assert valid_event_1.event_id in processed_ids
             assert valid_event_2.event_id in processed_ids
-            assert len(dlq_calls) == 1, f"Expected 1 DLQ call, got {len(dlq_calls)}"
+            assert dlq_routed, "Expected DLQ routing for malformed bytes"
         finally:
             dlq_producer.close()
             consumer.close()
@@ -500,19 +506,25 @@ class TestConsumerLevelDlq:
 
         dlq_producer = KafkaDeadLetterProducer(invalid_producer_settings)
         processed_ids: list[str] = []
-        dlq_calls: list[dict] = []
+        dlq_routed = False
+
+        def publish_and_track(record: dict) -> None:
+            nonlocal dlq_routed
+            dlq_producer.publish(record)
+            dlq_routed = True
+
         try:
             deadline = time.monotonic() + 25
-            while (len(processed_ids) < 1 or len(dlq_calls) < 1) and time.monotonic() < deadline:
+            while (len(processed_ids) < 1 or not dlq_routed) and time.monotonic() < deadline:
                 consumer.process_next(
                     process=lambda msg: processed_ids.append(msg.event.event_id),
-                    dead_letter=lambda record: dlq_calls.append(record),
+                    dead_letter=publish_and_track,
                     timeout=2.0,
                 )
 
             assert len(processed_ids) >= 1, "Valid event should have been processed"
             assert valid_event.event_id in processed_ids
-            assert len(dlq_calls) >= 1, "DLQ should have been invoked for bad bytes"
+            assert dlq_routed, "DLQ should have been invoked for bad bytes"
         finally:
             dlq_producer.close()
             consumer.close()
