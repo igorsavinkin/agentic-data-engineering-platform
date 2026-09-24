@@ -38,7 +38,6 @@ Kafka broker becomes unavailable — producer cannot publish, consumer loses con
 | `ingestion_errors_total` | Counter | Incremented on each producer publish failure (`KafkaMetric.PRODUCER_ERRORS`) |
 | `kafka_consumer_lag` | Gauge | Reports current consumer lag per topic-partition |
 | `kafka_processing_stopped` | Log (ERROR) | Emitted when consumer closes due to unrecoverable error |
-| `source_fetch_failure_total` | Counter | Incremented when source adapter fetch fails (`SourceMetric.FETCH_FAILURE`) |
 
 ### Recovery
 
@@ -148,8 +147,8 @@ Duplicate events arrive via Kafka replay (e.g., consumer re-reads a range of off
 
 | Signal | Type | Description |
 |--------|------|-------------|
-| `kafka_events_processed_total` | Counter | Incremented per processed event (`KafkaMetric.PROCESSED`) |
-| `processor_events_duplicate_total` | Counter | Tracks deduplication events (`ProcessorMetric.EVENTS_DUPLICATE`) |
+| `kafka_events_processed_total` | Counter | Consumer-level counter for valid records successfully processed (`KafkaMetric.PROCESSED`) |
+| `processor_events_duplicate_total` | Counter | Tracks duplicate events detected at processor level (`ProcessorMetric.EVENTS_DUPLICATE`) |
 | Database unique constraint | Behavioral | `ON CONFLICT DO NOTHING` prevents duplicate rows |
 
 ### Recovery
