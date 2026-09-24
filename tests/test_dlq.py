@@ -261,16 +261,20 @@ class TestDlqRoutingMixedBatch:
         dlq_producer = KafkaDeadLetterProducer(invalid_producer_settings)
         processed_ids: list[str] = []
         dlq_routed = False
+
+        def publish_and_track(record: dict) -> None:
+            nonlocal dlq_routed
+            dlq_producer.publish(record)
+            dlq_routed = True
+
         try:
             deadline = time.monotonic() + 25
             while (len(processed_ids) < 2 or not dlq_routed) and time.monotonic() < deadline:
-                result = consumer.process_next(
+                consumer.process_next(
                     process=lambda msg: processed_ids.append(msg.event.event_id),
-                    dead_letter=dlq_producer.publish,
+                    dead_letter=publish_and_track,
                     timeout=2.0,
                 )
-                if result:
-                    dlq_routed = True
 
             assert len(processed_ids) == 2, (
                 f"Expected 2 valid events processed, got {len(processed_ids)}"
@@ -503,16 +507,20 @@ class TestConsumerLevelDlq:
         dlq_producer = KafkaDeadLetterProducer(invalid_producer_settings)
         processed_ids: list[str] = []
         dlq_routed = False
+
+        def publish_and_track(record: dict) -> None:
+            nonlocal dlq_routed
+            dlq_producer.publish(record)
+            dlq_routed = True
+
         try:
             deadline = time.monotonic() + 25
             while (len(processed_ids) < 1 or not dlq_routed) and time.monotonic() < deadline:
-                result = consumer.process_next(
+                consumer.process_next(
                     process=lambda msg: processed_ids.append(msg.event.event_id),
-                    dead_letter=dlq_producer.publish,
+                    dead_letter=publish_and_track,
                     timeout=2.0,
                 )
-                if result:
-                    dlq_routed = True
 
             assert len(processed_ids) >= 1, "Valid event should have been processed"
             assert valid_event.event_id in processed_ids
