@@ -1,0 +1,105 @@
+{
+  "configuration": {
+    "disable_auto_scaling": true,
+    "duration_sec": 60.0,
+    "kafka_bootstrap_servers": "localhost:9092",
+    "kafka_client_id": "load-test-harness",
+    "kafka_raw_topic": "products.raw.v1",
+    "output_path": "results/100eps-diagnostic-single-worker.json",
+    "seed": 42,
+    "source_name": "load-test",
+    "target_events_per_sec": 100.0,
+    "total_events": 0,
+    "worker_count": 1
+  },
+  "diagnostic_timing": {
+    "actual_wait_ms": {
+      "max": 14.668,
+      "mean": 0.03,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p95": 0.0,
+      "p99": 0.0
+    },
+    "gen_ms": {
+      "max": 2.095,
+      "mean": 0.127,
+      "min": 0.065,
+      "p50": 0.111,
+      "p90": 0.162,
+      "p95": 0.24,
+      "p99": 0.445
+    },
+    "overshoot_ms": {
+      "max": 10.54,
+      "mean": 0.017,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p95": 0.0,
+      "p99": 0.0
+    },
+    "per_worker": {
+      "worker_0": {
+        "iterations": 1204,
+        "mean_overshoot_ms": 0.017,
+        "mean_produce_ms": 49.676,
+        "mean_total_ms": 49.854
+      }
+    },
+    "produce_ms": {
+      "max": 1490.93,
+      "mean": 49.676,
+      "min": 3.635,
+      "p50": 47.808,
+      "p90": 51.843,
+      "p95": 52.588,
+      "p99": 57.474
+    },
+    "requested_wait_ms": {
+      "max": 6.351,
+      "mean": 0.013,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p95": 0.0,
+      "p99": 0.0
+    },
+    "sample_count": 1204,
+    "total_ms": {
+      "max": 1491.069,
+      "mean": 49.854,
+      "min": 12.283,
+      "p50": 47.933,
+      "p90": 51.992,
+      "p95": 52.822,
+      "p99": 57.672
+    }
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python_version": "3.14.0"
+  },
+  "results": {
+    "duration_sec": 60.017,
+    "error_count": 0,
+    "latency_ms": {
+      "max": 1490.93,
+      "mean": 49.676,
+      "min": 3.635,
+      "p50": 47.808,
+      "p90": 51.843,
+      "p95": 52.588,
+      "p99": 57.474
+    },
+    "produced_count": 1204,
+    "resource": {
+      "peak_rss_mb": 0.0,
+      "total_cpu_sec": 1.922
+    },
+    "throughput_events_per_sec": 20.06
+  },
+  "run_id": "33f4c18e-7648-4852-8d3b-cd432b589048",
+  "timestamp": "2026-09-24T16:41:13.169795+00:00"
+}

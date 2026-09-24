@@ -131,6 +131,8 @@ class LoadTestRunner:
     def _effective_worker_count(self) -> int:
         """Scale workers up when the configured count can't sustain the rate."""
         configured = self._settings.worker_count
+        if self._settings.disable_auto_scaling:
+            return configured
         needed = math.ceil(self._settings.target_events_per_sec / _ESTIMATED_EPS_PER_WORKER * 1.5)
         effective = max(configured, min(needed, 64))
         total_events = self._settings.total_events

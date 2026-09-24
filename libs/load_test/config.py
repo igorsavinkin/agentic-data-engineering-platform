@@ -58,3 +58,7 @@ class LoadTestSettings(BaseAppSettings):
         default=42,
         description="Random seed for deterministic event generation.",
     )
+    disable_auto_scaling: bool = Field(
+        default=False,
+        description="If true, use exactly worker_count workers (skip auto-scaler).",
+    )
