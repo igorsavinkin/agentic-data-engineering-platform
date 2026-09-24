@@ -718,3 +718,30 @@ class TestMultipleProcessorReplays:
 
         assert total_published == 4, "Exactly 4 unique events published across all passes"
         assert total_duplicates == 8, "8 duplicates skipped across passes 2 and 3"
+
+    def test_silver_parquet_no_duplicate_records_after_replay(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Writing Silver Parquet, replaying same events, produces no duplicate records."""
+        event_ids = [f"evt-silver-{i}" for i in range(5)]
+        original = _make_warehouse_parquet(tmp_path, "silver-original", event_ids)
+
+        original_df = pl.read_parquet(original)
+        assert original_df.height == 5
+        assert original_df["event_id"].n_unique() == 5
+
+        replay = _make_warehouse_parquet(tmp_path, "silver-replay", event_ids)
+
+        combined_df = pl.concat([pl.read_parquet(original), pl.read_parquet(replay)])
+        assert combined_df.height == 10
+
+        unique_ids = combined_df["event_id"].n_unique()
+        assert unique_ids == 5, (
+            f"Expected 5 unique event_ids across original + replay, got {unique_ids}"
+        )
+
+        deduped_df = combined_df.unique(subset=["event_id"])
+        assert deduped_df.height == 5, (
+            "After dedup on event_id, exactly 5 records remain — no silent data loss"
+        )
