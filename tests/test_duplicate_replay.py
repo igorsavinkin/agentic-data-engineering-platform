@@ -22,6 +22,7 @@ Run with: pytest tests/test_duplicate_replay.py -v -m integration
 # mypy: disable-error-code="import-untyped,no-untyped-def,import-not-found,no-any-return"
 from __future__ import annotations
 
+import io
 import os
 import socket
 import subprocess
@@ -29,6 +30,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -49,7 +51,13 @@ from libs.common.kafka_producer import (
 )
 from libs.common.kafka_validated_producer import KafkaValidatedOutputProducer
 from libs.common.minio_storage import MinIOStorage
-from libs.event_contracts import ProductObservationEvent, deserialize_event
+from libs.event_contracts import (
+    Availability,
+    ProductObservationEvent,
+    ProductObservationPayload,
+    deserialize_event,
+)
+from libs.lake_writer import SilverWriter
 from libs.observability.processor_metrics import ProcessorMetric, ProcessorMetrics
 from scripts import manage_kafka_topics as manager
 from services.processor.deduplication import DeduplicationState
@@ -719,29 +727,75 @@ class TestMultipleProcessorReplays:
         assert total_published == 4, "Exactly 4 unique events published across all passes"
         assert total_duplicates == 8, "8 duplicates skipped across passes 2 and 3"
 
-    def test_silver_parquet_no_duplicate_records_after_replay(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Writing Silver Parquet, replaying same events, produces no duplicate records."""
-        event_ids = [f"evt-silver-{i}" for i in range(5)]
-        original = _make_warehouse_parquet(tmp_path, "silver-original", event_ids)
 
-        original_df = pl.read_parquet(original)
-        assert original_df.height == 5
-        assert original_df["event_id"].n_unique() == 5
+class TestSilverParquetReplayIdempotency:
+    """SilverWriter replay overwrites the same storage key — no duplicate objects.
 
-        replay = _make_warehouse_parquet(tmp_path, "silver-replay", event_ids)
+    SilverWriter keys each Parquet object by build_partition_key(event), where
+    the leaf filename is event_id.parquet. Replaying the same event writes to
+    the same key, overwriting rather than duplicating. This test exercises that
+    path with a mock MinIOStorage to verify the platform's Parquet-level
+    idempotency guarantee.
+    """
 
-        combined_df = pl.concat([pl.read_parquet(original), pl.read_parquet(replay)])
-        assert combined_df.height == 10
-
-        unique_ids = combined_df["event_id"].n_unique()
-        assert unique_ids == 5, (
-            f"Expected 5 unique event_ids across original + replay, got {unique_ids}"
+    @staticmethod
+    def _make_silver_event(tag: str) -> ProductObservationEvent:
+        return ProductObservationEvent(
+            event_id=f"evt-silver-{tag}",
+            event_type="product.observation",
+            schema_version=1,
+            source="silver-replay-test",
+            produced_at=datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc),
+            payload=ProductObservationPayload(
+                external_id=f"prod-silver-{tag}",
+                name=f"Silver Product {tag}",
+                url=f"https://example.com/silver/{tag}",
+                price=Decimal("29.99"),
+                currency="USD",
+                availability=Availability.IN_STOCK,
+                category="test",
+                collected_at=datetime(2026, 9, 24, 11, 59, 0, tzinfo=timezone.utc),
+            ),
         )
 
-        deduped_df = combined_df.unique(subset=["event_id"])
-        assert deduped_df.height == 5, (
-            "After dedup on event_id, exactly 5 records remain — no silent data loss"
+    def test_silver_writer_replay_overwrites_no_duplicates(self) -> None:
+        """Writing the same events twice via SilverWriter produces 5 objects, not 10."""
+        storage = MagicMock(spec=MinIOStorage)
+        storage.check_health.return_value = MagicMock(healthy=True)
+        written: dict[str, bytes] = {}
+
+        def fake_put_object(bucket: str, key: str, body: bytes | io.BytesIO) -> None:
+            data = body.read() if hasattr(body, "read") else body
+            written[key] = data
+
+        storage.put_object.side_effect = fake_put_object
+
+        writer = SilverWriter(storage=storage, bucket="silver")
+
+        events = [self._make_silver_event(str(i)) for i in range(5)]
+
+        for event in events:
+            writer.write_event(event)
+        first_pass_keys = set(written.keys())
+        assert len(first_pass_keys) == 5
+
+        for event in events:
+            writer.write_event(event)
+        second_pass_keys = set(written.keys())
+        assert second_pass_keys == first_pass_keys, (
+            "Replay must write to the same keys (overwrite), not create new ones"
+        )
+        assert len(written) == 5, f"Expected 5 unique objects after replay, got {len(written)}"
+
+        all_event_ids: list[str] = []
+        for key, parquet_bytes in written.items():
+            df = pl.read_parquet(io.BytesIO(parquet_bytes))
+            assert len(df) == 1, f"Each object should contain exactly 1 row, got {len(df)}"
+            all_event_ids.append(df["event_id"][0])
+            assert key.endswith(f"{df['event_id'][0]}.parquet"), (
+                "Key leaf must match the event_id in the Parquet"
+            )
+
+        assert len(set(all_event_ids)) == 5, (
+            "All 5 stored objects must have distinct event_ids — no duplicates"
         )
