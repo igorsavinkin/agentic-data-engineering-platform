@@ -3,6 +3,14 @@
 Tracks per-event latencies, throughput counters, and process-level resource
 usage.  All measurements are recorded in-memory and can be summarized into
 a structured report at the end of a run.
+
+Hot-path design: ``record_latency`` and ``record_error`` avoid acquiring a
+lock by relying on CPython's GIL guaranteeing atomic bytecode-level
+operations for ``list.append``.  Counts are derived from ``len()`` on
+append-only lists, which is atomic under the GIL.  This removes the
+primary serialization bottleneck at high throughput (1000+ eps with many
+workers).  ``get_summary`` is only called after all workers have joined,
+so the collected data is consistent by construction.
 """
 
 from __future__ import annotations
@@ -40,33 +48,37 @@ class MetricsCollector:
     """Thread-safe collector for load-test metrics.
 
     Records per-event latencies, error counts, and periodic resource
-    snapshots.  Designed for concurrent producer threads.
+    snapshots.  The hot path (``record_latency``, ``record_error``) is
+    lock-free: CPython's GIL makes ``list.append`` atomic at the bytecode
+    level.  Counts are derived from ``len()`` on append-only lists rather
+    than maintained as separate integer counters, because ``int += 1``
+    compiles to multiple bytecodes and is NOT atomic under the GIL.
+
+    Resource snapshots and lifecycle markers (``mark_start``/``mark_end``)
+    still use a lock because they are called infrequently (1 Hz or once
+    per run) and touch shared mutable state that must be consistent.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._latencies: list[LatencySample] = []
-        self._produced_count = 0
-        self._error_count = 0
+        self._errors: list[float] = []
         self._resource_snapshots: list[ResourceSnapshot] = []
         self._start_time: float | None = None
         self._end_time: float | None = None
 
     def record_latency(self, event_id: str, latency_ms: float) -> None:
-        """Record a successful produce-to-ack latency."""
+        """Record a successful produce-to-ack latency (lock-free)."""
         sample = LatencySample(
             event_id=event_id,
             latency_ms=latency_ms,
             timestamp=time.monotonic(),
         )
-        with self._lock:
-            self._latencies.append(sample)
-            self._produced_count += 1
+        self._latencies.append(sample)
 
     def record_error(self) -> None:
-        """Record a produce error."""
-        with self._lock:
-            self._error_count += 1
+        """Record a produce error (lock-free)."""
+        self._errors.append(time.monotonic())
 
     def record_resource_snapshot(self) -> None:
         """Capture a point-in-time resource usage snapshot."""
@@ -101,24 +113,23 @@ class MetricsCollector:
 
     @property
     def produced_count(self) -> int:
-        with self._lock:
-            return self._produced_count
+        return len(self._latencies)
 
     @property
     def error_count(self) -> int:
-        with self._lock:
-            return self._error_count
+        return len(self._errors)
 
     def get_summary(self) -> dict:
         """Compute a summary of collected metrics.
 
         Returns a dict with throughput, latency percentiles, resource usage,
-        and error counts.  Safe to call after ``mark_end()``.
+        and error counts.  Safe to call after ``mark_end()`` and after all
+        worker threads have joined.
         """
         with self._lock:
             latencies = sorted(s.latency_ms for s in self._latencies)
-            produced = self._produced_count
-            errors = self._error_count
+            produced = len(self._latencies)
+            errors = len(self._errors)
             snapshots = list(self._resource_snapshots)
             start = self._start_time
             end = self._end_time

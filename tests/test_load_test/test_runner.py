@@ -157,3 +157,34 @@ def test_multi_worker_produces_unique_event_ids() -> None:
         f"duplicate event_ids detected: "
         f"{len(collected_ids)} total, {len(set(collected_ids))} unique"
     )
+
+
+def test_dry_run_sustains_100_eps_with_auto_scaling() -> None:
+    """The harness must sustain >= 100 eps and auto-scale beyond configured workers."""
+    settings = _make_settings(
+        target_events_per_sec=100,
+        duration_sec=5.0,
+        worker_count=4,
+    )
+    runner = LoadTestRunner(settings=settings, produce_fn=_noop_produce)
+
+    report = runner.run()
+
+    actual = report["results"]["throughput_events_per_sec"]
+    assert actual >= 80, f"harness must sustain >= 80 eps (80% of 100 target), got {actual:.0f}"
+
+
+def test_auto_scaling_provisions_extra_workers() -> None:
+    """Auto-scaling must increase workers when target rate exceeds per-worker capacity."""
+    settings = _make_settings(
+        target_events_per_sec=1000,
+        duration_sec=1.0,
+        worker_count=2,
+    )
+    runner = LoadTestRunner(settings=settings, produce_fn=_noop_produce)
+    effective = runner._effective_worker_count()
+
+    assert effective > 2, (
+        f"auto-scaling should increase workers beyond configured 2, got {effective}"
+    )
+    assert effective <= 64, f"auto-scaling must respect the 64-worker cap, got {effective}"

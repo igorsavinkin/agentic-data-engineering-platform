@@ -81,3 +81,17 @@ def test_currency_is_three_uppercase_letters() -> None:
         assert len(event.payload.currency) == 3
         assert event.payload.currency.isupper()
         assert event.payload.currency.isalpha()
+
+
+def test_event_id_contains_worker_and_run_id() -> None:
+    gen = EventGenerator(seed=1, worker_id=3, run_id="abc12345")
+    event = gen.next_event()
+    assert event.event_id == "abc12345-3-1"
+
+
+def test_event_ids_unique_across_workers() -> None:
+    gens = [EventGenerator(seed=42, worker_id=w, run_id="run1") for w in range(4)]
+    all_ids: list[str] = []
+    for gen in gens:
+        all_ids.extend(e.event_id for e in gen.generate_batch(50))
+    assert len(all_ids) == len(set(all_ids))
