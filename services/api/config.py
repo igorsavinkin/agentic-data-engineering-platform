@@ -18,7 +18,7 @@ class DatabaseSettings:
     (useful for tests that point at SQLite).
     """
 
-    url: str = "postgresql://postgres@localhost:5432/warehouse"
+    url: str = "postgresql+psycopg2://postgres@localhost:5432/warehouse"
 
     @classmethod
     def from_env(cls) -> DatabaseSettings:
@@ -29,9 +29,9 @@ class DatabaseSettings:
         password = os.getenv("WAREHOUSE_DB_PASSWORD", "")
 
         if password:
-            url = f"postgresql://{user}:{password}@{host}:{port}/{name}"
+            url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
         else:
-            url = f"postgresql://{user}@{host}:{port}/{name}"
+            url = f"postgresql+psycopg2://{user}@{host}:{port}/{name}"
         return cls(url=url)
 
 
