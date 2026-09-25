@@ -54,7 +54,7 @@ digraph "AI Data Platform — Поток данных" {
     wh_loader [label="Warehouse Loader\n(idempotent UPSERT\nпо event_id,\nSilver Parquet → PG,\nperiodic 300s loop)"]
 
     node [shape=cylinder, fillcolor="#4DD0E1", color="#00695C"]
-    pg [label="PostgreSQL 16\n(8 tables)\n— product_observations\n— sources, products\n— pipeline_runs\n— data_quality_results\n— ingestion_health_results\n— daily_metrics"]
+    pg [label="PostgreSQL\n(8 tables)\n— product_observations\n— sources, products\n— pipeline_runs\n— data_quality_results\n— ingestion_health_results\n— daily_metrics"]
 
     // === Airflow DAGs ===
     node [shape=box, fillcolor="#B2EBF2", color="#00695C"]

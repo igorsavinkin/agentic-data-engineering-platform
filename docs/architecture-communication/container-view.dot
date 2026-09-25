@@ -124,7 +124,7 @@ digraph "AI Data Platform — Контейнерный вид" {
 
             airflow  [label="Apache Airflow 2.10\n— ingestion_health (15min)\n— daily_data_quality (daily)\n— parquet_compaction (6h)\n— build_daily_metrics (daily)", shape=box, fillcolor="#B2EBF2"]
             wh_loader [label="Warehouse Loader\n(Silver → PostgreSQL,\nidempotent UPSERT\nпо event_id,\nperiodic 300s loop)", shape=box, fillcolor="#80DEEA"]
-            pg       [label="PostgreSQL 16\n(8 tables, 6 migrations\nAlembic)\n— base + Gold tables", shape=cylinder, fillcolor="#4DD0E1"]
+            pg       [label="PostgreSQL\n(8 tables, 6 migrations\nAlembic)\n— base + Gold tables", shape=cylinder, fillcolor="#4DD0E1"]
         }
 
         // --- Serving ---

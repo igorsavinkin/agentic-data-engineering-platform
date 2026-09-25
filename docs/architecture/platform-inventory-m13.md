@@ -466,6 +466,7 @@ Evidence: `airflow/dags/ingestion_health_dag.py`,
 | `GET` | `/api/v1/analytics/price-movers` | Top products by price change |
 | `GET` | `/api/v1/analytics/price-statistics` | Per-source aggregate stats |
 | `GET` | `/api/v1/pipelines` | Pipeline run history |
+| `GET` | `/api/v1/pipelines/{run_id}` | Single pipeline run detail |
 | `GET` | `/api/v1/pipelines/source-health` | Source health assessments |
 | `GET` | `/api/v1/quality` | Data quality check results |
 | `GET` | `/api/v1/quality/summary` | Aggregate quality summary |
@@ -552,6 +553,11 @@ and Helm template `templates/namespace.yaml`
 |------------|-------|---------|
 | `postgresql` | `postgres:16` | 1Gi PVC |
 | `minio` | `minio/minio:RELEASE.2025-09-07T16-13-09Z` | 1Gi PVC |
+
+> **Version discrepancy:** Kubernetes/Helm uses `postgres:16`
+> (`kubernetes/deployments/postgresql-statefulset.yaml`), while
+> `docker-compose.yml` pins `postgres:17`. The two deployment paths run
+> different PostgreSQL major versions.
 
 ### 8.4 Services
 
