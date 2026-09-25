@@ -55,6 +55,36 @@ def sample_objects() -> list[str]:
     ]
 
 
+# NOTE: mock_scan_parquet is required for any test that triggers collect().
+# Without it, LazyScanner.count() / LakeReader.read() call pl.scan_parquet()
+# with S3 URIs (s3://bucket/...) and storage_options pointing to localhost:9000.
+# When MinIO is not running, Polars' underlying object_store crate hangs
+# indefinitely on the TCP connect — no exception is raised, it just blocks.
+# On Windows the TCP timeout can exceed 2 minutes, and Polars may retry
+# internally, making the hang effectively infinite. Ctrl+C often fails to
+# terminate pytest cleanly, leaving orphaned processes.
+@pytest.fixture
+def mock_scan_parquet(monkeypatch):
+    """Patch pl.scan_parquet to return an in-memory LazyFrame.
+
+    Prevents real S3/MinIO I/O during tests that trigger collect().
+    """
+    from libs.parquet_reader import scanner as scanner_module
+
+    fake_df = pl.DataFrame(
+        {
+            "event_id": ["evt-001", "evt-002", "evt-003"],
+            "external_id": ["ext-1", "ext-2", "ext-3"],
+            "price": [10.0, 20.0, 30.0],
+        }
+    )
+
+    def _fake_scan_parquet(*args, **kwargs):
+        return fake_df.lazy()
+
+    monkeypatch.setattr(scanner_module.pl, "scan_parquet", _fake_scan_parquet)
+
+
 # ---------------------------------------------------------------------------
 # Partition Discovery Tests
 # ---------------------------------------------------------------------------
@@ -242,7 +272,7 @@ class TestLazyScanner:
             scanner.scan()
 
     def test_count_returns_row_count(
-        self, mock_storage: MagicMock, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
     ) -> None:
         """Count method returns number of rows without full materialization."""
 
@@ -261,14 +291,8 @@ class TestLazyScanner:
             source="fake-store",
         )
 
-        # This will fail if actual files don't exist, but tests the API
-        # In real usage, files would be present
-        try:
-            count = scanner.count()
-            assert isinstance(count, int)
-        except (FileNotFoundError, OSError, pl.exceptions.ComputeError):
-            # Expected when files don't actually exist on disk or MinIO isn't running
-            pass
+        count = scanner.count()
+        assert count == 3
 
     def test_cached_lazy_frame_reused(
         self, mock_storage: MagicMock, sample_objects: list[str]
@@ -316,7 +340,7 @@ class TestLakeReader:
         assert all(isinstance(p, type(partitions[0])) for p in partitions)
 
     def test_read_returns_dataframe(
-        self, mock_storage: MagicMock, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
     ) -> None:
         """read() returns a DataFrame (empty if files don't exist)."""
         mock_storage.list_objects.return_value = sample_objects
@@ -334,7 +358,7 @@ class TestLakeReader:
         assert isinstance(df, pl.DataFrame)
 
     def test_read_with_column_projection(
-        self, mock_storage: MagicMock, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
     ) -> None:
         """read() respects column projection in filter."""
         mock_storage.list_objects.return_value = sample_objects
@@ -390,7 +414,9 @@ class TestLakeReader:
         assert reader.health_check() is True
         mock_storage.check_health.assert_called_once()
 
-    def test_bucket_override(self, mock_storage: MagicMock, sample_objects: list[str]) -> None:
+    def test_bucket_override(
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
+    ) -> None:
         """read() can override default bucket via parameter."""
         mock_storage.list_objects.return_value = sample_objects
 
@@ -449,7 +475,7 @@ class TestEndToEnd:
     """End-to-end style tests verifying API composition."""
 
     def test_discover_then_read_workflow(
-        self, mock_storage: MagicMock, sample_objects: list[str]
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
     ) -> None:
         """Typical workflow: discover partitions, then read matching data."""
         mock_storage.list_objects.return_value = sample_objects
