@@ -9,7 +9,8 @@
 | Поток данных | `docs/architecture-communication/data-flow.dot` | Graphviz DOT: линейный поток через медальон-озеро + Airflow |
 | Пояснения | `docs/architecture-communication/reading-notes.md` | Как читать диаграммы, evidence-ссылки, допущения |
 
-Обновлено: 2026-09-18 (отражает состояние после TASK-062, Milestone 0–6)
+Обновлено: 2026-09-25 (отражает состояние после TASK-115, Milestone 0–13;
+скорректировано по `docs/architecture/platform-inventory-m13.md`)
 
 ## Для кого
 
@@ -38,24 +39,26 @@
 | Daily metrics (Gold) | Реализовано | M6 |
 | Ingestion health monitoring | Реализовано | M6 |
 | Analytical queries (CTE, window) | Реализовано | M5 |
-| FastAPI | M7 | Следующий |
-| Kubernetes / Helm | M8–M9 | Roadmap |
-| Observability (Prometheus/Grafana) | M10 | Roadmap |
-| LangGraph Agent | M11 | Roadmap |
+| FastAPI (13+ endpoints) | Реализовано | M7 |
+| Kubernetes (kind, 7 Deployments) | Реализовано | M8 |
+| Helm charts | Реализовано | M9 |
+| Observability (Prometheus/Grafana/OTel/Jaeger) | Реализовано | M10 |
+| LangGraph Agent (read-only SQL) | Реализовано | M11 |
+| Failure engineering (replay tests) | Реализовано | M12 |
+| Performance testing (load benchmarks) | Реализовано | M13 |
 | Terraform + AWS | M14 | Roadmap |
+| Production Polish | M15 | Roadmap |
 
 ## Следующие шаги
 
-- M7: Реализовать FastAPI (products, analytics, pipeline, DQ endpoints)
-- M8–M9: Kubernetes (kind) + Helm charts
-- M10: Observability stack (Prometheus, Grafana, OTel)
-- M11: LangGraph Agent (read-only SQL, controlled tools)
-- Обновить диаграммы по мере реализации M7–M14 (пунктирные → сплошные)
-- Добавить deployment-topology вид при реализации Kubernetes (M8–M9)
-- Добавить trust-boundary вид при проработке security (M11, M14)
+- M14: Terraform/AWS (VPC, ECR, S3, RDS, EKS, IAM, CI/CD)
+- M15: Production Polish (documentation, ADRs, security review, demo)
+- Обновить диаграммы по мере реализации M14–M15 (пунктирные → сплошные)
+- Добавить trust-boundary вид при проработке security (M14, M15)
 
 ## Источник
 
 Сформировано на основе evidence из кода, конфигурации, ADR-001,
 `ai/PROJECT.md`, `ai/SPECIFICATION.md`, `ai/AGENTS.md`.
 Первое издание: commit 1270500 (2026-09-12). Обновлено: 2026-09-18.
+Скорректировано: 2026-09-25 (M13 reconciliation по `docs/architecture/platform-inventory-m13.md`).

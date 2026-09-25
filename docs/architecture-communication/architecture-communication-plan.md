@@ -8,8 +8,8 @@
 
 ## Решенческий контекст
 
-- Понимание текущего состояния платформы (M0–M6 реализованы)
-- Планирование следующих milestone'ов (M7+: FastAPI, K8s, Agent)
+- Понимание текущего состояния платформы (M0–M13 реализованы)
+- Планирование следующих milestone'ов (M14+: Terraform/AWS, Production Polish)
 - Проверка архитектурной целостности: соблюдены ли заявленные границы сервисов
 - Ориентир для onboarding новых AI-агентов и разработчиков
 
@@ -18,14 +18,16 @@
 1. **Что платформа делает** — event-driven конвейер конкурентной разведки
    e-commerce с медальон-озером (Bronze/Silver), PostgreSQL serving-слоем
    с Gold-аналитическими таблицами и Airflow-оркестрацией.
-2. **Как устроена** — 4 сервиса (ingestion, processor, raw-writer, lake-writer),
-   5 Kafka-топиков, 2 Parquet-слоя + Gold PostgreSQL, 5 source-адаптеров,
-   4 Airflow DAG, PostgreSQL (8 таблиц), аналитические запросы.
-3. **Что реализовано** — Milestone 0–6 (TASK-001–TASK-062): foundation,
+2. **Как устроена** — 7 сервисов (ingestion, processor, raw-writer, lake-writer,
+   warehouse-loader, api, agent), 5 Kafka-топиков, 2 Parquet-слоя + Gold PostgreSQL,
+   5 source-адаптеров, 4 Airflow DAG, PostgreSQL (8 таблиц), FastAPI (13+ endpoints),
+   LangGraph-агент, аналитические запросы.
+3. **Что реализовано** — Milestone 0–13 (TASK-001–TASK-115): foundation,
    event platform, processing, data lake, warehouse, all 5 sources,
-   Airflow quality/metrics/health/compaction.
-4. **Что в roadmap** — M7: FastAPI, M8–M9: Kubernetes/Helm, M10: Observability,
-   M11: LangGraph Agent, M12–M14: Failure/Performance/AWS.
+   Airflow quality/metrics/health/compaction, FastAPI, Kubernetes, Helm,
+   Observability (Prometheus/Grafana/OTel), LangGraph Agent, failure engineering,
+   performance testing.
+4. **Что в roadmap** — M14: Terraform/AWS, M15: Production Polish.
 5. **Ключевые ограничения** — at-least-once + идемпотентность, ingestion
    пишет только в Kafka, агент не пишет в БД, Gold = PostgreSQL tables.
 
@@ -43,9 +45,10 @@ L2 (контейнеры/сервисы) с элементами L3 (модул�
 
 ## Допущения и ограничения
 
-- Реализованы Milestone 0–6 (TASK-001–TASK-062)
+- Реализованы Milestone 0–13 (TASK-001–TASK-115)
 - Gold-слой реализован как PostgreSQL-аналитические таблицы (не Gold Parquet)
 - Airflow читает из PostgreSQL и Bronze, пишет в Gold-таблицы
 - 5 source-адаптеров реализованы (FakeStore, BestBuy, eBay, WebRetailer, DifficultRetailer)
-- Observability libs реализованы; Prometheus/Grafana/OTel — M10
-- Kubernetes, Helm, Terraform — placeholder-директории
+- Observability полностью реализована: Prometheus, Grafana (3 dashboards), OpenTelemetry, Jaeger (M10)
+- Kubernetes (M8) и Helm (M9) реализованы; Terraform (M14) — проектное состояние
+- Авторитетный снимок архитектуры: `docs/architecture/platform-inventory-m13.md`
