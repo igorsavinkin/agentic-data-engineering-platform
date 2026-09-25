@@ -111,22 +111,26 @@ Do not attribute API latency to PostgreSQL, SQL queries, networking,
 or application code without profiling evidence.
 
 
-## Additional Runtime Observation — Warehouse Loader
+## Manual Runtime Observations — Warehouse Loader (Uncommitted)
 
-During runtime verification the Warehouse Loader was observed with:
+The following manual runtime observations were recorded during a
+separate inspection of the Warehouse Loader. These are not benchmark
+measurements and are not preserved in any committed benchmark artifact:
 
 - termination reason: `OOMKilled`
 - exit code: `137`
 - approximately 55,361 Silver Parquet files discovered before processing
 - 134 pod restarts observed at the inspection point
 
-The OOM condition is confirmed runtime evidence.
+These observations are uncommitted and independently unverified from
+repository artifacts. They do not constitute confirmed benchmark evidence.
 
 The root cause is NOT established.
 
-Do not claim that small Parquet files, Polars lazy scanning, MinIO,
-PostgreSQL, or another component caused the OOM unless supported by
-profiling evidence.
+Do not classify the Warehouse Loader as a confirmed OOM bottleneck based
+on these uncommitted observations. Do not claim that small Parquet files,
+Polars lazy scanning, MinIO, PostgreSQL, or another component caused the
+OOM unless supported by profiling evidence.
 
 
 ## Classification Rules
@@ -210,7 +214,8 @@ The report should contain:
 - [ ] Kafka lag evidence is documented with its measurement context.
 - [ ] TASK-113 processing latency evidence is included.
 - [ ] TASK-114 runtime API benchmark is included.
-- [ ] Warehouse Loader OOMKilled observation is documented.
+- [ ] Warehouse Loader manual runtime observations are documented as
+      uncommitted and not supporting confirmed bottleneck claims.
 - [ ] Confirmed bottlenecks are separated from observed limitations.
 - [ ] Hypotheses are explicitly identified as hypotheses.
 - [ ] No unsupported root-cause claims are made.
