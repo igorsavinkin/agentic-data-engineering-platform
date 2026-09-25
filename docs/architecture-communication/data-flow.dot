@@ -1,6 +1,6 @@
 // Поток данных — AI Data Platform (Medallion Architecture)
 // Формат: Graphviz DOT | rankdir=LR | линейная топология потока
-// Обновлено: 2026-09-18 (Milestone 0-6 реализованы, TASK-001–TASK-062)
+// Обновлено: 2026-09-25 (Milestone 0–13 реализованы, TASK-001–TASK-115)
 //
 // Показывает движение данных от источника до serving-слоя через
 // медальон-озеро (Bronze → Silver → PostgreSQL → Gold analytical tables).
@@ -10,7 +10,7 @@ digraph "AI Data Platform — Поток данных" {
     fontname="Helvetica"
     node [fontname="Helvetica", fontsize=11, style=filled]
     edge [fontname="Helvetica", fontsize=9]
-    label="AI Data Platform — Поток данных (Medallion)\nОт внешнего источника до serving-слоя (M0–M6 реализовано)"
+    label="AI Data Platform — Поток данных (Medallion)\nОт внешнего источника до serving-слоя (M0–M13 реализовано)"
     labelloc=t
     fontsize=14
 
@@ -28,7 +28,7 @@ digraph "AI Data Platform — Поток данных" {
 
     // === Raw Writer + Bronze ===
     node [shape=box, fillcolor="#F8BBD0", color="#880E4F"]
-    raw_writer [label="Raw Writer\n— batch accumulate\n— Parquet serialize\n— MinIO upload"]
+    raw_writer [label="Raw Writer\n— consume raw events\n— Parquet serialize\n— MinIO upload"]
 
     node [shape=cylinder, fillcolor="#E1BEE7", color="#6A1B9A"]
     bronze [label="Bronze Layer\nRaw Parquet\n(deterministic object keys\nпо event_id)"]
@@ -51,17 +51,17 @@ digraph "AI Data Platform — Поток данных" {
 
     // === Warehouse Loader + PostgreSQL ===
     node [shape=box, fillcolor="#80DEEA", color="#00695C"]
-    wh_loader [label="Warehouse Loader\n(idempotent UPSERT\nпо event_id,\nbatch Parquet → PG)"]
+    wh_loader [label="Warehouse Loader\n(idempotent UPSERT\nпо event_id,\nSilver Parquet → PG,\nperiodic 300s loop)"]
 
     node [shape=cylinder, fillcolor="#4DD0E1", color="#00695C"]
-    pg [label="PostgreSQL 17\n(8 tables)\n— product_observations\n— sources, products\n— pipeline_runs\n— data_quality_results\n— ingestion_health_results\n— daily_metrics"]
+    pg [label="PostgreSQL 16\n(8 tables)\n— product_observations\n— sources, products\n— pipeline_runs\n— data_quality_results\n— ingestion_health_results\n— daily_metrics"]
 
     // === Airflow DAGs ===
     node [shape=box, fillcolor="#B2EBF2", color="#00695C"]
-    airflow_quality    [label="DAG: daily_data_quality\n(5 checks: required, price,\nallowed, duplicate, freshness)"]
-    airflow_metrics    [label="DAG: build_daily_metrics\n(avg_price, unique_products,\nper-source counts)"]
-    airflow_health     [label="DAG: ingestion_health\n(source freshness,\ndegradation detection)"]
-    airflow_compaction [label="DAG: parquet_compaction\n(merge small Parquet files,\ndeterministic keys)"]
+    airflow_quality    [label="DAG: daily_data_quality\n(4 checks: required_fields,\nprice_validity, freshness,\nduplicates)"]
+    airflow_metrics    [label="DAG: build_daily_metrics\n(per-source daily aggregates,\navg_price, unique_products)"]
+    airflow_health     [label="DAG: ingestion_health\n(source freshness,\ndegradation detection,\n15min schedule)"]
+    airflow_compaction [label="DAG: parquet_compaction\n(merge small Parquet files,\n6h schedule)"]
 
     // === Gold (PostgreSQL analytical tables) ===
     node [shape=cylinder, fillcolor="#BA68C8", color="#6A1B9A"]
@@ -71,8 +71,8 @@ digraph "AI Data Platform — Поток данных" {
 
     // === Serving ===
     node [shape=box, fillcolor="#FFF59D", color="#F57F17"]
-    api [label="FastAPI", style=dashed, color=grey50]
-    agent [label="LangGraph Agent\n(read-only SQL)", style=dashed, color=grey50]
+    api [label="FastAPI\n(13+ endpoints,\n/metrics)"]
+    agent [label="LangGraph Agent\n(read-only SQL,\n4 tools, in-process)"]
 
     // === Аналитические запросы ===
     node [shape=box, fillcolor="#E0E0E0", color=grey50]
@@ -81,20 +81,20 @@ digraph "AI Data Platform — Поток данных" {
     // === Поток данных: Ingestion path ===
     source    -> adapter     [label="collect\n(5 adapters)"]
     adapter   -> kafka_raw   [label="publish"]
-    kafka_raw -> raw_writer  [label="consume"]
+    kafka_raw -> raw_writer  [label="consume\n(group: raw-writer)"]
     raw_writer -> bronze     [label="write .parquet"]
 
     // === Поток данных: Processing path ===
-    kafka_raw -> processor   [label="consume"]
+    kafka_raw -> processor   [label="consume\n(group: processor)"]
     processor -> kafka_valid [label="validated"]
     processor -> kafka_dlq   [label="failed\n+ diagnostic context"]
 
     // === Поток данных: Silver path ===
-    kafka_valid -> lake_writer [label="consume"]
+    kafka_valid -> lake_writer [label="consume\n(group: lake-writer)"]
     lake_writer -> silver      [label="write .parquet"]
 
     // === Поток данных: Warehouse loading ===
-    silver -> wh_loader [label="read Parquet\n(scan + filter)"]
+    silver -> wh_loader [label="read Parquet\n(LakeReader, Silver filter)"]
     wh_loader -> pg     [label="UPSERT\n(idempotent by event_id)"]
 
     // === Поток данных: Airflow DAGs ===
@@ -112,8 +112,9 @@ digraph "AI Data Platform — Поток данных" {
 
     // === Поток данных: Serving ===
     pg -> analytics [label="SQL queries"]
-    pg -> api   [label="SQL", style=dashed, color=grey50]
-    pg -> agent [label="read-only SQL", style=dashed, color=grey50]
+    pg -> api   [label="SQL"]
+    pg -> agent [label="read-only SQL"]
+    api -> agent [label="tool call\n(in-process)"]
 
     // === Ранги для линейного layout ===
     { rank=same; source }
