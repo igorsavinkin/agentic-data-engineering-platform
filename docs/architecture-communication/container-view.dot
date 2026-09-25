@@ -1,27 +1,27 @@
 // Контейнерный вид — AI Data Platform
-// Формат: Graphviz DOT | rankdir=TB | Qoder Canvas совместимый
-// Обновлено: 2026-09-18 (Milestone 0-6 реализованы, TASK-001–TASK-062)
+// Формат: Graphviz DOT | rankdir=TB
+// Обновлено: 2026-09-25 (Milestone 0–13 реализованы, TASK-001–TASK-115)
 //
 // Легенда:
 //   [прямоугольник]        — сервис / контейнер
 //   {ромб}                 — Kafka-топик
 //   [(цилиндр)]            — хранилище данных
 //   ((круг))               — внешний источник
-//   Сплошная линия         — реализовано (TASK-001–TASK-062)
-//   Пунктирная линия       — проектное состояние (Milestone 7+, не реализовано)
+//   Сплошная линия         — реализовано (M0–M13)
+//   Пунктирная линия       — проектное состояние (M14+, не реализовано)
 
 digraph "AI Data Platform — Контейнерный вид" {
     rankdir=TB
     fontname="Helvetica"
     node [fontname="Helvetica", fontsize=11, style=filled]
     edge [fontname="Helvetica", fontsize=9]
-    label="AI Data Platform — Контейнерный вид\nРеализовано (M0–M6) / Проектное состояние (M7+)"
+    label="AI Data Platform — Контейнерный вид\nРеализовано (M0–M13) / Проектное состояние (M14+)"
     labelloc=t
     fontsize=14
 
     // === Внешние источники ===
     subgraph cluster_sources {
-        label="Внешние источники данных (5 адаптеров)"
+        label="Внешние источники данных (5 адаптеров) [M5]"
         style=dashed
         color=grey60
         node [shape=ellipse, fillcolor="#E8E8E8", color=grey50]
@@ -43,17 +43,17 @@ digraph "AI Data Platform — Контейнерный вид" {
 
         // --- Ingestion ---
         subgraph cluster_ingestion {
-            label="Ingestion (Source Adapters)"
+            label="Ingestion (Source Adapters) [M5]"
             style=rounded
             fillcolor="#E3F2FD"
             color="#1565C0"
 
-            ingestion [label="Ingestion Service\n— 5 source adapters\n— canonical event emit\n— continuous fetch loop", shape=box, fillcolor="#BBDEFB"]
+            ingestion [label="Ingestion Service\n— 5 source adapters\n— canonical event emit\n— continuous fetch loop\n— retry + error isolation", shape=box, fillcolor="#BBDEFB"]
         }
 
         // --- Kafka ---
         subgraph cluster_kafka {
-            label="Apache Kafka (KRaft, single-node)"
+            label="Apache Kafka (KRaft, single-node) [M1]"
             style=rounded
             fillcolor="#FFF3E0"
             color="#E65100"
@@ -69,17 +69,17 @@ digraph "AI Data Platform — Контейнерный вид" {
 
         // --- Processing ---
         subgraph cluster_processing {
-            label="Processing Pipeline"
+            label="Processing Pipeline [M2]"
             style=rounded
             fillcolor="#E8F5E9"
             color="#2E7D32"
 
-            processor [label="Processor\n— Pydantic validation\n— schema normalization\n— deduplication\n— Polars transforms", shape=box, fillcolor="#C8E6C9"]
+            processor [label="Processor\n— Pydantic validation\n— schema normalization\n— deduplication\n— Polars transforms\n— DLQ routing", shape=box, fillcolor="#C8E6C9"]
         }
 
         // --- Data Lake ---
         subgraph cluster_lake {
-            label="Data Lake (Medallion — MinIO/S3)"
+            label="Data Lake (Medallion — MinIO/S3) [M3]"
             style=rounded
             fillcolor="#F3E5F5"
             color="#6A1B9A"
@@ -88,12 +88,25 @@ digraph "AI Data Platform — Контейнерный вид" {
 
             bronze [label="Bronze\nRaw Parquet\n(deterministic keys)", fillcolor="#E1BEE7"]
             silver [label="Silver\nValidated Parquet\n(normalized, deduplicated)", fillcolor="#CE93D8"]
-            gold   [label="Gold\n(PostgreSQL analytical\ntables: daily_metrics,\nquality_results,\nhealth_results)", fillcolor="#BA68C8"]
+        }
+
+        // --- Gold (PostgreSQL analytical tables) ---
+        subgraph cluster_gold {
+            label="Gold — PostgreSQL analytical tables [M6]"
+            style=rounded
+            fillcolor="#F3E5F5"
+            color="#6A1B9A"
+
+            node [shape=cylinder]
+
+            gold_quality [label="data_quality_results", fillcolor="#BA68C8"]
+            gold_metrics [label="daily_metrics", fillcolor="#BA68C8"]
+            gold_health  [label="ingestion_health_results", fillcolor="#BA68C8"]
         }
 
         // --- Storage Services ---
         subgraph cluster_writers {
-            label="Lake Services"
+            label="Lake Services [M3]"
             style=rounded
             fillcolor="#FCE4EC"
             color="#880E4F"
@@ -104,38 +117,70 @@ digraph "AI Data Platform — Контейнерный вид" {
 
         // --- Orchestration & Warehouse ---
         subgraph cluster_warehouse {
-            label="Warehouse & Orchestration"
+            label="Warehouse & Orchestration [M4/M6]"
             style=rounded
             fillcolor="#E0F7FA"
             color="#00695C"
 
             airflow  [label="Apache Airflow 2.10\n— ingestion_health (15min)\n— daily_data_quality (daily)\n— parquet_compaction (6h)\n— build_daily_metrics (daily)", shape=box, fillcolor="#B2EBF2"]
-            wh_loader [label="Warehouse Loader\n(Silver → PostgreSQL,\nidempotent UPSERT\nпо event_id)", shape=box, fillcolor="#80DEEA"]
-            pg       [label="PostgreSQL 17\n(8 tables, 6 migrations\nAlembic)", shape=cylinder, fillcolor="#4DD0E1"]
+            wh_loader [label="Warehouse Loader\n(Silver → PostgreSQL,\nidempotent UPSERT\nпо event_id,\nperiodic 300s loop)", shape=box, fillcolor="#80DEEA"]
+            pg       [label="PostgreSQL\n(8 tables, 6 migrations\nAlembic)\n— base + Gold tables", shape=cylinder, fillcolor="#4DD0E1"]
         }
 
         // --- Serving ---
         subgraph cluster_serving {
-            label="Serving Layer"
+            label="Serving Layer [M7/M11]"
             style=rounded
             fillcolor="#FFF9C4"
             color="#F57F17"
 
-            api    [label="FastAPI\n(products, analytics,\npipeline, DQ)", shape=box, fillcolor="#FFF59D", style=dashed, color=grey50]
-            agent  [label="LangGraph Agent\n(read-only SQL,\ncontrolled tools)", shape=box, fillcolor="#FFF176", style=dashed, color=grey50]
+            api    [label="FastAPI\n(products, analytics,\npipeline, DQ,\nagent endpoint,\n/metrics)", shape=box, fillcolor="#FFF59D"]
+            agent  [label="LangGraph Agent\n(read-only SQL,\n4 tools,\ndeterministic classifier)", shape=box, fillcolor="#FFF176"]
         }
     }
 
     // === Observability ===
     subgraph cluster_observability {
-        label="Observability (M10)"
+        label="Observability [M10]"
+        style=rounded
+        fillcolor="#F5F5F5"
+        color="#616161"
+        node [shape=box, fillcolor="#E0E0E0"]
+
+        prometheus [label="Prometheus\n(3 scrape jobs)"]
+        grafana    [label="Grafana\n(3 dashboards)"]
+        otel       [label="OpenTelemetry\n+ Jaeger"]
+    }
+
+    // === Kubernetes ===
+    subgraph cluster_k8s {
+        label="Kubernetes / Helm [M8/M9]"
+        style=rounded
+        fillcolor="#E8EAF6"
+        color="#283593"
+
+        k8s [label="kind cluster\n7 Deployments\n2 StatefulSets\n2 Jobs\nHelm chart\nHPA / Ingress / NetworkPolicy", shape=box, fillcolor="#C5CAE9"]
+    }
+
+    // === Performance ===
+    subgraph cluster_perf {
+        label="Performance Testing [M13]"
+        style=rounded
+        fillcolor="#EFEBE9"
+        color="#4E342E"
+
+        perf [label="Load test harness\n100/500/1000 eps targets\nproducer-side measured\n33–96% of target", shape=box, fillcolor="#D7CCC8"]
+    }
+
+    // === Future (M14+) ===
+    subgraph cluster_future {
+        label="Future: M14 Terraform/AWS [NOT IMPLEMENTED]"
         style=dashed
         color=grey50
         node [shape=box, fillcolor="#F5F5F5", color=grey50, style=dashed]
 
-        prometheus [label="Prometheus"]
-        grafana    [label="Grafana"]
-        otel       [label="OpenTelemetry"]
+        terraform [label="Terraform\nVPC, EKS, ECR, S3, RDS, IAM"]
+        aws_eks   [label="AWS EKS\n(replicated Kafka, S3, RDS)"]
     }
 
     // === Рёбра: внешние источники → ingestion ===
@@ -149,15 +194,15 @@ digraph "AI Data Platform — Контейнерный вид" {
     ingestion -> topic_raw [label="publish\nProductObservationEvent"]
 
     // === Kafka → Processing ===
-    topic_raw -> processor [label="consume"]
+    topic_raw -> processor [label="consume\n(group: processor)"]
 
     // === Processing → Kafka (validated / invalid) ===
     processor -> topic_validated [label="publish\nvalidated events"]
     processor -> topic_invalid   [label="publish\nfailed events (DLQ)"]
 
     // === Kafka → Writers ===
-    topic_raw -> raw_writer [label="consume\n(own group)"]
-    topic_validated -> lake_writer [label="consume\n(own group)"]
+    topic_raw -> raw_writer [label="consume\n(group: raw-writer)"]
+    topic_validated -> lake_writer [label="consume\n(group: lake-writer)"]
 
     // === Writers → Lake ===
     raw_writer -> bronze [label="write\nParquet (deterministic keys)"]
@@ -167,21 +212,39 @@ digraph "AI Data Platform — Контейнерный вид" {
     bronze -> airflow [label="compaction\n(merge small files)"]
     airflow -> bronze [label="rewrite\ncompacted Parquet"]
     pg -> airflow [label="read\n(quality, metrics, health)"]
-    airflow -> gold [label="write\n(daily_metrics,\nquality_results,\nhealth_results)"]
+    airflow -> gold_quality [label="write\ncheck results"]
+    airflow -> gold_metrics [label="write\ndaily aggregates"]
+    airflow -> gold_health [label="write\nhealth state"]
 
     // === Warehouse ===
-    silver -> wh_loader [label="read Parquet"]
-    wh_loader -> pg [label="load\n(UPSERT / idempotent)"]
+    silver -> wh_loader [label="read Parquet\n(LakeReader, Silver filter)"]
+    wh_loader -> pg [label="load\n(UPSERT / idempotent\nby event_id)"]
 
     // === Serving ===
-    pg -> api [label="SQL\nqueries", style=dashed, color=grey50]
-    pg -> agent [label="read-only\nSQL", style=dashed, color=grey50]
-    api -> agent [label="tool\ncall", style=dashed, color=grey50]
+    pg -> api [label="SQL\nqueries"]
+    pg -> agent [label="read-only\nSQL"]
+    api -> agent [label="tool\ncall\n(in-process)"]
 
-    // === Observability (пунктир ко всем) ===
-    processor  -> prometheus [style=dotted, color=grey70, label="metrics"]
-    raw_writer -> prometheus [style=dotted, color=grey70]
-    lake_writer -> prometheus [style=dotted, color=grey70]
-    airflow    -> prometheus [style=dotted, color=grey70]
-    ingestion  -> otel       [style=dotted, color=grey70, label="traces"]
+    // === Observability ===
+    processor  -> prometheus [label="metrics\n:9100"]
+    raw_writer -> prometheus [label=":9100"]
+    lake_writer -> prometheus [label=":9100"]
+    ingestion  -> prometheus [label=":9100"]
+    api        -> prometheus [label="/metrics\n:8000"]
+    ingestion  -> otel       [label="traces"]
+    processor  -> otel       [label="traces"]
+    prometheus -> grafana    [label="datasource"]
+    otel       -> grafana    [label="Jaeger\ntraces"]
+
+    // === K8s wraps everything ===
+    k8s -> ingestion [style=dotted, color=grey60]
+    k8s -> processor [style=dotted, color=grey60]
+    k8s -> api       [style=dotted, color=grey60]
+
+    // === Performance ===
+    perf -> topic_raw [label="load\ngeneration", style=bold, color="#4E342E"]
+
+    // === Future (пунктир) ===
+    k8s -> terraform [style=dashed, color=grey50, label="M14\nreplace"]
+    terraform -> aws_eks [style=dashed, color=grey50]
 }
