@@ -72,7 +72,9 @@ def check_task_files(errors: list[str]) -> int:
     task_numbers: set[int] = set()
     for path in task_files:
         number = _parse_task_number(path.name)
-        if number is None and not path.name.startswith("TASK-K8S-FIX-"):
+        if number is None and not (
+            path.name.startswith("TASK-K8S-FIX-") or path.name.startswith("TASK-FIX-")
+        ):
             errors.append(f"unexpected task file name: {path.name}")
         elif number is not None:
             task_numbers.add(number)
