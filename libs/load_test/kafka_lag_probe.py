@@ -133,23 +133,24 @@ def _get_committed_offsets(
     Partitions with no committed offset map to -1.
     """
     from confluent_kafka import TopicPartition
+    from confluent_kafka.admin import _ConsumerGroupTopicPartitions
 
-    futures = admin.list_consumer_group_offsets([group_id])
+    request = [_ConsumerGroupTopicPartitions(group_id=group_id)]
+    futures = admin.list_consumer_group_offsets(request)
     if group_id not in futures:
         return {}
 
     result = futures[group_id].result(timeout=10.0)
     committed: dict = {}
 
+    offset_lookup: dict[tuple[str, int], int] = {}
+    topic_partitions = getattr(result, "topic_partitions", None) or []
+    for tp in topic_partitions:
+        offset_lookup[(tp.topic, tp.partition)] = tp.offset
+
     for topic in topics:
         for p in range(partition_count):
             tp = TopicPartition(topic=topic, partition=p)
-            offset = -1
-            if result:
-                for result_tp, offset_meta in result.items():
-                    if result_tp.topic == topic and result_tp.partition == p:
-                        offset = offset_meta.offset
-                        break
-            committed[tp] = offset
+            committed[tp] = offset_lookup.get((topic, p), -1)
 
     return committed
