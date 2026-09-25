@@ -83,3 +83,19 @@ class LoadTestSettings(BaseAppSettings):
         ge=1,
         description="Number of partitions per monitored topic.",
     )
+    pg_db_url: str = Field(
+        default="",
+        description=(
+            "PostgreSQL connection URL for end-to-end latency probing. "
+            "Empty string disables latency probing."
+        ),
+    )
+    pg_latency_poll_interval_sec: float = Field(
+        default=10.0,
+        gt=0,
+        description="Interval between PostgreSQL arrival checks in seconds.",
+    )
+    pg_latency_source: str = Field(
+        default="load-test",
+        description="Source label used to filter load-test events in PostgreSQL.",
+    )

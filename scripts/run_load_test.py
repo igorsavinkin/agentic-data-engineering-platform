@@ -142,6 +142,21 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Number of partitions per monitored topic (default: 3).",
     )
+    parser.add_argument(
+        "--pg-url",
+        type=str,
+        default=None,
+        help=(
+            "PostgreSQL URL for end-to-end latency probing. "
+            "Example: postgresql://user:pass@localhost:5432/warehouse"
+        ),
+    )
+    parser.add_argument(
+        "--latency-interval",
+        type=float,
+        default=None,
+        help="PostgreSQL latency probe interval in seconds (default: 10.0).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -171,6 +186,10 @@ def main(argv: list[str] | None = None) -> int:
         overrides["lag_poll_interval_sec"] = args.lag_interval
     if args.lag_partitions is not None:
         overrides["lag_partition_count"] = args.lag_partitions
+    if args.pg_url is not None:
+        overrides["pg_db_url"] = args.pg_url
+    if args.latency_interval is not None:
+        overrides["pg_latency_poll_interval_sec"] = args.latency_interval
 
     settings = load_settings(LoadTestSettings)
     if overrides:
@@ -201,11 +220,32 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
 
+    latency_collector = None
+    pg_query_fn = None
+    if settings.pg_db_url and not args.dry_run:
+        from libs.load_test.latency_collector import LatencyCollector
+        from libs.load_test.pg_latency_probe import create_pg_probe_fn
+
+        latency_collector = LatencyCollector()
+        pg_query_fn = create_pg_probe_fn(
+            db_url=settings.pg_db_url,
+            source=settings.pg_latency_source,
+        )
+        logging.getLogger(__name__).info(
+            "pg_latency_probing_enabled",
+            extra={
+                "poll_interval_sec": settings.pg_latency_poll_interval_sec,
+                "source": settings.pg_latency_source,
+            },
+        )
+
     runner = LoadTestRunner(
         settings=settings,
         produce_fn=produce_fn,
         diagnostic=args.diagnostic,
         lag_query_fn=lag_query_fn,
+        latency_collector=latency_collector,
+        pg_query_fn=pg_query_fn,
     )
 
     try:
