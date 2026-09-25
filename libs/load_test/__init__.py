@@ -10,6 +10,7 @@ See ``docs/load-test-harness.md`` for usage instructions.
 
 from __future__ import annotations
 
+from libs.load_test.api_latency_collector import ApiLatencyCollector, ApiLatencySample
 from libs.load_test.config import LoadTestSettings
 from libs.load_test.event_generator import EventGenerator
 from libs.load_test.lag_collector import (
@@ -30,6 +31,8 @@ from libs.load_test.report import build_report, write_report
 from libs.load_test.runner import LoadTestRunner, ProduceFn
 
 __all__ = [
+    "ApiLatencyCollector",
+    "ApiLatencySample",
     "EndToEndSample",
     "EventGenerator",
     "LagCollector",

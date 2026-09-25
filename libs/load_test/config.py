@@ -99,3 +99,29 @@ class LoadTestSettings(BaseAppSettings):
         default="load-test",
         description="Source label used to filter load-test events in PostgreSQL.",
     )
+    api_base_url: str = Field(
+        default="",
+        description=(
+            "Base URL of the API service for latency probing during load tests. "
+            "Empty string disables API latency probing."
+        ),
+    )
+    api_endpoints: list[str] = Field(
+        default_factory=lambda: [
+            "/api/v1/health",
+            "/api/v1/products",
+            "/api/v1/analytics/price-changes",
+            "/api/v1/quality/summary",
+        ],
+        description="Endpoint paths to probe during load tests.",
+    )
+    api_latency_poll_interval_sec: float = Field(
+        default=5.0,
+        gt=0,
+        description="Interval between API latency probe cycles in seconds.",
+    )
+    api_latency_timeout_sec: float = Field(
+        default=10.0,
+        gt=0,
+        description="HTTP request timeout for API latency probes in seconds.",
+    )

@@ -157,6 +157,28 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="PostgreSQL latency probe interval in seconds (default: 10.0).",
     )
+    parser.add_argument(
+        "--api-url",
+        type=str,
+        default=None,
+        help=("Base URL of the API service for latency probing. Example: http://localhost:8000"),
+    )
+    parser.add_argument(
+        "--api-endpoints",
+        type=str,
+        nargs="+",
+        default=None,
+        dest="api_endpoints",
+        help=(
+            "Endpoint paths to probe during load tests. Example: /api/v1/health /api/v1/products"
+        ),
+    )
+    parser.add_argument(
+        "--api-latency-interval",
+        type=float,
+        default=None,
+        help="API latency probe interval in seconds (default: 5.0).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -192,6 +214,12 @@ def main(argv: list[str] | None = None) -> int:
         overrides["pg_db_url"] = args.pg_url
     if args.latency_interval is not None:
         overrides["pg_latency_poll_interval_sec"] = args.latency_interval
+    if args.api_url is not None:
+        overrides["api_base_url"] = args.api_url
+    if args.api_endpoints is not None:
+        overrides["api_endpoints"] = args.api_endpoints
+    if args.api_latency_interval is not None:
+        overrides["api_latency_poll_interval_sec"] = args.api_latency_interval
 
     settings = load_settings(LoadTestSettings)
     if overrides:
@@ -250,6 +278,28 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
 
+    api_latency_collector = None
+    api_probe = None
+    if settings.api_base_url and not args.dry_run:
+        from libs.load_test.api_latency_collector import ApiLatencyCollector
+        from libs.load_test.api_latency_probe import create_api_probe_fn
+
+        api_latency_collector = ApiLatencyCollector()
+        api_probe = create_api_probe_fn(
+            collector=api_latency_collector,
+            base_url=settings.api_base_url,
+            endpoints=settings.api_endpoints,
+            timeout_sec=settings.api_latency_timeout_sec,
+        )
+        logging.getLogger(__name__).info(
+            "api_latency_probing_enabled",
+            extra={
+                "base_url": settings.api_base_url,
+                "endpoints": settings.api_endpoints,
+                "poll_interval_sec": settings.api_latency_poll_interval_sec,
+            },
+        )
+
     runner = LoadTestRunner(
         settings=settings,
         produce_fn=produce_fn,
@@ -257,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         lag_query_fn=lag_query_fn,
         latency_collector=latency_collector,
         pg_query_fn=pg_query_fn,
+        api_latency_collector=api_latency_collector,
+        api_probe_fn=api_probe,
     )
 
     try:
