@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from libs.event_contracts import ProductObservationEvent
+from libs.load_test.api_latency_collector import ApiLatencyCollector
+from libs.load_test.api_latency_probe import ApiProbeFn
 from libs.load_test.config import LoadTestSettings
 from libs.load_test.event_generator import EventGenerator
 from libs.load_test.lag_collector import LagCollector, LagQueryFn
@@ -59,6 +61,8 @@ class LoadTestRunner:
         lag_query_fn: LagQueryFn | None = None,
         latency_collector: LatencyCollector | None = None,
         pg_query_fn: PgQueryFn | None = None,
+        api_latency_collector: ApiLatencyCollector | None = None,
+        api_probe_fn: ApiProbeFn | None = None,
     ) -> None:
         self._settings = settings
         self._produce_fn = produce_fn
@@ -70,6 +74,8 @@ class LoadTestRunner:
         self._lag_query_fn = lag_query_fn
         self._latency_collector = latency_collector
         self._pg_query_fn = pg_query_fn
+        self._api_latency_collector = api_latency_collector
+        self._api_probe_fn = api_probe_fn
 
     @property
     def metrics(self) -> MetricsCollector:
@@ -86,6 +92,10 @@ class LoadTestRunner:
     @property
     def latency_collector(self) -> LatencyCollector | None:
         return self._latency_collector
+
+    @property
+    def api_latency_collector(self) -> ApiLatencyCollector | None:
+        return self._api_latency_collector
 
     def run(self) -> dict:
         """Execute the load test and return the structured report.
@@ -113,6 +123,7 @@ class LoadTestRunner:
         resource_monitor = self._start_resource_monitor(stop_event)
         lag_monitor = self._start_lag_monitor(stop_event)
         pg_monitor = self._start_pg_latency_monitor(stop_event)
+        api_monitor = self._start_api_latency_monitor(stop_event)
 
         self._wait_for_completion(stop_event, workers)
 
@@ -126,6 +137,8 @@ class LoadTestRunner:
             lag_monitor.join(timeout=5)
         if pg_monitor is not None:
             pg_monitor.join(timeout=5)
+        if api_monitor is not None:
+            api_monitor.join(timeout=5)
 
         summary = self._metrics.get_summary()
         settings_dict = self._settings.model_dump()
@@ -149,6 +162,11 @@ class LoadTestRunner:
             latency_report = self._latency_collector.to_report_dict()
             if latency_report is not None:
                 report["processing_latency"] = latency_report
+
+        if self._api_latency_collector is not None:
+            api_latency_report = self._api_latency_collector.to_report_dict()
+            if api_latency_report is not None:
+                report["api_latency"] = api_latency_report
 
         output_path = write_report(report, self._settings.output_path)
         logger.info(
@@ -352,6 +370,30 @@ class LoadTestRunner:
             target=_monitor,
             daemon=True,
             name="load-test-pg-latency-monitor",
+        )
+        t.start()
+        return t
+
+    def _start_api_latency_monitor(self, stop_event: threading.Event) -> threading.Thread | None:
+        """Start a background thread that probes API endpoints for latency."""
+        if self._api_probe_fn is None:
+            return None
+
+        probe_fn = self._api_probe_fn
+        poll_interval = self._settings.api_latency_poll_interval_sec
+
+        def _monitor() -> None:
+            while not stop_event.is_set():
+                try:
+                    probe_fn()
+                except Exception:
+                    logger.warning("api_latency_probe_failed", exc_info=True)
+                stop_event.wait(timeout=poll_interval)
+
+        t = threading.Thread(
+            target=_monitor,
+            daemon=True,
+            name="load-test-api-latency-monitor",
         )
         t.start()
         return t
