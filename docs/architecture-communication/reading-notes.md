@@ -4,8 +4,8 @@
 
 ### Что показывает
 Полную карту сервисов платформы, хранилищ данных, Kafka-топиков и границ
-ответственности. Сплошные линии — реализованные компоненты (M0–M6,
-TASK-001–TASK-062), пунктирные — проектное состояние (Milestone 7+).
+ответственности. Сплошные линии — реализованные компоненты (M0–M13,
+TASK-001–TASK-115), пунктирные — проектное состояние (M14+).
 
 ### Порядок чтения
 1. **Слева** — 5 внешних источников данных (эллипсы): FakeStore, BestBuy, eBay, Web Retailer, Difficult Retailer
@@ -14,7 +14,7 @@ TASK-001–TASK-062), пунктирные — проектное состоян
 4. **Processor** — валидация, нормализация, дедупликация, Polars-трансформации
 5. **Data Lake** — два Parquet-слоя медальона (Bronze/Silver) + Gold как PostgreSQL-аналитические таблицы
 6. **Warehouse** — Airflow (4 DAG), Warehouse Loader, PostgreSQL (8 таблиц)
-7. **Serving** — FastAPI и LangGraph-агент (проектное состояние, M7/M11)
+7. **Serving** — FastAPI (M7, реализовано) и LangGraph-агент (M11, реализовано)
 
 ### Ключевые архитектурные ограничения, видимые на диаграмме
 - Ingestion пишет **только в Kafka**, никогда напрямую в PostgreSQL
@@ -31,8 +31,8 @@ TASK-001–TASK-062), пунктирные — проектное состоян
 | Компонент (двойная скобка) | Kafka-топик |
 | Цилиндр | Хранилище данных |
 | Эллипс | Внешний источник |
-| Сплошная линия | Реализовано (M0–M6) |
-| Пунктирная линия | Проектное состояние (M7+) |
+| Сплошная линия | Реализовано (M0–M13) |
+| Пунктирная линия | Проектное состояние (M14+) |
 | Точечная линия | Observability (метрики/трейсы) |
 
 ---
@@ -56,7 +56,7 @@ Silver → Warehouse Loader → PostgreSQL (base tables)
                                 ↘ Airflow DAGs → Gold (PostgreSQL analytical tables)
 Bronze → Airflow compaction → compacted Bronze
 
-PostgreSQL → API / Agent (serving, M7+)
+PostgreSQL → API / Agent (serving, реализовано M7/M11)
 ```
 
 ### Ключевые семантики на каждом переходе
@@ -90,7 +90,7 @@ PostgreSQL → API / Agent (serving, M7+)
 
 ---
 
-## Реализованные компоненты (M0–M6)
+## Реализованные компоненты (M0–M13)
 
 ### Milestone 0 — Repository Foundation (TASK-001–005)
 - Структура репозитория, pyproject.toml, CI base
@@ -125,6 +125,39 @@ PostgreSQL → API / Agent (serving, M7+)
 - Quality framework: 5 checks, runner, PostgreSQL persistence
 - 4 DAGs: ingestion_health, daily_data_quality, parquet_compaction, build_daily_metrics
 - Observability libs: health assessment/evaluation, source/processor/Kafka metrics
+
+### Milestone 7 — FastAPI (TASK-063–069)
+- `services/api/`, 13+ endpoints (products, analytics, pipelines, quality, agent)
+- Health/readiness probes, Prometheus `/metrics` endpoint
+- Read-only PostgreSQL access via SQLAlchemy ORM
+
+### Milestone 8 — Kubernetes (TASK-070–079)
+- `kubernetes/` manifests: 7 Deployments, 2 StatefulSets, 2 Jobs
+- kind local cluster, liveness/readiness probes, ConfigMaps, Secrets
+
+### Milestone 9 — Helm (TASK-080–083)
+- `helm/ai-data-platform/` chart with values.yaml, values-local.yaml, values-production.yaml
+- All Kubernetes resources templated, conditional monitoring, HPA, Ingress, NetworkPolicy
+
+### Milestone 10 — Observability (TASK-084–091)
+- Prometheus (scrape configs, 30+ metrics), Grafana (3 dashboards, 35 panels)
+- OpenTelemetry Collector (OTLP gRPC/HTTP), Jaeger backend
+- Active span instrumentation in 4 services (ingestion, processor, raw-writer, lake-writer)
+
+### Milestone 11 — LangGraph Agent (TASK-092–100)
+- `services/agent/`, 4 read-only tools, deterministic keyword classifier
+- Graph routing: classify → execute → compose; read-only SQL enforcement
+- Deployed within API service process (not a separate container)
+
+### Milestone 12 — Failure Engineering (TASK-101–107)
+- `tests/test_failure_replay.py`, `tests/test_duplicate_replay.py`
+- At-least-once semantics verified, crash recovery, duplicate delivery handling
+- Recovery documentation
+
+### Milestone 13 — Performance Testing (TASK-108–115)
+- `scripts/run_load_test.py`, 3 benchmark reports (100/500/1000 eps targets)
+- Producer-side throughput measured; bottleneck documented (synchronous produce-wait loop)
+- Linux in-cluster verification: 95.55 eps at 100 target (95.6%)
 
 ---
 
@@ -186,24 +219,20 @@ PostgreSQL → API / Agent (serving, M7+)
 
 ---
 
-## Проектное состояние (M7+, не реализовано)
+## Проектное состояние (M14+, не реализовано)
 
 | Компонент | Milestone | Описание |
 |-----------|-----------|----------|
-| FastAPI | M7 (TASK-063–069) | HTTP API: products, analytics, pipeline, DQ |
-| Kubernetes (kind) | M8 (TASK-070–079) | Локальный K8s для всех сервисов |
-| Helm charts | M9 (TASK-080–083) | Helm-чарты для K8s-деплоя |
-| Observability stack | M10 (TASK-084–091) | Prometheus, Grafana, OpenTelemetry |
-| LangGraph Agent | M11 (TASK-092–100) | AI-агент с read-only SQL и controlled tools |
-| Failure engineering | M12 (TASK-101–107) | Chaos testing, circuit breakers |
-| Performance testing | M13 (TASK-108–115) | Load testing, bottleneck analysis |
-| Terraform + AWS | M14 (TASK-116–124) | AWS infrastructure as code |
+| Terraform + AWS | M14 (TASK-116–124) | AWS infrastructure as code (VPC, ECR, S3, RDS, EKS, IAM) |
+| Production Polish | M15 (TASK-125–133) | Documentation, ADRs, security review, demo |
 
 ## Ограничения и допущения
 
-1. Диаграммы отражают **реализованное состояние** (M0–M6) + проектное (M7+)
+1. Диаграммы отражают **реализованное состояние** (M0–M13) + проектное (M14+)
 2. Gold-слой реализован как PostgreSQL-аналитические таблицы, а не Gold Parquet
 3. Warehouse Loader читает из Silver Parquet, а не из Gold
 4. Airflow DAGs читают из PostgreSQL base tables и Bronze Parquet
-5. Observability libs реализованы (health, metrics), но инфраструктура (Prometheus/Grafana) — M10
-6. 5 source adapters реализованы, Amazon/сложные источники — в roadmap
+5. Observability полностью реализована: Prometheus, Grafana (3 dashboards), OpenTelemetry, Jaeger (M10)
+6. Kubernetes (M8) и Helm (M9) реализованы; Terraform (M14) — проектное состояние
+7. 5 source adapters реализованы, Amazon/сложные источники — в roadmap
+8. Авторитетный снимок архитектуры: `docs/architecture/platform-inventory-m13.md`
