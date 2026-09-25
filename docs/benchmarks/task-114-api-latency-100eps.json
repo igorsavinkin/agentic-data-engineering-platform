@@ -1,0 +1,128 @@
+{
+  "api_latency": {
+    "endpoint_count": 4,
+    "endpoints": {
+      "/api/v1/analytics/price-changes": {
+        "latency_ms": {
+          "max": 2131.243,
+          "mean": 455.169,
+          "min": 249.441,
+          "p50": 290.856,
+          "p95": 1232.959,
+          "p99": 1951.586
+        },
+        "sample_count": 11,
+        "status_codes": {
+          "200": 11
+        }
+      },
+      "/api/v1/health": {
+        "latency_ms": {
+          "max": 74.774,
+          "mean": 14.015,
+          "min": 6.419,
+          "p50": 8.081,
+          "p95": 42.399,
+          "p99": 68.299
+        },
+        "sample_count": 11,
+        "status_codes": {
+          "200": 11
+        }
+      },
+      "/api/v1/products": {
+        "latency_ms": {
+          "max": 1615.901,
+          "mean": 193.609,
+          "min": 42.406,
+          "p50": 49.85,
+          "p95": 846.76,
+          "p99": 1462.073
+        },
+        "sample_count": 11,
+        "status_codes": {
+          "200": 11
+        }
+      },
+      "/api/v1/quality/summary": {
+        "latency_ms": {
+          "max": 425.64,
+          "mean": 51.276,
+          "min": 10.049,
+          "p50": 14.241,
+          "p95": 221.817,
+          "p99": 384.875
+        },
+        "sample_count": 11,
+        "status_codes": {
+          "200": 11
+        }
+      }
+    },
+    "overall_latency_ms": {
+      "max": 2131.243,
+      "mean": 178.517,
+      "min": 6.419,
+      "p50": 44.314,
+      "p95": 411.995,
+      "p99": 1909.646
+    },
+    "total_samples": 44
+  },
+  "configuration": {
+    "api_base_url": "http://api:8000",
+    "api_endpoints": [
+      "/api/v1/health",
+      "/api/v1/products",
+      "/api/v1/analytics/price-changes",
+      "/api/v1/quality/summary"
+    ],
+    "api_latency_poll_interval_sec": 5.0,
+    "api_latency_timeout_sec": 10.0,
+    "disable_auto_scaling": false,
+    "duration_sec": 60.0,
+    "kafka_bootstrap_servers": "kafka:29092",
+    "kafka_client_id": "load-test-harness",
+    "kafka_raw_topic": "products.raw.v1",
+    "lag_consumer_groups": [],
+    "lag_partition_count": 3,
+    "lag_poll_interval_sec": 5.0,
+    "lag_topics": [
+      "products.raw.v1"
+    ],
+    "output_path": "load_test_results.json",
+    "pg_db_url": "",
+    "pg_latency_poll_interval_sec": 10.0,
+    "pg_latency_source": "load-test",
+    "seed": 42,
+    "source_name": "load-test",
+    "target_events_per_sec": 100.0,
+    "total_events": 0,
+    "worker_count": 1
+  },
+  "environment": {
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "python_version": "3.12.14"
+  },
+  "results": {
+    "duration_sec": 60.01,
+    "error_count": 0,
+    "latency_ms": {
+      "max": 1345.412,
+      "mean": 4.423,
+      "min": 1.576,
+      "p50": 2.671,
+      "p90": 4.012,
+      "p95": 4.723,
+      "p99": 12.814
+    },
+    "produced_count": 5671,
+    "resource": {
+      "peak_rss_mb": 63.1,
+      "total_cpu_sec": 9.1
+    },
+    "throughput_events_per_sec": 94.5
+  },
+  "run_id": "3d21103f-c74f-4c77-810d-72af0756f19b",
+  "timestamp": "2026-09-25T15:26:51.882745+00:00"
+}
