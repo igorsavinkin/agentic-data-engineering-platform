@@ -5,111 +5,121 @@
 - **Task ID:** TASK-FIX-115 — Correct Performance Evidence Provenance
 - **Review date:** 2026-09-25
 - **Reviewer:** Qwen Code (independent review, no code modified)
-- **Reviewed change set / Git range:** `75ed14ed47684564af280c0773655b28cf5a40a1...edd7bb46566dbf2b4ff151ee47bfe044d6637b65`
+- **Reviewed change set / Git range:** `75ed14ed47684564af280c0773655b28cf5a40a1...00065fa2bd681f629e52c4249d2320f88a851a0a`
 - **Reviewed commits:**
   - `edd7bb46566dbf2b4ff151ee47bfe044d6637b65` — `fix(TASK-FIX-115): correct Warehouse Loader evidence provenance classification`
-- **Reviewed HEAD:** `edd7bb46566dbf2b4ff151ee47bfe044d6637b65` on `feature/TASK-FIX-115-EVIDENCE-PROVENANCE`
-- **Scope:** Documentation-only correction to `docs/performance/bottleneck-analysis.md` — remove false attribution of uncommitted Warehouse Loader runtime observations to the TASK-115 task specification.
-- **Verdict:** CHANGES REQUIRED
+  - `08eeb9858d5729be7ca83b2d4c19614982fed1ff` — `docs: Record TASK-FIX-115 Qwen review (CHANGES REQUIRED)`
+  - `00065fa2bd681f629e52c4249d2320f88a851a0a` — `fix(TASK-FIX-115): remove TASK-115 spec attribution from bottleneck analysis`
+- **Reviewed HEAD:** `00065fa2bd681f629e52c4249d2320f88a851a0a` on `feature/TASK-FIX-115-EVIDENCE-PROVENANCE`
+- **Scope:** Documentation-only correction to `docs/performance/bottleneck-analysis.md` — remove false attribution of uncommitted Warehouse Loader runtime observations (`OOMKilled`, exit code `137`, `~55,361` files, `134` restarts) to the TASK-115 task specification.
+- **Verdict:** APPROVED WITH NON-BLOCKING FINDINGS
+
+> **Supersession note:** This report supersedes the review committed in `08eeb98`. That earlier review evaluated only `edd7bb4` and returned CHANGES REQUIRED (two findings). Commit `00065fa` was then added specifically to resolve its Finding 1. This report evaluates the final state at `00065fa`.
 
 ---
 
 ## 2. Requirements Coverage
 
+### Required Changes (TASK-FIX-115)
+
 | Requirement | Status | Implementation evidence |
 |---|---|---|
-| False TASK-115 specification attribution is removed | **Not met** | The document retains, in five locations, statements that "the task specification documents …" the OOMKilled / exit 137 / ~55,361 / 134 values (lines 43–44, 412, 547–549, 583–585, 599–600, 639). The wording was re-framed from "reports" to "documents … manual runtime observations … not benchmark measurements", but the provenance claim — that these values originate from the TASK-115 task specification — is still asserted. See Finding 1. |
-| `OOMKilled`, `137`, `55,361`, `134` removed from authoritative analysis **or** explicitly marked uncommitted/unverified | **Met** | Section renamed to "Manual Runtime Observations (Uncommitted)" (line 410) and the values are explicitly labeled "not benchmark measurements" and "not independently verifiable from committed benchmark artifacts" (lines 412–414, 547–549, 583–585). |
-| Uncommitted observations do not support confirmed bottleneck claims | **Met** | The "Confirmed Bottlenecks" section contains only "Load Generator Producer-Call Duration". The Warehouse Loader is classified as "Observed limitation" (§4) and "Hypothesis" (§2), never a confirmed OOM bottleneck. |
-| Warehouse Loader restart behavior remains an observed limitation | **Met** | §4 "Warehouse Loader Instability" is classified "Observed limitation" (line ~536). |
-| Committed TASK-109–114 benchmark results unchanged | **Met** | Only `docs/performance/bottleneck-analysis.md` changed; no benchmark artifact modified. |
-| TASK-114 API latency results unchanged | **Met** | API latency section untouched by the diff. |
-| Throughput analysis unchanged unless correcting provenance | **Met** | Throughput analysis section untouched. |
-| No runtime/code/configuration behavior changed | **Met** | Markdown-only change; no code, config, or infra files touched. |
-| Final documentation remains internally consistent | **Partially met** | Internally the document is now consistent (all four values are consistently labeled uncommitted). However, the document is inconsistent with the *TASK-115 task specification itself*, which at the reviewed HEAD contains these values and asserts "The OOM condition is confirmed runtime evidence." See Finding 2. |
-| Qwen review passes according to the normal review workflow | **This review** | See verdict. |
+| Remove false attribution stating/implying the values are contained in the TASK-115 task specification | **Met** | A full-text search of `docs/performance/bottleneck-analysis.md` for `specification` / `task specification` / `TASK-115 specification` returns **zero** matches at HEAD. All "the task specification documents …" phrasing has been replaced with unattributed "Manual runtime observations from a separate/later inspection …". |
+| `OOMKilled`, `137`, `55,361`, `134` removed or explicitly marked uncommitted/unverified | **Met** | Retained under "Manual Runtime Observations (Uncommitted)" (lines 409–429), explicitly labeled "not benchmark measurements" and "not independently verifiable from committed benchmark artifacts." |
+| Uncommitted observations do not support confirmed bottleneck claims | **Met** | The only "Confirmed bottleneck" (§ "Confirmed Bottlenecks", lines 464–486) is "Load Generator Producer-Call Duration". The Warehouse Loader OOM/restart material is classified "Observed limitation" (§4, line 537) and "Hypothesis" (§2, line 578), never a confirmed OOM bottleneck. |
+| Warehouse Loader restart behavior remains an observed limitation | **Met** | §4 "Warehouse Loader Instability" (line 537) is `Classification: Observed limitation`. |
+| Hypotheses separated from verified facts | **Met** | "Hypotheses Requiring Investigation" (§2) explicitly separates OOM as a possible explanation from the committed 30/35 restarts. |
+| No benchmark numbers invented | **Met** | Authoritative quantitative claims use only committed values (30/35 restarts, 18,880/20,140 files, `read=20140 loaded=20140 failed=0`). |
+| Existing valid TASK-115 conclusions preserved | **Met** | Throughput, producer-call, API latency, and lag/latency sections are untouched by the diff. |
+
+### Acceptance Criteria (TASK-FIX-115)
+
+| Acceptance criterion | Status |
+|---|---|
+| False TASK-115 specification attribution is removed | **Met** |
+| `OOMKilled`, `137`, `55,361`, `134` removed or marked uncommitted/unverified | **Met** |
+| Uncommitted observations do not support confirmed bottleneck claims | **Met** |
+| Warehouse Loader restart behavior remains an observed limitation | **Met** |
+| Committed TASK-109–114 benchmark results remain unchanged | **Met** |
+| TASK-114 API latency results remain unchanged | **Met** |
+| Throughput analysis remains unchanged unless correcting provenance | **Met** |
+| No runtime/code/configuration behavior is changed | **Met** |
+| Final documentation remains internally consistent | **Met** (within `bottleneck-analysis.md`; see Finding 1 for a cross-document governance conflict) |
+| Qwen review passes according to the normal review workflow | **This review** |
 
 ---
 
 ## 3. Git Diff Review
 
-- **Range contents:** One commit (`edd7bb4`) modifying a single file: `docs/performance/bottleneck-analysis.md` (+31/−23).
-- **Branch isolation:** Correct for the fix. `git merge-base HEAD main` is `75ed14e`; the feature branch contains exactly one commit beyond `main` — `edd7bb4`, the fix under review. The task spec (`ai/tasks/TASK-FIX-115-EVIDENCE-PROVENANCE.md`) was committed to `main` in `75ed14e`, which is the merge-base and therefore outside the reviewed range.
-- **Scope correctness:** The change is confined to the single documentation file named in the task. No other file is touched.
-- **Unrelated changes:** None within the reviewed commit.
+- **Range contents:** Three commits. Net diff touches exactly two files:
+  - `docs/performance/bottleneck-analysis.md` (+51/−24)
+  - `docs/reviews/TASK-FIX-115-review.md` (+115, new file — the superseded `08eeb98` review)
+- **Per-commit breakdown:**
+  - `edd7bb4` — classification-strengthening pass (rename section heading, add "not benchmark measurements" disclaimers). This still retained the "task specification documents …" provenance, which was later flagged.
+  - `08eeb98` — records the interim Qwen review (CHANGES REQUIRED); a legitimate workflow artifact.
+  - `00065fa` — removes every remaining "task specification" / "TASK-115 specification" attribution, presenting the values as unattributed manual runtime observations.
+- **Branch isolation:** Correct. The reviewed commits sit on `feature/TASK-FIX-115-EVIDENCE-PROVENANCE` only. The task spec itself (`ai/tasks/TASK-FIX-115-EVIDENCE-PROVENANCE.md`) was added in `75ed14e`, which is the range's left boundary (outside the reviewed change set).
+- **Scope correctness:** Correct. All substantive changes are confined to the single file named in the task (`docs/performance/bottleneck-analysis.md`) plus the review artifact explicitly permitted by the task's "Scope" section.
+- **Unrelated changes:** None.
 - **Architectural changes:** None. No code, config, or dependency changes.
 - **Dependency/configuration changes:** None.
 - **Accidental changes:** None. No debugging code, temporary files, dead code, generated artifacts, or secrets.
-- **Out-of-scope changes:** None within the reviewed commit. (Contextual note: the task spec itself and a *prior* amendment to the TASK-115 spec — commit `29e06a3` — are on `main`, not on this feature branch, and are addressed under Finding 2.)
+- **Out-of-scope changes:** None within the reviewed commits.
 
-The fix commit is a legitimate, in-scope documentation edit. Its re-wording is internally consistent: every occurrence of "reports" was changed to "documents … manual runtime observations … not benchmark measurements", the section heading was renamed, and explicit "not benchmark measurements" / "uncommitted" disclaimers were added. The fix does **not** touch the committed benchmark figures (30/35 restarts, 18,880/20,140 files, `read=20140 loaded=20140 failed=0`), which are already correct and independently verifiable.
+The `00065fa` fix is precisely targeted: it converts every instance of "the task specification documents/reports …" into an unattributed "manual runtime observations" statement and removes the phrase "documented in the task specification's manual runtime observations" in favor of "from the manual runtime observations". The committed benchmark figures are left untouched.
 
 ---
 
 ## 4. Test and Verification Review
 
-- **Tests examined:** None added or changed. This is a documentation-only task; no deterministic test surface applies (consistent with the task's "documentation-only" scope and prior docs-only tasks).
+- **Tests examined:** None added or changed. This is a documentation-only task; no deterministic test surface applies (consistent with TASK-FIX-115's "documentation-only" scope and prior docs-only tasks).
 - **Integration tests:** Not applicable. The change does not touch Kafka, persistence, MinIO/S3, or infrastructure boundaries.
 - **Independent verification performed by reviewer:**
-  - Diff scope → **Independently verified**: `git diff 75ed14e...edd7bb4 --stat` shows exactly one file, `docs/performance/bottleneck-analysis.md` (+31/−23).
-  - Authoritative restart counts → **Independently verified**: `30` (TASK-110) in `docs/benchmark-500-eps.md:51,62`; `35` (TASK-111) in `docs/benchmark-1000-eps.md:60,167`.
-  - Silver Parquet counts → **Independently verified**: `file_count=18880` and `file_count = 20140` in `docs/e2e/E2E-SOURCE-TO-POSTGRESQL-2026-09-24.md` (§8 and §11).
-  - Successful load cycle → **Independently verified**: `Load cycle complete: read=20140 loaded=20140 failed=0` in the E2E report (line 338).
-  - Warehouse Loader classification → **Independently verified**: not present under "Confirmed Bottlenecks"; present under "Observed Limitations" and "Hypotheses Requiring Investigation".
-- **Verification status:** Authoritative quantitative claims and diff scope — **Independently verified**. The provenance defect (Finding 1) and governance conflict (Finding 2) were identified by direct inspection of `docs/performance/bottleneck-analysis.md` and `ai/tasks/TASK-115-document-bottlenecks.md`.
+  - **Diff scope — Independently verified:** `git diff 75ed14e...00065fa --stat` shows exactly two files (`bottleneck-analysis.md`, `TASK-FIX-115-review.md`), and `git status` is clean on the expected branch.
+  - **Attribution removal — Independently verified:** `grep` for `specification` (and variants) in `docs/performance/bottleneck-analysis.md` returns zero matches at HEAD.
+  - **Authoritative restart counts — Independently verified:** `30` (TASK-110) in `docs/benchmark-500-eps.md:62`; `35` (TASK-111) in `docs/benchmark-1000-eps.md:167`.
+  - **Silver Parquet counts — Independently verified:** `file_count=18880` and `file_count = 20140` in `docs/e2e/E2E-SOURCE-TO-POSTGRESQL-2026-09-24.md` (lines 202 and 308).
+  - **Successful load cycle — Independently verified:** `Load cycle complete: read=20140 loaded=20140 failed=0` in the same E2E report (line 338).
+  - **Classification — Independently verified:** the only `Confirmed bottleneck` is "Load Generator Producer-Call Duration" (line 468); Warehouse Loader instability is `Observed limitation` (line 537) and its root-cause explanation is `Hypothesis` (line 578).
+- **Verification status:**
+  - Diff scope, attribution removal, and all authoritative quantitative claims — **Independently verified**.
+  - The cross-document governance conflict (Finding 1) — identified by direct inspection of `docs/performance/bottleneck-analysis.md` and `ai/tasks/TASK-115-document-bottlenecks.md`.
 - **Tests not rerun:** No test run was performed; the change is Markdown-only with no code/test surface.
 
 ---
 
 ## 5. Findings
 
-### Finding 1 — High — "Task specification" attribution retained; core requirement "must not be attributed to the TASK-115 specification" not satisfied
+### Finding 1 — Moderate — Residual governance conflict: TASK-115 spec still asserts "The OOM condition is confirmed runtime evidence"
 
-- **Severity:** High
-- **Affected file/reference:** `docs/performance/bottleneck-analysis.md` lines 43–44, 412, 547–549, 583–585, 599–600, 639
-- **Problem:** The TASK-FIX-115 task specification states, in its "Classification" section, that the four uncommitted observations **"must not be attributed to the TASK-115 specification"**, and in "Required Changes" requires removing "any false attribution stating or implying that these values are contained in the TASK-115 task specification." The fix, however, retains the attribution to the task specification in five distinct places, changing only the verb and the surrounding disclaimer:
+- **Severity:** Moderate (governance conflict requiring human escalation; does not block the narrow TASK-FIX-115 acceptance)
+- **Affected file/reference:** `ai/tasks/TASK-115-document-bottlenecks.md`, "Additional Runtime Observation — Warehouse Loader" section (lines 114–123), as amended by commit `29e06a3` ("feat: Additional rules for perfrormance check"). This file is **not** part of the reviewed change set and is **outside** TASK-FIX-115's authorized scope.
+- **Problem:** The TASK-FIX-115 task specification states, in its "Context", that these observations "are not present in the committed task specification", and in "Classification" that the Warehouse Loader must not be treated as a confirmed OOM bottleneck based on uncommitted runtime observations. However, commit `29e06a3` (an ancestor of `75ed14e`, therefore predating the reviewed commits) amended `ai/tasks/TASK-115-document-bottlenecks.md` to add exactly these values — `OOMKilled`, exit code `137`, "approximately 55,361 Silver Parquet files", "134 pod restarts" — and to assert **"The OOM condition is confirmed runtime evidence."**
 
-  - Line 43–44: *"The task specification documents manual runtime observations — OOMKilled termination, exit code 137, and higher restart and file counts …"*
-  - Line 412: *"The TASK-115 task specification documents the following manual runtime observations from a separate inspection."*
-  - Line 547–548: *"The TASK-115 task specification documents OOMKilled as the termination reason …"*
-  - Line 583–584: *"The task specification documents OOMKilled as the termination reason with 134 restarts and ~55,361 files …"*
-  - Line 639: *"The task specification documents OOMKilled as the termination reason in its manual runtime observations section …"*
+  This produces a direct conflict between two task specifications at the same authority level:
+  - `TASK-115-document-bottlenecks.md` (line 123): "The OOM condition is confirmed runtime evidence."
+  - `TASK-FIX-115-EVIDENCE-PROVENANCE.md` (Classification): "Do NOT classify the Warehouse Loader as a confirmed OOM bottleneck based on the uncommitted runtime observation."
 
-  The fix correctly reclassifies the values as uncommitted manual observations and correctly prevents them from supporting any confirmed bottleneck. But it leaves "the TASK-115 task specification" named as the *source* of these values. That is precisely the provenance claim the task was created to remove.
-- **Impact:** The task's primary acceptance criterion — "False TASK-115 specification attribution is removed" — is not met. A reader is still told that these figures appear in the TASK-115 specification, which is the exact misattribution the original TASK-115 review flagged. The provenance correction is therefore incomplete: the classification changed, but the attribution did not.
-- **Recommendation:** Remove "the task specification documents …" phrasing and instead state that these values "originated during implementation as a manual runtime inspection and could not be traced to any committed source." The source of the values should not be named as the task specification (or any committed artifact), consistent with the task's "must not be attributed to the TASK-115 specification" rule. Alternatively, if the figures are unnecessary for investigation context, remove them entirely.
-
-### Finding 2 — High — Governance conflict: the TASK-115 task specification now contains the values and asserts "The OOM condition is confirmed runtime evidence", contradicting TASK-FIX-115
-
-- **Severity:** High (governance conflict — requires human decision)
-- **Affected file/reference:** `ai/tasks/TASK-115-document-bottlenecks.md` (as amended by commit `29e06a3` "feat: Additional rules for perfrormance check", which is on `main` and an ancestor of the reviewed HEAD), specifically its "Additional Runtime Observation — Warehouse Loader" section
-- **Problem:** The TASK-FIX-115 task spec is premised on the claim that the four observations "are not present in the committed task specification or committed benchmark artifacts." This premise is factually inaccurate at the reviewed HEAD. Commit `29e06a3` (on `main`, *before* the TASK-FIX-115 spec was written) amended `ai/tasks/TASK-115-document-bottlenecks.md` to add exactly these values — `OOMKilled`, exit code `137`, "approximately 55,361 Silver Parquet files", "134 pod restarts" — and further asserts **"The OOM condition is confirmed runtime evidence."**
-
-  This creates a direct, unresolved conflict between two task specifications at the same authority level:
-  - `TASK-115-document-bottlenecks.md` (§ Additional Runtime Observation): "The OOM condition is confirmed runtime evidence."
-  - `TASK-FIX-115-EVIDENCE-PROVENANCE.md` (§ Classification): "Do NOT classify the Warehouse Loader as a confirmed OOM bottleneck based on the uncommitted runtime observation."
-
-  The two documents cannot both be true. This conflict is not introduced by the fix, but it directly undermines the fix: because `29e06a3` planted the values into the TASK-115 spec *after* the original review, "the task specification documents …" is now technically true, which may be why the implementer retained that wording. The result is that the TASK-FIX-115 objective (stop presenting the values as task-spec content) cannot be cleanly satisfied until the TASK-115 spec's "confirmed runtime evidence" assertion is reconciled with TASK-FIX-115.
-- **Impact:** The provenance correction is blocked on a contradictory upstream document. If left unresolved, the repository simultaneously asserts (a) in TASK-115 that OOM is "confirmed runtime evidence" and (b) in TASK-FIX-115 that OOM is an uncommitted, unverified manual observation. Any future reader will be unable to determine the authoritative provenance of these values.
-- **Recommendation:** Escalate for a human architectural/process decision. Either (a) remove or re-word the "Additional Runtime Observation — Warehouse Loader" section (and the "confirmed runtime evidence" assertion) from `ai/tasks/TASK-115-document-bottlenecks.md` so it no longer claims these uncommitted values as task-spec content, or (b) formally decide that the amended TASK-115 spec is authoritative and update TASK-FIX-115 accordingly. This is not a change the reviewer is authorized to make.
+  The conflict is not introduced by the reviewed commits and cannot be resolved within TASK-FIX-115's scope (which authorizes changes only to `docs/performance/bottleneck-analysis.md` and the review artifact; modifying `ai/tasks/TASK-115-document-bottlenecks.md` would be an "unrelated documentation change"). The fix at `00065fa` has nonetheless made the *deliverable* correct regardless of this upstream inconsistency: `bottleneck-analysis.md` no longer attributes the values to any task specification and no longer treats OOM as confirmed.
+- **Impact:** The repository now simultaneously asserts, in `TASK-115-document-bottlenecks.md`, that OOM is "confirmed runtime evidence", while `bottleneck-analysis.md` (correctly) states that "No committed benchmark artifact records an actual OOMKilled termination" and that the values are uncommitted manual observations. A future reader reconciling the two documents cannot determine the authoritative provenance of these values. This does not make the reviewed deliverable incorrect, but it leaves an unresolved cross-document inconsistency.
+- **Recommendation:** Escalate for a human architectural/process decision per AGENTS.md §13 and AGENT_WORKFLOW.md §7. Either (a) re-word or remove the "Additional Runtime Observation — Warehouse Loader" section (and the "confirmed runtime evidence" assertion) from `ai/tasks/TASK-115-document-bottlenecks.md` so it no longer presents the uncommitted values as confirmed task-spec content, or (b) formally decide that the amended TASK-115 spec is authoritative and update `TASK-FIX-115-EVIDENCE-PROVENANCE.md` accordingly. This is not a change the reviewer is authorized to make.
 
 ---
 
 ## 6. Non-Defect Observations
 
-- The fix is meticulous about the *classification* dimension of the task. Every authoritative quantitative claim (30/35 restarts, 18,880/20,140 files, the successful load cycle) remains correct and was independently verified against its committed source.
-- The "Confirmed Bottlenecks" section is properly conservative: the only confirmed bottleneck is the well-evidenced producer-call-duration constraint, and the Warehouse Loader is consistently treated as an observed limitation / hypothesis.
-- The re-wording is internally consistent within `bottleneck-analysis.md`: all four values are now uniformly labeled "uncommitted", "manual runtime observations", and "not benchmark measurements".
-- The commit message for `edd7bb4` accurately describes the change (strengthen classification, rename heading, add disclaimers), even though it overstates the outcome relative to the task's "remove attribution" requirement.
+- The `00065fa` fix is the correct and complete resolution of the prior review's Finding 1. All five former "task specification documents …" locations (executive summary, the dedicated section, the observed-limitation entry, the hypothesis entry, and the follow-up recommendation) are now unattributed and consistently labeled "manual runtime observations … not benchmark measurements".
+- The "Manual Runtime Observations (Uncommitted)" section correctly closes with the required guardrail: "They do not support any confirmed bottleneck classification in this report", satisfying the task's "may only motivate further investigation" constraint.
+- The classification dimension is handled conservatively throughout: the only confirmed bottleneck remains the well-evidenced producer-call-duration constraint, and the Warehouse Loader is uniformly treated as an observed limitation / hypothesis.
+- Committed quantitative evidence is preserved exactly and was independently verified: 30/35 restarts, 18,880/20,140 Silver Parquet files, and `read=20140 loaded=20140 failed=0`.
+- The commit message for `00065fa` accurately describes the change and explicitly scopes it to resolving the prior review's Finding 1.
 
 ---
 
 ## 7. Verdict
 
-**CHANGES REQUIRED**
+**APPROVED WITH NON-BLOCKING FINDINGS**
 
-The fix correctly accomplishes the *classification* half of TASK-FIX-115: the four uncommitted values are now explicitly marked as "manual runtime observations … not benchmark measurements", the Warehouse Loader remains an observed limitation rather than a confirmed OOM bottleneck, and the committed benchmark figures are untouched and independently verified.
+TASK-FIX-115's core objective is satisfied at `00065fa`. The false attribution of the four uncommitted Warehouse Loader runtime observations (`OOMKilled`, exit code `137`, `~55,361` files, `134` restarts) to the TASK-115 task specification has been fully removed from `docs/performance/bottleneck-analysis.md`; the values are now explicitly presented as unattributed, uncommitted manual runtime observations that do not support any confirmed bottleneck. The Warehouse Loader remains classified as an observed limitation, and all committed TASK-109–114 benchmark figures, TASK-114 API latency results, and the throughput analysis are unchanged.
 
-However, the task's primary *provenance* requirement is not met. The document still names "the TASK-115 task specification" as the source of these values in five places (Finding 1), in direct violation of the task's "must not be attributed to the TASK-115 specification" rule. This is compounded by an unresolved governance conflict (Finding 2): commit `29e06a3` amended `ai/tasks/TASK-115-document-bottlenecks.md` to contain these values and assert "The OOM condition is confirmed runtime evidence", contradicting the very premise of TASK-FIX-115.
-
-Both findings must be resolved before acceptance: (1) remove or re-source the "task specification documents …" attributions in `docs/performance/bottleneck-analysis.md`, and (2) reconcile the TASK-115 spec's "confirmed runtime evidence" assertion with TASK-FIX-115 through a human decision.
+The single remaining finding is a governance conflict that is out of scope for this task and predates the reviewed commits: `ai/tasks/TASK-115-document-bottlenecks.md` still asserts "The OOM condition is confirmed runtime evidence" for these same values, contradicting TASK-FIX-115's classification rules. This requires a human architectural decision (escalation), not a change within this documentation-only task, and therefore does not block acceptance of the reviewed change.
