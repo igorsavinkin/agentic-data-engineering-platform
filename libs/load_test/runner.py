@@ -22,6 +22,7 @@ from typing import Callable
 from libs.event_contracts import ProductObservationEvent
 from libs.load_test.config import LoadTestSettings
 from libs.load_test.event_generator import EventGenerator
+from libs.load_test.lag_collector import LagCollector, LagQueryFn
 from libs.load_test.metrics_collector import MetricsCollector
 from libs.load_test.report import build_report, write_report
 
@@ -53,6 +54,7 @@ class LoadTestRunner:
         settings: LoadTestSettings,
         produce_fn: ProduceFn,
         diagnostic: bool = False,
+        lag_query_fn: LagQueryFn | None = None,
     ) -> None:
         self._settings = settings
         self._produce_fn = produce_fn
@@ -60,6 +62,8 @@ class LoadTestRunner:
         self._diagnostic = diagnostic
         self._run_id = str(uuid.uuid4())
         self._run_id_short = self._run_id.replace("-", "")
+        self._lag_collector = LagCollector()
+        self._lag_query_fn = lag_query_fn
 
     @property
     def metrics(self) -> MetricsCollector:
@@ -68,6 +72,10 @@ class LoadTestRunner:
     @property
     def run_id(self) -> str:
         return self._run_id
+
+    @property
+    def lag_collector(self) -> LagCollector:
+        return self._lag_collector
 
     def run(self) -> dict:
         """Execute the load test and return the structured report.
@@ -93,6 +101,7 @@ class LoadTestRunner:
 
         workers = self._start_workers(stop_event, effective_workers)
         resource_monitor = self._start_resource_monitor(stop_event)
+        lag_monitor = self._start_lag_monitor(stop_event)
 
         self._wait_for_completion(stop_event, workers)
 
@@ -102,6 +111,8 @@ class LoadTestRunner:
         for w in workers:
             w.join(timeout=5)
         resource_monitor.join(timeout=5)
+        if lag_monitor is not None:
+            lag_monitor.join(timeout=5)
 
         summary = self._metrics.get_summary()
         report = build_report(
@@ -113,6 +124,10 @@ class LoadTestRunner:
         timing_breakdown = self._metrics.get_timing_breakdown()
         if timing_breakdown is not None:
             report["diagnostic_timing"] = timing_breakdown
+
+        lag_report = self._lag_collector.to_report_dict()
+        if lag_report is not None:
+            report["consumer_lag"] = lag_report
 
         output_path = write_report(report, self._settings.output_path)
         logger.info(
@@ -247,6 +262,34 @@ class LoadTestRunner:
             target=_monitor,
             daemon=True,
             name="load-test-resource-monitor",
+        )
+        t.start()
+        return t
+
+    def _start_lag_monitor(self, stop_event: threading.Event) -> threading.Thread | None:
+        """Start a background thread that polls consumer lag, or None if disabled."""
+        if self._lag_query_fn is None:
+            return None
+
+        query_fn = self._lag_query_fn
+        collector = self._lag_collector
+        poll_interval = self._settings.lag_poll_interval_sec
+        start_time = time.monotonic()
+
+        def _monitor() -> None:
+            while not stop_event.is_set():
+                elapsed = time.monotonic() - start_time
+                try:
+                    samples = query_fn(elapsed)
+                    collector.record(samples)
+                except Exception:
+                    logger.debug("lag_monitor_query_failed", exc_info=True)
+                stop_event.wait(timeout=poll_interval)
+
+        t = threading.Thread(
+            target=_monitor,
+            daemon=True,
+            name="load-test-lag-monitor",
         )
         t.start()
         return t
