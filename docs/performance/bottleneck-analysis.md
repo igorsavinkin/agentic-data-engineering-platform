@@ -39,12 +39,11 @@ Key findings:
 
 - The Warehouse Loader showed a pattern of frequent restarts: 30 restarts
   as of TASK-110 and 35 restarts as of TASK-111. The E2E report recorded
-  18,880 to 20,140 Silver Parquet files in the lake layer. The task
-  specification documents manual runtime observations — OOMKilled
-  termination, exit code 137, and higher restart and file counts from a
-  separate inspection — but these values are not benchmark measurements
-  and are not preserved in any committed benchmark artifact. The root
-  cause of the restart pattern is not established.
+  18,880 to 20,140 Silver Parquet files in the lake layer. Manual runtime
+  observations from a separate inspection — OOMKilled termination, exit
+  code 137, and higher restart and file counts — are not benchmark
+  measurements and are not preserved in any committed benchmark artifact.
+  The root cause of the restart pattern is not established.
 
 - No end-to-end downstream sustainability claim is supported by the
   collected evidence. Consumer lag monitoring was implemented but no
@@ -409,10 +408,9 @@ load cycle subsequently processed all 20,140 files
 
 ### Manual Runtime Observations (Uncommitted)
 
-The TASK-115 task specification documents the following manual runtime
-observations from a separate inspection. These are not benchmark
-measurements and are not independently verifiable from committed benchmark
-artifacts:
+The following manual runtime observations were recorded during a
+separate inspection. These are not benchmark measurements and are not
+independently verifiable from committed benchmark artifacts:
 
 - Termination reason: OOMKilled
 - Exit code: 137
@@ -544,11 +542,11 @@ report documented 18,880 to 20,140 Silver Parquet files in the lake layer
 and recorded that the warehouse loader encountered a processing error
 before ultimately completing a successful load of all 20,140 files.
 
-The TASK-115 task specification documents OOMKilled as the termination
-reason with higher restart and file counts from a later manual runtime
-inspection. These are uncommitted manual observations, not benchmark
-measurements. No committed benchmark artifact records an actual OOMKilled
-termination for the warehouse-loader.
+Manual runtime observations from a later inspection report OOMKilled as
+the termination reason with higher restart and file counts. These are
+uncommitted manual observations, not benchmark measurements. No committed
+benchmark artifact records an actual OOMKilled termination for the
+warehouse-loader.
 
 While the pod was Running during benchmark windows, the restart pattern
 indicates recurring failures that affect the Silver-to-PostgreSQL data
@@ -580,10 +578,9 @@ between runs, making single-cause attribution unreliable.
 **Classification: Hypothesis**
 
 The warehouse-loader has accumulated 30-35 restarts across benchmark
-observations. The task specification documents OOMKilled as the
-termination reason with 134 restarts and ~55,361 files from a later
-manual runtime inspection. These are uncommitted manual observations,
-not benchmark measurements.
+observations. Manual runtime observations from a later inspection report
+OOMKilled as the termination reason with 134 restarts and ~55,361 files.
+These are uncommitted manual observations, not benchmark measurements.
 
 If the restarts are caused by memory exhaustion, possible explanations
 include:
@@ -597,9 +594,8 @@ include:
 
 No memory profiling of the warehouse loader under representative load is
 available. The root cause has not been established. The OOMKilled
-termination reason documented in the task specification's manual runtime
-observations has not been verified against committed Kubernetes events or
-pod describe output.
+termination reason from the manual runtime observations has not been
+verified against committed Kubernetes events or pod describe output.
 
 ### 3. API Tail Latency Attribution
 
@@ -636,11 +632,10 @@ gap identified above.
 ### 1. Warehouse Loader Memory Profiling and Restart Diagnosis
 
 **Motivation:** The warehouse-loader has accumulated 30-35 restarts across
-benchmark observations. The task specification documents OOMKilled as the
-termination reason in its manual runtime observations section, but no
-committed benchmark artifact confirms this. The E2E report documented
-18,880-20,140 Silver Parquet files and a processing error before a
-successful load cycle.
+benchmark observations. Manual runtime observations report OOMKilled as
+the termination reason, but no committed benchmark artifact confirms
+this. The E2E report documented 18,880-20,140 Silver Parquet files and
+a processing error before a successful load cycle.
 
 **Recommended approach:** First, inspect Kubernetes events and pod
 describe output to determine the actual termination reason for the
