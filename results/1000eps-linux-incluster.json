@@ -1,0 +1,40 @@
+{
+  "configuration": {
+    "disable_auto_scaling": false,
+    "duration_sec": 60.0,
+    "kafka_bootstrap_servers": "kafka:29092",
+    "kafka_client_id": "load-test-harness",
+    "kafka_raw_topic": "products.raw.v1",
+    "output_path": "/tmp/1000eps-incluster.json",
+    "seed": 42,
+    "source_name": "load-test",
+    "target_events_per_sec": 1000.0,
+    "total_events": 0,
+    "worker_count": 1
+  },
+  "environment": {
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "python_version": "3.12.14"
+  },
+  "results": {
+    "duration_sec": 60.103,
+    "error_count": 0,
+    "latency_ms": {
+      "max": 684.766,
+      "mean": 89.494,
+      "min": 1.001,
+      "p50": 81.829,
+      "p90": 107.584,
+      "p95": 141.129,
+      "p99": 255.885
+    },
+    "produced_count": 20040,
+    "resource": {
+      "peak_rss_mb": 62.2,
+      "total_cpu_sec": 27.55
+    },
+    "throughput_events_per_sec": 333.43
+  },
+  "run_id": "6f4a7599-a9e1-4044-bb62-7ab5b809a8ed",
+  "timestamp": "2026-09-24T21:34:35.371662+00:00"
+}
