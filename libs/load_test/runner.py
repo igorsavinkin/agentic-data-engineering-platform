@@ -17,12 +17,14 @@ import math
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Callable
 
 from libs.event_contracts import ProductObservationEvent
 from libs.load_test.config import LoadTestSettings
 from libs.load_test.event_generator import EventGenerator
 from libs.load_test.lag_collector import LagCollector, LagQueryFn
+from libs.load_test.latency_collector import LatencyCollector, PgQueryFn
 from libs.load_test.metrics_collector import MetricsCollector
 from libs.load_test.report import build_report, write_report
 
@@ -55,6 +57,8 @@ class LoadTestRunner:
         produce_fn: ProduceFn,
         diagnostic: bool = False,
         lag_query_fn: LagQueryFn | None = None,
+        latency_collector: LatencyCollector | None = None,
+        pg_query_fn: PgQueryFn | None = None,
     ) -> None:
         self._settings = settings
         self._produce_fn = produce_fn
@@ -64,6 +68,8 @@ class LoadTestRunner:
         self._run_id_short = self._run_id.replace("-", "")
         self._lag_collector = LagCollector()
         self._lag_query_fn = lag_query_fn
+        self._latency_collector = latency_collector
+        self._pg_query_fn = pg_query_fn
 
     @property
     def metrics(self) -> MetricsCollector:
@@ -76,6 +82,10 @@ class LoadTestRunner:
     @property
     def lag_collector(self) -> LagCollector:
         return self._lag_collector
+
+    @property
+    def latency_collector(self) -> LatencyCollector | None:
+        return self._latency_collector
 
     def run(self) -> dict:
         """Execute the load test and return the structured report.
@@ -102,6 +112,7 @@ class LoadTestRunner:
         workers = self._start_workers(stop_event, effective_workers)
         resource_monitor = self._start_resource_monitor(stop_event)
         lag_monitor = self._start_lag_monitor(stop_event)
+        pg_monitor = self._start_pg_latency_monitor(stop_event)
 
         self._wait_for_completion(stop_event, workers)
 
@@ -113,10 +124,15 @@ class LoadTestRunner:
         resource_monitor.join(timeout=5)
         if lag_monitor is not None:
             lag_monitor.join(timeout=5)
+        if pg_monitor is not None:
+            pg_monitor.join(timeout=5)
 
         summary = self._metrics.get_summary()
+        settings_dict = self._settings.model_dump()
+        if settings_dict.get("pg_db_url"):
+            settings_dict["pg_db_url"] = "***redacted***"
         report = build_report(
-            settings_dict=self._settings.model_dump(),
+            settings_dict=settings_dict,
             metrics_summary=summary,
             run_id=self._run_id,
         )
@@ -128,6 +144,11 @@ class LoadTestRunner:
         lag_report = self._lag_collector.to_report_dict()
         if lag_report is not None:
             report["consumer_lag"] = lag_report
+
+        if self._latency_collector is not None:
+            latency_report = self._latency_collector.to_report_dict()
+            if latency_report is not None:
+                report["processing_latency"] = latency_report
 
         output_path = write_report(report, self._settings.output_path)
         logger.info(
@@ -198,6 +219,7 @@ class LoadTestRunner:
         stop_is_set = stop_event.is_set
         warn = logger.warning
         diagnostic = self._diagnostic
+        latency_collector = self._latency_collector
 
         iteration_start = monotonic()
 
@@ -214,6 +236,8 @@ class LoadTestRunner:
                 produce_fn(event)
                 t_produce_ms = (monotonic() - t0) * 1000
                 metrics.record_latency(event.event_id, t_produce_ms)
+                if latency_collector is not None:
+                    latency_collector.record_produce(event.event_id, datetime.now(timezone.utc))
             except Exception:
                 t_produce_ms = (monotonic() - t0) * 1000
                 metrics.record_error()
@@ -290,6 +314,44 @@ class LoadTestRunner:
             target=_monitor,
             daemon=True,
             name="load-test-lag-monitor",
+        )
+        t.start()
+        return t
+
+    def _start_pg_latency_monitor(self, stop_event: threading.Event) -> threading.Thread | None:
+        """Start a background thread that polls PostgreSQL for event arrivals."""
+        if self._pg_query_fn is None or self._latency_collector is None:
+            return None
+
+        query_fn = self._pg_query_fn
+        collector = self._latency_collector
+        poll_interval = self._settings.pg_latency_poll_interval_sec
+
+        def _monitor() -> None:
+            while not stop_event.is_set():
+                try:
+                    pending = collector.get_pending_event_ids()
+                    if pending:
+                        found = query_fn(pending)
+                        if found:
+                            collector.record_pg_arrivals(found, datetime.now(timezone.utc))
+                except Exception:
+                    logger.warning("pg_latency_probe_failed", exc_info=True)
+                stop_event.wait(timeout=poll_interval)
+
+            final_pending = collector.get_pending_event_ids()
+            if final_pending:
+                try:
+                    found = query_fn(final_pending)
+                    if found:
+                        collector.record_pg_arrivals(found, datetime.now(timezone.utc))
+                except Exception:
+                    logger.warning("pg_latency_final_probe_failed", exc_info=True)
+
+        t = threading.Thread(
+            target=_monitor,
+            daemon=True,
+            name="load-test-pg-latency-monitor",
         )
         t.start()
         return t
