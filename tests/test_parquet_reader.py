@@ -64,7 +64,7 @@ def sample_objects() -> list[str]:
 # internally, making the hang effectively infinite. Ctrl+C often fails to
 # terminate pytest cleanly, leaving orphaned processes.
 @pytest.fixture
-def mock_scan_parquet(monkeypatch):
+def mock_scan_parquet(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch pl.scan_parquet to return an in-memory LazyFrame.
 
     Prevents real S3/MinIO I/O during tests that trigger collect().
@@ -79,7 +79,7 @@ def mock_scan_parquet(monkeypatch):
         }
     )
 
-    def _fake_scan_parquet(*args, **kwargs):
+    def _fake_scan_parquet(*args: object, **kwargs: object) -> pl.LazyFrame:
         return fake_df.lazy()
 
     monkeypatch.setattr(scanner_module.pl, "scan_parquet", _fake_scan_parquet)
@@ -272,7 +272,7 @@ class TestLazyScanner:
             scanner.scan()
 
     def test_count_returns_row_count(
-        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet: None
     ) -> None:
         """Count method returns number of rows without full materialization."""
 
@@ -340,7 +340,7 @@ class TestLakeReader:
         assert all(isinstance(p, type(partitions[0])) for p in partitions)
 
     def test_read_returns_dataframe(
-        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet: None
     ) -> None:
         """read() returns a DataFrame (empty if files don't exist)."""
         mock_storage.list_objects.return_value = sample_objects
@@ -358,7 +358,7 @@ class TestLakeReader:
         assert isinstance(df, pl.DataFrame)
 
     def test_read_with_column_projection(
-        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet: None
     ) -> None:
         """read() respects column projection in filter."""
         mock_storage.list_objects.return_value = sample_objects
@@ -415,7 +415,7 @@ class TestLakeReader:
         mock_storage.check_health.assert_called_once()
 
     def test_bucket_override(
-        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet: None
     ) -> None:
         """read() can override default bucket via parameter."""
         mock_storage.list_objects.return_value = sample_objects
@@ -475,7 +475,7 @@ class TestEndToEnd:
     """End-to-end style tests verifying API composition."""
 
     def test_discover_then_read_workflow(
-        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet
+        self, mock_storage: MagicMock, sample_objects: list[str], mock_scan_parquet: None
     ) -> None:
         """Typical workflow: discover partitions, then read matching data."""
         mock_storage.list_objects.return_value = sample_objects

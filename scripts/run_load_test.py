@@ -120,6 +120,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Collect per-iteration timing breakdown (gen, produce, wait, overshoot, total).",
     )
+    parser.add_argument(
+        "--monitor-group",
+        action="append",
+        default=None,
+        dest="lag_consumer_groups",
+        help=(
+            "Consumer group ID to monitor for lag (repeatable). "
+            "Example: --monitor-group processor --monitor-group raw-writer"
+        ),
+    )
+    parser.add_argument(
+        "--lag-interval",
+        type=float,
+        default=None,
+        help="Lag poll interval in seconds (default: 5.0).",
+    )
+    parser.add_argument(
+        "--lag-partitions",
+        type=int,
+        default=None,
+        help="Number of partitions per monitored topic (default: 3).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -143,6 +165,12 @@ def main(argv: list[str] | None = None) -> int:
         overrides["source_name"] = args.source
     if args.seed is not None:
         overrides["seed"] = args.seed
+    if args.lag_consumer_groups:
+        overrides["lag_consumer_groups"] = args.lag_consumer_groups
+    if args.lag_interval is not None:
+        overrides["lag_poll_interval_sec"] = args.lag_interval
+    if args.lag_partitions is not None:
+        overrides["lag_partition_count"] = args.lag_partitions
 
     settings = load_settings(LoadTestSettings)
     if overrides:
@@ -154,10 +182,30 @@ def main(argv: list[str] | None = None) -> int:
     else:
         produce_fn, producer = _build_kafka_produce_fn(settings)
 
+    lag_query_fn = None
+    if settings.lag_consumer_groups and not args.dry_run:
+        from libs.load_test.kafka_lag_probe import create_lag_query_fn
+
+        lag_query_fn = create_lag_query_fn(
+            bootstrap_servers=settings.kafka_bootstrap_servers,
+            consumer_groups=settings.lag_consumer_groups,
+            topics=settings.lag_topics,
+            partition_count=settings.lag_partition_count,
+        )
+        logging.getLogger(__name__).info(
+            "lag_monitoring_enabled",
+            extra={
+                "consumer_groups": settings.lag_consumer_groups,
+                "topics": settings.lag_topics,
+                "poll_interval_sec": settings.lag_poll_interval_sec,
+            },
+        )
+
     runner = LoadTestRunner(
         settings=settings,
         produce_fn=produce_fn,
         diagnostic=args.diagnostic,
+        lag_query_fn=lag_query_fn,
     )
 
     try:
