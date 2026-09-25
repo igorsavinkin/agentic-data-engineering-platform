@@ -66,15 +66,24 @@ def _parse_task_number(name: str) -> int | None:
     return None
 
 
+_ALLOWED_TASK_PREFIXES = ("TASK-K8S-FIX-", "TASK-FIX-", "TASK-DOCS-")
+
+
+def is_valid_task_filename(name: str) -> bool:
+    if not name.startswith("TASK-") or not name.endswith(".md"):
+        return False
+    if _parse_task_number(name) is not None:
+        return True
+    return any(name.startswith(prefix) for prefix in _ALLOWED_TASK_PREFIXES)
+
+
 def check_task_files(errors: list[str]) -> int:
     task_dir = ROOT / "ai" / "tasks"
     task_files = sorted(task_dir.glob("TASK-*.md")) if task_dir.is_dir() else []
     task_numbers: set[int] = set()
     for path in task_files:
         number = _parse_task_number(path.name)
-        if number is None and not (
-            path.name.startswith("TASK-K8S-FIX-") or path.name.startswith("TASK-FIX-")
-        ):
+        if number is None and not is_valid_task_filename(path.name):
             errors.append(f"unexpected task file name: {path.name}")
         elif number is not None:
             task_numbers.add(number)
