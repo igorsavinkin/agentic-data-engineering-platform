@@ -37,10 +37,13 @@ Key findings:
   had a p95 of 1232.959 ms and p99 of 1951.586 ms with only 11 samples
   per endpoint.
 
-- The Warehouse Loader was observed in OOMKilled state with exit code 137,
-  134 pod restarts, and approximately 55,361 Silver Parquet files
-  discovered before processing. The root cause of the OOM condition is not
-  established.
+- The Warehouse Loader showed a pattern of frequent restarts: 30 restarts
+  as of TASK-110 and 35 restarts as of TASK-111. The E2E report recorded
+  18,880 to 20,140 Silver Parquet files in the lake layer. The task
+  specification reports an OOMKilled termination with exit code 137 and
+  higher restart and file counts from a separate runtime inspection, but
+  these figures are not present in committed benchmark artifacts. The root
+  cause of the restart pattern is not established.
 
 - No end-to-end downstream sustainability claim is supported by the
   collected evidence. Consumer lag monitoring was implemented but no
@@ -377,45 +380,68 @@ PostgreSQL, specific SQL queries, networking, or application code.
 
 ## Resource / Failure Analysis
 
-### Warehouse Loader OOMKilled
+### Warehouse Loader Restart Pattern
 
-During runtime verification, the Warehouse Loader was observed with:
+Committed benchmark evidence records the following warehouse-loader
+restart counts:
 
-| Observation | Value |
-|---|---|
-| Termination reason | OOMKilled |
-| Exit code | 137 |
-| Silver Parquet files discovered | ~55,361 |
-| Pod restarts at inspection point | 134 |
-| Memory limit (per kubernetes-troubleshooting.md) | 512Mi |
+| Observation Point | Restart Count | Source |
+|---|---:|---|
+| TASK-110 pre-benchmark | 30 | `docs/benchmark-500-eps.md` |
+| TASK-111 pre-benchmark | 35 | `docs/benchmark-1000-eps.md` |
 
-The OOM condition is confirmed runtime evidence. The pod was terminated by
-the kernel because the container exceeded its 512Mi memory limit.
+The warehouse-loader memory limit is 512Mi per the Kubernetes
+troubleshooting guide (`docs/kubernetes-troubleshooting.md`).
 
-### Restart Pattern
+The E2E source-to-PostgreSQL report (`docs/e2e/E2E-SOURCE-TO-POSTGRESQL-2026-09-24.md`)
+recorded the following Silver Parquet file counts in the lake layer:
 
-The warehouse-loader showed a pattern of frequent restarts across multiple
-benchmark observations:
+| Checkpoint | File Count | Source |
+|---|---:|---|
+| Initial discovery | 18,880 | E2E report, section 8 |
+| After migration fix | 20,140 | E2E report, section 11 |
 
-- TASK-110 pre-benchmark: 30 restarts, last restart 3 minutes before
-  benchmark
-- TASK-111 pre-benchmark: 35 restarts, last restart 23 hours before
-  benchmark
-- Runtime verification: 134 restarts observed at inspection point
+The E2E report also documents that the warehouse loader encountered an
+error before processing the initial 18,880 files, and that a successful
+load cycle subsequently processed all 20,140 files
+(`read=20140 loaded=20140 failed=0`).
 
-The restart frequency indicates a recurring failure condition, not an
-isolated incident.
+### Task Specification Runtime Observations
+
+The TASK-115 task specification reports additional runtime observations
+from a separate inspection:
+
+- Termination reason: OOMKilled
+- Exit code: 137
+- Approximately 55,361 Silver Parquet files discovered before processing
+- 134 pod restarts observed at the inspection point
+
+These figures are not present in any committed benchmark artifact, E2E
+report, or troubleshooting document in the repository. The committed
+evidence shows 30-35 restarts and 18,880-20,140 files. The discrepancy
+may reflect a later inspection point or additional pipeline activity after
+the benchmark runs, but no committed artifact documents the higher values.
+
+This report uses the committed evidence as the authoritative source for
+quantitative claims, per the task constraint "Do not invent benchmark
+numbers."
 
 ### Root Cause Status
 
-The root cause of the Warehouse Loader OOM is NOT established.
+The root cause of the warehouse-loader restart pattern is NOT established.
+
+The `kubernetes-troubleshooting.md` guide lists OOMKilled as a possible
+cause of pod termination and notes "Large batch processing in
+warehouse-loader" as a common cause. However, no committed artifact
+records an actual OOMKilled termination or exit code 137 for the
+warehouse-loader.
 
 The following potential contributors are noted as hypotheses only. None
 has been demonstrated through profiling or isolated testing:
 
-- The approximately 55,361 Silver Parquet files discovered before
-  processing may contribute to memory pressure, but no profiling data
-  establishes the memory cost of file discovery or processing.
+- The Silver Parquet file count (18,880-20,140 in committed evidence) may
+  contribute to memory pressure during file discovery and scanning, but no
+  profiling data establishes the memory cost.
 - Polars lazy scanning behavior under large file counts has not been
   profiled.
 - The 512Mi memory limit may be insufficient for the workload, but no
@@ -456,19 +482,6 @@ constraint on the load generator.
 
 **Scope:** This is a load-generator-side constraint. It does not establish
 the maximum capacity of Kafka or the downstream pipeline.
-
-### 2. Warehouse Loader Memory Exhaustion
-
-**Classification: Confirmed bottleneck**
-
-**Evidence:** The Warehouse Loader has been terminated with OOMKilled
-(exit code 137) repeatedly, accumulating 134 restarts at the inspection
-point. The container memory limit is 512Mi. The OOM termination is a
-confirmed kernel action, not an application-level error.
-
-**Scope:** The warehouse loader cannot sustain operation under the current
-workload without being killed and restarted. This disrupts the
-Silver-to-PostgreSQL path and contributes to end-to-end latency.
 
 
 ## Observed Limitations
@@ -521,13 +534,21 @@ empty).
 
 **Classification: Observed limitation**
 
-The warehouse-loader accumulated 30-134 restarts across benchmark
-observation windows. While the pod was Running during benchmark windows,
-the restart pattern indicates recurring failures that affect the
-Silver-to-PostgreSQL data path. The relationship between the restart
-pattern and the OOMKilled terminations has not been explicitly confirmed
-through log analysis, though OOMKilled is the documented termination
-reason.
+The warehouse-loader accumulated 30 restarts (as of TASK-110) and 35
+restarts (as of TASK-111) across benchmark observation windows. The E2E
+report documented 18,880 to 20,140 Silver Parquet files in the lake layer
+and recorded that the warehouse loader encountered a processing error
+before ultimately completing a successful load of all 20,140 files.
+
+The TASK-115 task specification reports OOMKilled as the termination
+reason with higher restart and file counts from a later inspection, but
+these figures are not present in committed artifacts. No committed artifact
+records an actual OOMKilled termination for the warehouse-loader.
+
+While the pod was Running during benchmark windows, the restart pattern
+indicates recurring failures that affect the Silver-to-PostgreSQL data
+path. The root cause has not been established through profiling or log
+analysis.
 
 
 ## Hypotheses Requiring Investigation
@@ -549,21 +570,29 @@ No isolated experiment has tested these explanations independently. The
 benchmark documents note that multiple environmental variables differ
 between runs, making single-cause attribution unreliable.
 
-### 2. Warehouse Loader OOM Root Cause
+### 2. Warehouse Loader Restart Root Cause
 
 **Classification: Hypothesis**
 
-The Warehouse Loader OOM may be related to:
+The warehouse-loader has accumulated 30-35 restarts across benchmark
+observations. The task specification reports OOMKilled as the termination
+reason with 134 restarts and ~55,361 files from a later inspection, but
+these figures are not in committed artifacts.
 
-- The approximately 55,361 Silver Parquet files discovered before
-  processing, if the file discovery or scanning process loads excessive
-  metadata into memory
-- Polars lazy scanning behavior accumulating unmaterialized query plans
-- An undersized memory limit (512Mi) for the workload profile
-- Batch insert sizing when writing to PostgreSQL
+If the restarts are caused by memory exhaustion, possible explanations
+include:
+
+- The Silver Parquet file count (18,880-20,140 in committed evidence,
+  potentially higher at later inspection points) may cause excessive
+  memory usage during file discovery or scanning.
+- Polars lazy scanning behavior accumulating unmaterialized query plans.
+- An undersized memory limit (512Mi) for the workload profile.
+- Batch insert sizing when writing to PostgreSQL.
 
 No memory profiling of the warehouse loader under representative load is
-available. The root cause has not been established.
+available. The root cause has not been established. The OOMKilled
+termination reason reported in the task specification has not been
+verified against committed Kubernetes events or pod describe output.
 
 ### 3. API Tail Latency Attribution
 
@@ -597,13 +626,17 @@ The following investigations are recommended based on the evidence gathered
 in this analysis. Each recommendation is grounded in a specific evidence
 gap identified above.
 
-### 1. Warehouse Loader Memory Profiling
+### 1. Warehouse Loader Memory Profiling and Restart Diagnosis
 
-**Motivation:** The Warehouse Loader has been OOMKilled 134 times with
-512Mi memory limit and ~55,361 Silver Parquet files discovered. The root
-cause is unknown.
+**Motivation:** The warehouse-loader has accumulated 30-35 restarts across
+benchmark observations. The task specification reports OOMKilled as the
+termination reason, but no committed artifact confirms this. The E2E
+report documented 18,880-20,140 Silver Parquet files and a processing
+error before a successful load cycle.
 
-**Recommended approach:** Profile memory usage of the warehouse loader
+**Recommended approach:** First, inspect Kubernetes events and pod
+describe output to determine the actual termination reason for the
+warehouse-loader restarts. If OOMKilled is confirmed, profile memory usage
 during a representative workload. Measure memory consumption as a function
 of the number of discovered Parquet files. Determine whether the file
 discovery phase, the Parquet scanning phase, or the PostgreSQL write phase
