@@ -10,7 +10,7 @@ from services.api.config import APISettings, DatabaseSettings
 class TestDatabaseSettings:
     def test_default_url(self) -> None:
         settings = DatabaseSettings()
-        assert settings.url == "postgresql://postgres@localhost:5432/warehouse"
+        assert settings.url == "postgresql+psycopg2://postgres@localhost:5432/warehouse"
 
     def test_custom_url(self) -> None:
         settings = DatabaseSettings(url="sqlite://")
@@ -24,7 +24,10 @@ class TestDatabaseSettings:
         monkeypatch.setenv("WAREHOUSE_DB_PASSWORD", "custom_pass")
 
         settings = DatabaseSettings.from_env()
-        assert settings.url == "postgresql://custom_user:custom_pass@custom-host:5433/custom_db"
+        assert (
+            settings.url
+            == "postgresql+psycopg2://custom_user:custom_pass@custom-host:5433/custom_db"
+        )
 
     def test_from_env_without_password(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("WAREHOUSE_DB_HOST", "db")
@@ -34,7 +37,7 @@ class TestDatabaseSettings:
         monkeypatch.delenv("WAREHOUSE_DB_PASSWORD", raising=False)
 
         settings = DatabaseSettings.from_env()
-        assert settings.url == "postgresql://usr@db:5432/warehouse"
+        assert settings.url == "postgresql+psycopg2://usr@db:5432/warehouse"
 
     def test_frozen(self) -> None:
         settings = DatabaseSettings()
