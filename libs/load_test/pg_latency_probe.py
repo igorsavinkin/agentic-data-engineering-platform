@@ -43,24 +43,29 @@ def create_pg_probe_fn(
     """
     dsn = db_url.replace("postgresql+psycopg2://", "postgresql://")
 
+    _BATCH_SIZE = 1000
+
     def probe(event_ids: list[str]) -> list[str]:
         if not event_ids:
             return []
         conn = psycopg2.connect(dsn)
         conn.autocommit = True
         try:
+            found: list[str] = []
             cur = conn.cursor()
-            placeholders = ", ".join(["%s"] * len(event_ids))
-            query = (
-                "SELECT DISTINCT po.event_id "
-                "FROM product_observations po "
-                "JOIN source_products sp ON po.source_product_id = sp.id "
-                "JOIN sources s ON sp.source_id = s.id "
-                f"WHERE s.name = %s AND po.event_id IN ({placeholders})"
-            )
-            params = [source, *event_ids]
-            cur.execute(query, params)
-            found = [row[0] for row in cur.fetchall()]
+            for batch_start in range(0, len(event_ids), _BATCH_SIZE):
+                batch = event_ids[batch_start : batch_start + _BATCH_SIZE]
+                placeholders = ", ".join(["%s"] * len(batch))
+                query = (
+                    "SELECT DISTINCT po.event_id "
+                    "FROM product_observations po "
+                    "JOIN source_products sp ON po.source_product_id = sp.id "
+                    "JOIN sources s ON sp.source_id = s.id "
+                    f"WHERE s.name = %s AND po.event_id IN ({placeholders})"
+                )
+                params = [source, *batch]
+                cur.execute(query, params)
+                found.extend(row[0] for row in cur.fetchall())
             cur.close()
             return found
         finally:

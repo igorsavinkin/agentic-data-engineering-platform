@@ -176,6 +176,20 @@ class TestLatencyCollector:
         assert report["unresolved"] == 2
         assert report["sample_count"] == 1
 
+    def test_report_produced_but_no_arrivals(self) -> None:
+        c = LatencyCollector()
+        t0 = datetime(2026, 9, 25, 12, 0, 0, tzinfo=timezone.utc)
+        c.record_produce("e1", t0)
+        c.record_produce("e2", t0)
+
+        report = c.to_report_dict()
+        assert report is not None
+        assert report["total_produced"] == 2
+        assert report["total_resolved"] == 0
+        assert report["unresolved"] == 2
+        assert report["sample_count"] == 0
+        assert report["latency_ms"] is None
+
 
 class TestComputePercentiles:
     def test_empty(self) -> None:

@@ -128,14 +128,23 @@ class LatencyCollector:
             return list(self._samples)
 
     def to_report_dict(self) -> dict | None:
-        """Produce a JSON-serializable latency report, or None if no data."""
+        """Produce a JSON-serializable latency report, or None if probing was unused."""
         with self._lock:
             samples = list(self._samples)
             total_produced = len(self._produce_records)
             total_resolved = len(self._resolved_ids)
 
-        if not samples:
+        if total_produced == 0:
             return None
+
+        if not samples:
+            return {
+                "total_produced": total_produced,
+                "total_resolved": 0,
+                "unresolved": total_produced,
+                "sample_count": 0,
+                "latency_ms": None,
+            }
 
         latencies = sorted(s.latency_ms for s in samples)
         stats = _compute_percentiles(latencies)

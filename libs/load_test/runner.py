@@ -128,8 +128,11 @@ class LoadTestRunner:
             pg_monitor.join(timeout=5)
 
         summary = self._metrics.get_summary()
+        settings_dict = self._settings.model_dump()
+        if settings_dict.get("pg_db_url"):
+            settings_dict["pg_db_url"] = "***redacted***"
         report = build_report(
-            settings_dict=self._settings.model_dump(),
+            settings_dict=settings_dict,
             metrics_summary=summary,
             run_id=self._run_id,
         )
@@ -333,7 +336,7 @@ class LoadTestRunner:
                         if found:
                             collector.record_pg_arrivals(found, datetime.now(timezone.utc))
                 except Exception:
-                    logger.debug("pg_latency_probe_failed", exc_info=True)
+                    logger.warning("pg_latency_probe_failed", exc_info=True)
                 stop_event.wait(timeout=poll_interval)
 
             final_pending = collector.get_pending_event_ids()
@@ -343,7 +346,7 @@ class LoadTestRunner:
                     if found:
                         collector.record_pg_arrivals(found, datetime.now(timezone.utc))
                 except Exception:
-                    logger.debug("pg_latency_final_probe_failed", exc_info=True)
+                    logger.warning("pg_latency_final_probe_failed", exc_info=True)
 
         t = threading.Thread(
             target=_monitor,

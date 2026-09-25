@@ -178,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
         overrides["output_path"] = args.output
     if args.source is not None:
         overrides["source_name"] = args.source
+        if args.pg_url is not None or not overrides.get("pg_latency_source"):
+            overrides.setdefault("pg_latency_source", args.source)
     if args.seed is not None:
         overrides["seed"] = args.seed
     if args.lag_consumer_groups:
@@ -225,6 +227,15 @@ def main(argv: list[str] | None = None) -> int:
     if settings.pg_db_url and not args.dry_run:
         from libs.load_test.latency_collector import LatencyCollector
         from libs.load_test.pg_latency_probe import create_pg_probe_fn
+
+        if settings.pg_latency_source != settings.source_name:
+            logging.getLogger(__name__).warning(
+                "pg_latency_source_mismatch",
+                extra={
+                    "pg_latency_source": settings.pg_latency_source,
+                    "source_name": settings.source_name,
+                },
+            )
 
         latency_collector = LatencyCollector()
         pg_query_fn = create_pg_probe_fn(

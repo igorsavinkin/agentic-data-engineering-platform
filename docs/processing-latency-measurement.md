@@ -48,9 +48,11 @@ Worker produces event
 
 ### Pipeline Stage Breakdown
 
-The total end-to-end latency spans these stages:
+The total end-to-end latency spans these stages.  The ranges below are
+**illustrative estimates**, not measured values — actual latency depends
+on network conditions, batch timing, and system load:
 
-| Stage | Typical Latency | Description |
+| Stage | Expected Latency | Description |
 |---|---|---|
 | Produce → Kafka ack | 1–50 ms | Network + broker fsync |
 | Kafka → Processor | 0–100 ms | Consumer poll interval + processing |
