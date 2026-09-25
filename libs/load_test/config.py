@@ -62,3 +62,24 @@ class LoadTestSettings(BaseAppSettings):
         default=False,
         description="If true, use exactly worker_count workers (skip auto-scaler).",
     )
+    lag_consumer_groups: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Consumer group IDs to monitor for lag during the load test. "
+            "Empty list disables lag monitoring."
+        ),
+    )
+    lag_topics: list[str] = Field(
+        default_factory=lambda: ["products.raw.v1"],
+        description="Topics to include in consumer-lag queries.",
+    )
+    lag_poll_interval_sec: float = Field(
+        default=5.0,
+        gt=0,
+        description="Interval between consumer-lag queries in seconds.",
+    )
+    lag_partition_count: int = Field(
+        default=3,
+        ge=1,
+        description="Number of partitions per monitored topic.",
+    )
