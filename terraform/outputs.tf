@@ -42,3 +42,8 @@ output "ecr_repositories" {
   description = "ECR repository URLs"
   value       = module.ecr.repository_urls
 }
+
+output "iam_service_role_arns" {
+  description = "IAM service role ARNs keyed by service name"
+  value       = module.iam.service_role_arns
+}
