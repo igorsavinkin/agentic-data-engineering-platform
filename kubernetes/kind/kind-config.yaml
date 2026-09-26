@@ -39,3 +39,7 @@ nodes:
       - containerPort: 30080
         hostPort: 8000
         protocol: TCP
+      # Airflow webserver — matches airflow-webserver service (TASK-134)
+      - containerPort: 30088
+        hostPort: 8080
+        protocol: TCP

@@ -152,13 +152,9 @@ spec:
           livenessProbe:
             exec:
               command:
-                - airflow
-                - jobs
-                - check
-                - --job-type
-                - SchedulerJob
-                - --hostname
-                - "$(hostname)"
+                - python
+                - -c
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: {{ .Values.airflow.scheduler.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.airflow.scheduler.livenessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.airflow.scheduler.livenessProbe.timeoutSeconds }}

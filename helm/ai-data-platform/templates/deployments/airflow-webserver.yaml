@@ -75,7 +75,17 @@ spec:
         - name: webserver
           image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          args: ["webserver"]
+          command:
+            - gunicorn
+            - "airflow.www.app:create_app()"
+            - "-b"
+            - "0.0.0.0:8080"
+            - "-w"
+            - "2"
+            - "-t"
+            - "300"
+            - "-k"
+            - "sync"
           ports:
             - containerPort: {{ .Values.airflow.webserver.port }}
               protocol: TCP
@@ -104,6 +114,10 @@ spec:
                 secretKeyRef:
                   name: airflow-keys
                   key: secret-key
+            - name: AIRFLOW__WEBSERVER__WORKERS
+              value: "2"
+            - name: AIRFLOW__WEBSERVER__WORKER_TIMEOUT
+              value: "300"
             - name: WAREHOUSE_DB_HOST
               valueFrom:
                 configMapKeyRef:

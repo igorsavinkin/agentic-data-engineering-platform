@@ -321,14 +321,14 @@ airflow:
         cpu: 500m
         memory: 1Gi
     livenessProbe:
-      initialDelaySeconds: 90
-      periodSeconds: 30
-      timeoutSeconds: 10
-      failureThreshold: 3
+      initialDelaySeconds: 180
+      periodSeconds: 60
+      timeoutSeconds: 30
+      failureThreshold: 5
     readinessProbe:
-      initialDelaySeconds: 30
-      periodSeconds: 15
-      timeoutSeconds: 10
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 30
   webserver:
     replicas: 1
     port: 8080
