@@ -69,7 +69,9 @@ resource "aws_internet_gateway" "this" {
 }
 
 # ------------------------------------------------------------------------------
-# NAT gateway — single NAT in the first public subnet
+# NAT gateway — single NAT in the first public subnet.
+# Single-AZ NAT is a deliberate cost tradeoff for dev/staging; production
+# should add one NAT per AZ for high availability.
 # ------------------------------------------------------------------------------
 
 resource "aws_eip" "nat" {
@@ -163,7 +165,7 @@ resource "aws_security_group" "eks_cluster" {
 
 resource "aws_vpc_security_group_ingress_rule" "eks_cluster_api" {
   security_group_id = aws_security_group.eks_cluster.id
-  description       = "EKS API from worker nodes"
+  description       = "EKS API from VPC"
   from_port         = 443
   to_port           = 443
   ip_protocol       = "tcp"
@@ -194,12 +196,12 @@ resource "aws_security_group" "eks_nodes" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "eks_nodes_self" {
-  security_group_id = aws_security_group.eks_nodes.id
-  description       = "Node-to-node communication"
-  from_port         = 0
-  to_port           = 0
-  ip_protocol       = "-1"
-  cidr_ipv4         = var.vpc_cidr
+  security_group_id            = aws_security_group.eks_nodes.id
+  description                  = "Node-to-node communication"
+  from_port                    = 0
+  to_port                      = 0
+  ip_protocol                  = "-1"
+  referenced_security_group_id = aws_security_group.eks_nodes.id
 }
 
 resource "aws_vpc_security_group_ingress_rule" "eks_nodes_from_cluster" {
