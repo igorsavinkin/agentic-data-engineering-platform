@@ -33,6 +33,13 @@ All six success criteria demonstrated with observed runtime evidence.
 | PostgreSQL database | `warehouse` |
 | PostgreSQL user | `postgres` (no password) |
 | PostgreSQL service | ClusterIP `10.96.189.70:5432` |
+
+**Note:** The live cluster accepts connections with an empty password for the
+`postgres` user (verified via `kubectl exec` and pod env vars:
+`POSTGRES_PASSWORD=`). This diverges from the committed Kubernetes manifests
+(`kubernetes/secrets/database-credentials.yaml` specifies `db-password: cG9zdGdyZXM=`
+which decodes to `postgres`). The runtime verification reflects the actual
+observed cluster state, not the manifest definitions.
 | Docker | Docker Desktop (Windows) |
 | Airflow image | `apache/airflow:2.10.4-python3.12` |
 | Airflow executor | SequentialExecutor (task test mode) |
@@ -255,10 +262,12 @@ ensures idempotency.
    `DailyMetricsCalculator`, and persists results via `MetricsResultWriter`
    with replay-safe identity.
 
-2. **Airflow is not deployed in Kubernetes.** The local runtime uses Docker
-   containers (as defined in `docker-compose.yml`) for Airflow, while the
-   warehouse database runs in Kubernetes. Connectivity requires
-   `kubectl port-forward` + `host.docker.internal`.
+2. **Airflow is not deployed in Kubernetes.** The verification used a
+   standalone `docker run` with SequentialExecutor and ephemeral SQLite
+   metadata -- not `docker compose up` (which uses LocalExecutor and
+   PostgreSQL metadata). The warehouse database runs in Kubernetes.
+   Connectivity requires `kubectl port-forward` + `host.docker.internal`.
+   The `docker-compose.yml` definition was not used for this test.
 
 3. **Airflow image missing `polars`.** The standard `apache/airflow:2.10.4-python3.12`
    image does not include `polars`. The DAG requires it at import time.
@@ -266,8 +275,12 @@ ensures idempotency.
    or a custom Dockerfile extending the base image.
 
 4. **Other DAGs have unmet dependencies.** `ingestion_health_dag.py` and
-   `parquet_compaction_dag.py` fail to load due to missing `pydantic_settings`.
-   This is a separate issue and does not affect `build_daily_metrics`.
+   `parquet_compaction_dag.py` fail to load in the base Airflow image. The
+   observed runtime error for `ingestion_health_dag.py` is triggered
+   indirectly: `libs/observability/__init__.py` imports `otel_config` which
+   requires `pydantic_settings`. For `parquet_compaction_dag.py`, the chain
+   goes through `libs/common/config.py`. This does not affect
+   `build_daily_metrics`.
 
 5. **WAREHOUSE_DB_* vs AIRFLOW_VAR_*.** The DAG uses
    `MetricsPersistenceConfig.from_env()` which reads `WAREHOUSE_DB_*`
@@ -277,9 +290,16 @@ ensures idempotency.
    `WAREHOUSE_DB_HOST` must be set as an actual environment variable in the
    Airflow container, not just as an Airflow Variable.
 
-6. **All observations come from a single source (fake_store).** The 29782
-   observations in the warehouse are all from the `fake_store` source, which
-   is reflected in the `source_observation_count` metric.
+6. **Tested observations come from a single source (fake_store).** The
+   `source_observation_count` metric for 2026-09-23 shows all 12140
+   observations from that date are from the `fake_store` source.
+
+7. **`metrics_written` reflects attempted rows, not actual inserts.** The
+   DAG reports `metrics_written: 6` on both the first run and the replay.
+   However, `MetricsResultWriter.write_metrics` sets `written = len(values)`
+   unconditionally. On replay, `ON CONFLICT DO NOTHING` inserts 0 rows, but
+   the return value still reports 6. The DB count (6, unchanged) is the
+   authoritative idempotency evidence.
 
 ## Follow-up Required
 
