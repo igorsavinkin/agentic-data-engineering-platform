@@ -81,7 +81,7 @@ VPC (var.vpc_cidr, default 10.0.0.0/16)
 │   └── RDS PostgreSQL instances
 └── Security groups
     ├── eks-cluster — API port 443 from VPC CIDR
-    ├── eks-nodes   — node-to-node within VPC, kubelet from cluster SG
+    ├── eks-nodes   — self-referencing node-to-node, kubelet from cluster SG
     └── rds         — port 5432 from eks-nodes SG only
 ```
 
