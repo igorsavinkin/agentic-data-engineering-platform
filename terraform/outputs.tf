@@ -23,6 +23,11 @@ output "eks_cluster_endpoint" {
   value       = module.eks.cluster_endpoint
 }
 
+output "eks_oidc_provider_arn" {
+  description = "EKS OIDC provider ARN for IRSA configuration"
+  value       = module.eks.oidc_provider_arn
+}
+
 output "rds_endpoint" {
   description = "RDS PostgreSQL endpoint"
   value       = module.rds.endpoint
