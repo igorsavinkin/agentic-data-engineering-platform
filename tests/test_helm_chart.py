@@ -263,17 +263,17 @@ class TestHelmLint:
 
 
 class TestHelmTemplate:
-    def test_default_renders_28_resources(self) -> None:
+    def test_default_renders_27_resources(self) -> None:
         docs = _helm_template()
-        assert len(docs) == 28
+        assert len(docs) == 27
 
-    def test_local_renders_28_resources(self) -> None:
+    def test_local_renders_27_resources(self) -> None:
         docs = _helm_template([VALUES_LOCAL])
-        assert len(docs) == 28
+        assert len(docs) == 27
 
-    def test_production_renders_29_resources(self) -> None:
+    def test_production_renders_28_resources(self) -> None:
         docs = _helm_template([VALUES_PROD])
-        assert len(docs) == 29
+        assert len(docs) == 28
 
     def test_default_has_no_ing(self) -> None:
         docs = _helm_template()
@@ -340,7 +340,7 @@ class TestHelmTemplate:
     def test_secrets_present(self) -> None:
         docs = _helm_template()
         secrets = [d for d in docs if d["kind"] == "Secret"]
-        assert len(secrets) == 5
+        assert len(secrets) == 4
 
     def test_hpa_targets_api_deployment(self) -> None:
         docs = _helm_template([VALUES_PROD])
