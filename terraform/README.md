@@ -67,11 +67,34 @@ terraform plan -var-file=envs/staging.tfvars -var="rds_password=CHANGE_ME"
 - State is encrypted at rest in S3.
 - State locking uses DynamoDB to prevent concurrent modifications.
 
+## Network Topology
+
+The networking module provisions a multi-AZ VPC with public and private tiers:
+
+```text
+VPC (var.vpc_cidr, default 10.0.0.0/16)
+├── Public subnets (one per AZ, /24 each)
+│   ├── NAT Gateway (first AZ)
+│   └── Internet Gateway → default route 0.0.0.0/0
+├── Private subnets (one per AZ, /24 each)
+│   ├── EKS worker nodes
+│   └── RDS PostgreSQL instances
+└── Security groups
+    ├── eks-cluster — API port 443 from VPC CIDR
+    ├── eks-nodes   — self-referencing node-to-node, kubelet from cluster SG
+    └── rds         — port 5432 from eks-nodes SG only
+```
+
+- Public subnets carry `kubernetes.io/role/elb` tags for external load balancers.
+- Private subnets carry `kubernetes.io/role/internal-elb` tags for internal load balancers.
+- RDS ingress is restricted to the EKS node security group (no direct VPC CIDR access).
+- All outbound traffic is permitted; inbound is scoped per security group.
+
 ## Implementation Progress
 
 | Module     | Task     | Status      |
 |------------|----------|-------------|
-| networking | TASK-117 | Pending     |
+| networking | TASK-117 | Complete    |
 | ecr        | TASK-118 | Pending     |
 | s3         | TASK-119 | Pending     |
 | rds        | TASK-120 | Pending     |
