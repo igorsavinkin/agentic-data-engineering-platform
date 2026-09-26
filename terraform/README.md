@@ -33,22 +33,31 @@ terraform/
 
 ## Usage
 
-Initialize with an environment:
+Initialize with an environment — each environment requires its own state key:
 
 ```bash
 cd terraform
-terraform init
+
+# Initialize with environment-specific state isolation
+terraform init -backend-config="key=envs/dev/terraform.tfstate"
+
 terraform plan -var-file=envs/dev.tfvars -var="rds_password=CHANGE_ME"
 terraform apply -var-file=envs/dev.tfvars -var="rds_password=CHANGE_ME"
 ```
 
 ## Environment Separation
 
-Each environment uses its own `.tfvars` file under `envs/`. State is isolated
-by configuring the backend key per environment at init time:
+Each environment uses its own `.tfvars` file under `envs/` and a separate
+state key. Always initialize with the environment-specific backend config:
 
 ```bash
+# Dev
 terraform init -backend-config="key=envs/dev/terraform.tfstate"
+terraform plan -var-file=envs/dev.tfvars -var="rds_password=CHANGE_ME"
+
+# Staging
+terraform init -backend-config="key=envs/staging/terraform.tfstate"
+terraform plan -var-file=envs/staging.tfvars -var="rds_password=CHANGE_ME"
 ```
 
 ## Security

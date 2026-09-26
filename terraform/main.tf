@@ -11,8 +11,8 @@ module "networking" {
 module "ecr" {
   source = "./modules/ecr"
 
-  project_name = var.project_name
-  environment  = var.environment
+  project_name  = var.project_name
+  environment   = var.environment
   service_names = var.ecr_service_names
   tags          = var.tags
 }
@@ -55,9 +55,9 @@ module "eks" {
 module "iam" {
   source = "./modules/iam"
 
-  project_name        = var.project_name
-  environment         = var.environment
-  eks_cluster_name    = module.eks.cluster_name
+  project_name          = var.project_name
+  environment           = var.environment
+  eks_cluster_name      = module.eks.cluster_name
   eks_oidc_provider_arn = module.eks.oidc_provider_arn
-  tags                = var.tags
+  tags                  = var.tags
 }
