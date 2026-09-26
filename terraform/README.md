@@ -102,13 +102,39 @@ The ECR module creates one repository per platform service with:
 
 Services: ingestion, processor, raw-writer, lake-writer, warehouse-loader, api, agent.
 
+## Data Lake Storage
+
+The S3 module creates a single bucket (`{project}-{env}-data-lake`) with prefix-based
+separation for the three Parquet layers:
+
+```text
+ai-data-platform-dev-data-lake/
+├── bronze/   ← Raw Writer (products.raw.v1)
+├── silver/   ← Lake Writer (products.validated.v1)
+└── gold/     ← Airflow batch transformations
+```
+
+Bucket configuration:
+
+- **Versioning** — enabled for rollback and noncurrent-version lifecycle
+- **Encryption** — AES-256 (SSE-S3) with bucket key
+- **Public access** — all four public access blocks enabled
+- **Lifecycle policies**:
+  - Bronze: STANDARD_IA after 30 days, expire after 90 days (replayable from Kafka)
+  - Silver: STANDARD_IA after 60 days, expire after 180 days
+  - Gold: STANDARD_IA after 90 days, no expiration (permanent analytical data)
+  - Noncurrent versions: cleaned up per layer (7/14/30 days)
+  - Incomplete multipart uploads: aborted after 7 days
+
+IAM access for raw-writer, lake-writer, and Airflow is granted by the IAM module (TASK-122).
+
 ## Implementation Progress
 
 | Module     | Task     | Status      |
 |------------|----------|-------------|
 | networking | TASK-117 | Complete    |
 | ecr        | TASK-118 | Complete    |
-| s3         | TASK-119 | Pending     |
+| s3         | TASK-119 | Complete    |
 | rds        | TASK-120 | Pending     |
 | eks        | TASK-121 | Pending     |
 | iam        | TASK-122 | Pending     |

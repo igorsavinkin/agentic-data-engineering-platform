@@ -1,9 +1,9 @@
 output "data_bucket_name" {
   description = "Data lake S3 bucket name"
-  value       = ""
+  value       = aws_s3_bucket.data_lake.id
 }
 
 output "data_bucket_arn" {
   description = "Data lake S3 bucket ARN"
-  value       = ""
+  value       = aws_s3_bucket.data_lake.arn
 }
