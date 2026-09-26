@@ -156,6 +156,19 @@ The EKS module provisions a managed Kubernetes cluster for all platform services
 
 Full cluster documentation: [`docs/architecture/aws-eks-cluster.md`](../docs/architecture/aws-eks-cluster.md).
 
+## IAM Service Roles
+
+The IAM module creates least-privilege IRSA roles for each platform service:
+
+- **IRSA roles**: one per service (ingestion, processor, raw-writer, lake-writer, warehouse-loader, api, agent), each with an OIDC trust policy scoped to a specific Kubernetes service account
+- **CloudWatch Logs**: per-service policy for `/aws/eks/<cluster>/*` log groups
+- **ECR pull**: shared policy granting BatchGetImage/GetDownloadUrlForLayer on platform repositories
+- **S3 write**: raw-writer → bronze/\*, lake-writer → silver/\*
+- **S3 read**: warehouse-loader → silver/\*
+- **Secrets Manager**: warehouse-loader, api, agent → GetSecretValue on `${name_prefix}-*`
+
+Full IAM documentation: [`docs/architecture/aws-iam-service-roles.md`](../docs/architecture/aws-iam-service-roles.md).
+
 ## Implementation Progress
 
 | Module     | Task     | Status      |
@@ -165,4 +178,4 @@ Full cluster documentation: [`docs/architecture/aws-eks-cluster.md`](../docs/arc
 | s3         | TASK-119 | Complete    |
 | rds        | TASK-120 | Complete    |
 | eks        | TASK-121 | Complete    |
-| iam        | TASK-122 | Pending     |
+| iam        | TASK-122 | Complete    |

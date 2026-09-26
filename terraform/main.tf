@@ -69,5 +69,8 @@ module "iam" {
   environment           = var.environment
   eks_cluster_name      = module.eks.cluster_name
   eks_oidc_provider_arn = module.eks.oidc_provider_arn
+  eks_oidc_provider_url = module.eks.oidc_provider_url
+  data_bucket_arn       = module.s3.data_bucket_arn
+  ecr_repository_arns   = module.ecr.repository_arns
   tags                  = var.tags
 }
