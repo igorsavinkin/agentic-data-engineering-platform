@@ -1,0 +1,184 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-init
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: airflow-init
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: airflow
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.airflow.init.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: airflow-init
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: airflow
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 50000
+        runAsGroup: 0
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgresql
+          image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - python
+            - -c
+            - |
+              import os, socket, time, sys
+              host = os.environ["AIRFLOW_METADATA_DB_HOST"]
+              port = int(os.environ["AIRFLOW_METADATA_DB_PORT"])
+              for attempt in range(1, 31):
+                  try:
+                      with socket.create_connection((host, port), timeout=2):
+                          print(f"PostgreSQL {host}:{port} ready (attempt {attempt})")
+                          sys.exit(0)
+                  except OSError:
+                      print(f"Waiting for PostgreSQL {host}:{port} (attempt {attempt}/30)")
+                      time.sleep(2)
+              print("Timed out waiting for PostgreSQL", file=sys.stderr)
+              sys.exit(1)
+          env:
+            - name: AIRFLOW_METADATA_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_HOST
+            - name: AIRFLOW_METADATA_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_PORT
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 256Mi
+        - name: create-database
+          image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - python
+            - -c
+            - |
+              import os, sys
+              import psycopg2
+              host = os.environ["AIRFLOW_METADATA_DB_HOST"]
+              port = os.environ["AIRFLOW_METADATA_DB_PORT"]
+              dbname = os.environ["AIRFLOW_METADATA_DB_NAME"]
+              user = os.environ["AIRFLOW_METADATA_DB_USER"]
+              password = os.environ["AIRFLOW_METADATA_DB_PASSWORD"]
+              conn = psycopg2.connect(host=host, port=port, dbname="postgres",
+                                      user=user, password=password)
+              conn.autocommit = True
+              cur = conn.cursor()
+              cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,))
+              if not cur.fetchone():
+                  cur.execute(f'CREATE DATABASE "{dbname}"')
+                  print(f"Created database: {dbname}")
+              else:
+                  print(f"Database already exists: {dbname}")
+              cur.close()
+              conn.close()
+          env:
+            - name: AIRFLOW_METADATA_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_HOST
+            - name: AIRFLOW_METADATA_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_PORT
+            - name: AIRFLOW_METADATA_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_NAME
+            - name: AIRFLOW_METADATA_DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_USER
+            - name: AIRFLOW_METADATA_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-metadata-credentials
+                  key: db-password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      containers:
+        - name: airflow-migrate
+          image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              airflow db migrate
+              airflow users create \
+                --username admin --password admin \
+                --firstname Admin --lastname Admin \
+                --role Admin --email admin@example.com || true
+          env:
+            - name: AIRFLOW_METADATA_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-metadata-credentials
+                  key: db-password
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://{{ .Values.airflowMetadata.user }}:$(AIRFLOW_METADATA_DB_PASSWORD)@{{ .Values.airflowMetadata.host }}:{{ .Values.airflowMetadata.port }}/{{ .Values.airflowMetadata.name }}"
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: {{ .Values.airflow.executor | quote }}
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-keys
+                  key: fernet-key
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "false"
+            - name: AIRFLOW__CORE__DAGS_FOLDER
+              value: /opt/airflow/dags
+            - name: AIRFLOW__WEBSERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-keys
+                  key: secret-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.airflow.init.resources | nindent 12 }}
+{{- end }}

@@ -12,7 +12,7 @@ global:
   imagePullPolicy: IfNotPresent
 
 platform:
-  environment: local
+  environment: development
   kafkaBootstrapServers: "kafka:29092"
   minioEndpoint: "http://minio:9000"
 
@@ -79,6 +79,27 @@ api:
       cpu: 250m
       memory: 256Mi
 
+airflow:
+  enabled: true
+  scheduler:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+  webserver:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 384Mi
+      limits:
+        cpu: 250m
+        memory: 1Gi
+
 kafka:
   replicas: 1
   heapOpts: "-Xmx256M -Xms128M"
@@ -100,7 +121,7 @@ minio:
       cpu: 250m
       memory: 256Mi
   storage:
-    size: 512Mi
+    size: 1Gi
 
 postgresql:
   enabled: true
@@ -112,7 +133,7 @@ postgresql:
       cpu: 250m
       memory: 256Mi
   storage:
-    size: 512Mi
+    size: 1Gi
 
 # Optional resources remain disabled in local development.
 ingress:

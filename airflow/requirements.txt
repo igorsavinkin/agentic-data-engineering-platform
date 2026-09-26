@@ -1,0 +1,32 @@
+# Airflow DAG dependencies for the custom Airflow image (TASK-134).
+#
+# These are the project-specific packages required by ALL Airflow DAGs
+# at import time. Derived from complete import chain analysis of:
+#   - airflow/dags/build_daily_metrics_dag.py
+#   - airflow/dags/daily_data_quality_dag.py
+#   - airflow/dags/ingestion_health_dag.py
+#   - airflow/dags/parquet_compaction_dag.py
+#
+# Version pins match requirements.txt for consistency.
+
+# Analytical processing (DAGs 1,2,4)
+polars>=1.0,<2
+
+# PostgreSQL adapter (DAGs 1,2,3)
+psycopg2-binary>=2.9
+
+# Typed configuration — pulled in by libs/common/config.py and
+# libs/observability/otel_config.py via __init__.py cascades (DAGs 3,4)
+pydantic>=2.12
+pydantic-settings>=2.10
+python-dotenv>=1.0
+
+# S3-compatible storage client — libs/common/minio_storage.py (DAG 4)
+boto3>=1.35,<2
+
+# Observability — libs/observability/__init__.py eagerly imports
+# metrics_http_server, otel_config, prometheus_exporter (DAG 3)
+prometheus-client>=0.21,<1
+opentelemetry-api>=1.25,<2
+opentelemetry-sdk>=1.25,<2
+opentelemetry-exporter-otlp-proto-grpc>=1.25,<2

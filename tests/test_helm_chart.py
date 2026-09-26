@@ -92,6 +92,7 @@ class TestChartStructure:
             "kafka",
             "minio",
             "postgresql",
+            "airflow",
             "ingress",
             "hpa",
             "networkPolicy",
@@ -114,9 +115,11 @@ class TestChartStructure:
             "networkpolicy.yaml",
             "configmaps/platform-config.yaml",
             "configmaps/database-config.yaml",
+            "configmaps/airflow-metadata.yaml",
             "secrets/minio-credentials.yaml",
             "secrets/database-credentials.yaml",
             "secrets/ingestion-api-keys.yaml",
+            "secrets/airflow-credentials.yaml",
             "deployments/ingestion.yaml",
             "deployments/processor.yaml",
             "deployments/raw-writer.yaml",
@@ -124,14 +127,18 @@ class TestChartStructure:
             "deployments/warehouse-loader.yaml",
             "deployments/api.yaml",
             "deployments/kafka.yaml",
+            "deployments/airflow-scheduler.yaml",
+            "deployments/airflow-webserver.yaml",
             "services/api.yaml",
             "services/kafka.yaml",
             "services/minio.yaml",
             "services/postgresql.yaml",
+            "services/airflow-webserver.yaml",
             "statefulsets/minio.yaml",
             "statefulsets/postgresql.yaml",
             "jobs/kafka-topics.yaml",
             "jobs/warehouse-migration.yaml",
+            "jobs/airflow-init.yaml",
             "monitoring/prometheus-configmap.yaml",
             "monitoring/prometheus-deployment.yaml",
             "monitoring/prometheus-service.yaml",
@@ -161,7 +168,7 @@ class TestEnvironmentValues:
 
     def test_local_values_set_environment(self) -> None:
         local = _load_yaml(VALUES_LOCAL)
-        assert local["platform"]["environment"] == "local"
+        assert local["platform"]["environment"] == "development"
 
     def test_production_values_set_environment(self) -> None:
         prod = _load_yaml(VALUES_PROD)
@@ -256,17 +263,17 @@ class TestHelmLint:
 
 
 class TestHelmTemplate:
-    def test_default_renders_21_resources(self) -> None:
+    def test_default_renders_28_resources(self) -> None:
         docs = _helm_template()
-        assert len(docs) == 21
+        assert len(docs) == 28
 
-    def test_local_renders_21_resources(self) -> None:
+    def test_local_renders_28_resources(self) -> None:
         docs = _helm_template([VALUES_LOCAL])
-        assert len(docs) == 21
+        assert len(docs) == 28
 
-    def test_production_renders_22_resources(self) -> None:
+    def test_production_renders_29_resources(self) -> None:
         docs = _helm_template([VALUES_PROD])
-        assert len(docs) == 22
+        assert len(docs) == 29
 
     def test_default_has_no_ing(self) -> None:
         docs = _helm_template()
@@ -301,7 +308,7 @@ class TestHelmTemplate:
     def test_all_deployments_have_resources(self) -> None:
         docs = _helm_template()
         deployments = [d for d in docs if d["kind"] == "Deployment"]
-        assert len(deployments) == 7
+        assert len(deployments) == 9
         for dep in deployments:
             containers = dep["spec"]["template"]["spec"]["containers"]
             for container in containers:
@@ -333,7 +340,7 @@ class TestHelmTemplate:
     def test_secrets_present(self) -> None:
         docs = _helm_template()
         secrets = [d for d in docs if d["kind"] == "Secret"]
-        assert len(secrets) == 3
+        assert len(secrets) == 5
 
     def test_hpa_targets_api_deployment(self) -> None:
         docs = _helm_template([VALUES_PROD])
@@ -354,7 +361,7 @@ class TestHelmTemplate:
             for d in docs
             if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "platform-config"
         ][0]
-        assert cm["data"]["APP_ENVIRONMENT"] == "local"
+        assert cm["data"]["APP_ENVIRONMENT"] == "development"
 
     def test_production_environment_overrides_platform_value(self) -> None:
         docs = _helm_template([VALUES_PROD])
