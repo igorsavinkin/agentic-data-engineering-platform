@@ -46,7 +46,6 @@ module "eks" {
 
   project_name            = var.project_name
   environment             = var.environment
-  vpc_id                  = module.networking.vpc_id
   private_subnet_ids      = module.networking.private_subnet_ids
   cluster_security_group_id = module.networking.eks_cluster_security_group_id
   cluster_version         = var.eks_cluster_version

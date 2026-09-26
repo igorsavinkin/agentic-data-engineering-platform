@@ -124,7 +124,6 @@ def test_eks_module_has_required_variables() -> None:
     content = _read("variables.tf")
     assert 'variable "project_name"' in content
     assert 'variable "environment"' in content
-    assert 'variable "vpc_id"' in content
     assert 'variable "private_subnet_ids"' in content
     assert 'variable "cluster_security_group_id"' in content
     assert 'variable "cluster_version"' in content

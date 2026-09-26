@@ -8,11 +8,6 @@ variable "environment" {
   type        = string
 }
 
-variable "vpc_id" {
-  description = "VPC ID for EKS placement"
-  type        = string
-}
-
 variable "private_subnet_ids" {
   description = "Private subnet IDs for EKS node placement"
   type        = list(string)

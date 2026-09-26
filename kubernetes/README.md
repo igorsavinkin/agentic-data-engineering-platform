@@ -9,7 +9,8 @@ kubernetes/
 ├── kind/
 │   └── kind-config.yaml            # kind cluster configuration
 ├── namespaces/
-│   └── platform-namespace.yaml      # Platform namespace definition
+│   ├── platform-namespace.yaml      # Platform namespace definition
+│   └── strimzi-namespace.yaml       # Strimzi namespace for EKS Kafka (TASK-121)
 ├── config/
 │   ├── platform-config.yaml         # Shared infrastructure endpoints (TASK-078)
 │   └── database-config.yaml         # PostgreSQL connection parameters (TASK-078)
@@ -33,6 +34,7 @@ kubernetes/
 │   ├── kafka-service.yaml           # Kafka NodePort Service (TASK-077)
 │   ├── kafka-topics-job.yaml        # Kafka topic creation Job (TASK-077)
 │   ├── warehouse-migration-job.yaml # Alembic schema migration Job (TASK-K8S-FIX-003)
+│   ├── strimzi-kafka-eks.yaml      # Strimzi Kafka CR for EKS (TASK-121)
 └── README.md                        # This file
 ```
 
