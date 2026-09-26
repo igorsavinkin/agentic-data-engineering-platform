@@ -90,12 +90,24 @@ VPC (var.vpc_cidr, default 10.0.0.0/16)
 - RDS ingress is restricted to the EKS node security group (no direct VPC CIDR access).
 - All outbound traffic is permitted; inbound is scoped per security group.
 
+## Container Registries
+
+The ECR module creates one repository per platform service with:
+
+- **Immutable tags** — prevents accidental overwrites
+- **Scan on push** — automatic vulnerability scanning
+- **AES256 encryption** — at-rest encryption enabled
+- **Lifecycle policies** — keep last 10 `v*` tagged images, expire untagged after 7 days
+- **Repository policy** — allows ECS tasks to pull images
+
+Services: ingestion, processor, raw-writer, lake-writer, warehouse-loader, api, agent.
+
 ## Implementation Progress
 
 | Module     | Task     | Status      |
 |------------|----------|-------------|
 | networking | TASK-117 | Complete    |
-| ecr        | TASK-118 | Pending     |
+| ecr        | TASK-118 | Complete    |
 | s3         | TASK-119 | Pending     |
 | rds        | TASK-120 | Pending     |
 | eks        | TASK-121 | Pending     |
