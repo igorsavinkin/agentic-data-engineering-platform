@@ -67,6 +67,7 @@ module "iam" {
 
   project_name          = var.project_name
   environment           = var.environment
+  aws_region            = var.aws_region
   eks_cluster_name      = module.eks.cluster_name
   eks_oidc_provider_arn = module.eks.oidc_provider_arn
   eks_oidc_provider_url = module.eks.oidc_provider_url

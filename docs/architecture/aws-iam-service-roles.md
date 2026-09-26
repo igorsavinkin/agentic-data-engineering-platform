@@ -25,7 +25,7 @@ Service Roles (one per pod identity):
 └── agent            → CloudWatch Logs, ECR pull, Secrets Manager
 
 Shared Policies:
-├── ecr-pull         → All services (ECR BatchGetImage, GetDownloadUrlForLayer)
+├── ecr-pull         → All services (ECR BatchCheckLayerAvailability, GetDownloadUrlForLayer, BatchGetImage)
 ├── secrets-read     → warehouse-loader, api, agent (Secrets Manager GetSecretValue)
 └── Per-service      → CloudWatch Logs, S3 write/read scoped to prefix
 ```
@@ -65,6 +65,7 @@ account:
 
 | Variable | Description |
 |----------|-------------|
+| `aws_region` | AWS region for scoping resource ARNs in policies |
 | `eks_oidc_provider_url` | OIDC issuer URL (without `https://`) for trust conditions |
 | `data_bucket_arn` | S3 data lake bucket ARN for S3 policy scoping |
 | `ecr_repository_arns` | Map of ECR repository ARNs for pull policy scoping |
@@ -81,7 +82,9 @@ account:
 ## Security
 
 - No wildcard permissions except `ecr:GetAuthorizationToken` (AWS requires `*` resource)
-- S3 policies scoped to specific prefixes (bronze, silver)
-- Secrets Manager scoped to `${name_prefix}-*` ARN pattern
+- All resource ARNs scoped to specific region and account ID (no `*:*` patterns)
+- ECR pull limited to `BatchCheckLayerAvailability`, `GetDownloadUrlForLayer`, `BatchGetImage`
+- S3 policies scoped to specific prefixes (bronze, silver) with separate ListBucket and object-level statements
+- Secrets Manager scoped to `${name_prefix}-*` ARN pattern with `GetSecretValue` only
 - CloudWatch Logs scoped to the EKS cluster log group
 - No credentials, access keys, or secrets in Terraform configuration

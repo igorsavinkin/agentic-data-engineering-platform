@@ -4,6 +4,7 @@
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
   namespace   = "ai-data-platform"
+  account_id  = data.aws_caller_identity.current.account_id
 
   s3_services_with_write = {
     raw-writer  = "bronze"
@@ -16,6 +17,12 @@ locals {
 
   db_services = toset(["warehouse-loader", "api", "agent"])
 }
+
+# ------------------------------------------------------------------------------
+# Data sources for ARN scoping
+# ------------------------------------------------------------------------------
+
+data "aws_caller_identity" "current" {}
 
 # ------------------------------------------------------------------------------
 # IRSA roles — one per platform service
@@ -68,7 +75,7 @@ resource "aws_iam_policy" "cloudwatch_logs" {
         "logs:PutLogEvents",
         "logs:DescribeLogStreams",
       ]
-      Resource = "arn:aws:logs:*:*:log-group:/aws/eks/${var.eks_cluster_name}/*"
+      Resource = "arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:/aws/eks/${var.eks_cluster_name}/*"
     }]
   })
 
@@ -105,9 +112,6 @@ resource "aws_iam_policy" "ecr_pull" {
         Action = [
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
-          "ecr:GetRepositoryPolicy",
-          "ecr:DescribeRepositories",
-          "ecr:ListImages",
           "ecr:BatchGetImage",
         ]
         Resource = values(var.ecr_repository_arns)
@@ -140,20 +144,18 @@ resource "aws_iam_policy" "s3_write" {
     Statement = [
       {
         Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:PutObjectAcl",
-          "s3:ListBucket",
-        ]
-        Resource = [
-          var.data_bucket_arn,
-          "${var.data_bucket_arn}/${each.value}/*",
-        ]
+        Action = ["s3:ListBucket"]
+        Resource = [var.data_bucket_arn]
         Condition = {
           StringLike = {
             "s3:prefix" = "${each.value}/*"
           }
         }
+      },
+      {
+        Effect = "Allow"
+        Action = ["s3:PutObject"]
+        Resource = ["${var.data_bucket_arn}/${each.value}/*"]
       },
     ]
   })
@@ -183,15 +185,18 @@ resource "aws_iam_policy" "s3_read" {
     Statement = [
       {
         Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectAcl",
-          "s3:ListBucket",
-        ]
-        Resource = [
-          var.data_bucket_arn,
-          "${var.data_bucket_arn}/${each.value}/*",
-        ]
+        Action = ["s3:ListBucket"]
+        Resource = [var.data_bucket_arn]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = "${each.value}/*"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = ["${var.data_bucket_arn}/${each.value}/*"]
       },
     ]
   })
@@ -220,9 +225,8 @@ resource "aws_iam_policy" "secrets_read" {
       Effect = "Allow"
       Action = [
         "secretsmanager:GetSecretValue",
-        "secretsmanager:DescribeSecret",
       ]
-      Resource = "arn:aws:secretsmanager:*:*:secret:${local.name_prefix}-*"
+      Resource = "arn:aws:secretsmanager:${var.aws_region}:${local.account_id}:secret:${local.name_prefix}-*"
     }]
   })
 

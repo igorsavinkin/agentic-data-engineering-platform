@@ -111,7 +111,6 @@ def test_secrets_read_policy_exists() -> None:
     content = _read("main.tf")
     assert 'resource "aws_iam_policy" "secrets_read"' in content
     assert "secretsmanager:GetSecretValue" in content
-    assert "secretsmanager:DescribeSecret" in content
 
 
 def test_secrets_read_attached_to_db_services() -> None:
@@ -129,6 +128,7 @@ def test_required_variables_declared() -> None:
     assert 'variable "eks_cluster_name"' in content
     assert 'variable "eks_oidc_provider_arn"' in content
     assert 'variable "eks_oidc_provider_url"' in content
+    assert 'variable "aws_region"' in content
     assert 'variable "data_bucket_arn"' in content
     assert 'variable "ecr_repository_arns"' in content
     assert 'variable "service_accounts"' in content
@@ -153,6 +153,12 @@ def test_root_module_passes_oidc_url() -> None:
     assert "module.eks.oidc_provider_url" in content
 
 
+def test_root_module_passes_aws_region() -> None:
+    content = _read_root("main.tf")
+    assert "aws_region" in content
+    assert "var.aws_region" in content
+
+
 def test_root_module_passes_data_bucket_arn() -> None:
     content = _read_root("main.tf")
     assert "data_bucket_arn" in content
@@ -169,6 +175,31 @@ def test_root_outputs_iam_role_arns() -> None:
     content = _read_root("outputs.tf")
     assert "iam_service_role_arns" in content
     assert "module.iam.service_role_arns" in content
+
+
+# --- ARN scoping ---
+
+
+def test_caller_identity_data_source_exists() -> None:
+    content = _read("main.tf")
+    assert 'data "aws_caller_identity" "current"' in content
+
+
+def test_cloudwatch_logs_arn_scoped_to_region_and_account() -> None:
+    content = _read("main.tf")
+    assert "var.aws_region" in content
+    assert "local.account_id" in content
+    assert "arn:aws:logs:${var.aws_region}:${local.account_id}" in content
+
+
+def test_secrets_arn_scoped_to_region_and_account() -> None:
+    content = _read("main.tf")
+    assert "arn:aws:secretsmanager:${var.aws_region}:${local.account_id}" in content
+
+
+def test_no_wildcard_region_or_account_in_arns() -> None:
+    content = _read("main.tf")
+    assert "*:*" not in content
 
 
 # --- No wildcards except where required ---

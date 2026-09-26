@@ -23,6 +23,11 @@ variable "eks_oidc_provider_url" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region for scoping resource ARNs in policies"
+  type        = string
+}
+
 variable "data_bucket_arn" {
   description = "ARN of the S3 data lake bucket"
   type        = string
