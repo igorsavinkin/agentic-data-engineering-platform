@@ -64,6 +64,9 @@ images:
   warehouseMigration:
     repository: ai-data-platform/warehouse-migrations
     tag: dev
+  airflow:
+    repository: ai-data-platform/airflow
+    tag: dev
 
 # ---------------------------------------------------------------------------
 # Platform configuration — rendered into ConfigMap "platform-config"
@@ -89,6 +92,18 @@ database:
   user: postgres
 
 # ---------------------------------------------------------------------------
+# Airflow metadata database — rendered into ConfigMap "airflow-metadata"
+# ---------------------------------------------------------------------------
+# Separate database on the same PostgreSQL instance for Airflow's internal
+# metadata (DAG runs, task instances, connections). Kept distinct from the
+# project warehouse to maintain logical separation.
+airflowMetadata:
+  host: postgresql
+  port: "5432"
+  name: airflow
+  user: postgres
+
+# ---------------------------------------------------------------------------
 # Secrets — base64-encoded local-dev placeholders
 # ---------------------------------------------------------------------------
 # WARNING: These are NOT production credentials. They exist only to let the
@@ -106,6 +121,13 @@ secrets:
   ingestion:
     # bestbuy-api-key (base64 of placeholder)
     bestbuyApiKey: cGxhY2Vob2xkZXItcmVwbGFjZS1tZQ==
+  airflow:
+    # Airflow metadata database password (base64 of "postgres")
+    metadataPassword: cG9zdGdyZXM=
+    # Fernet key for encrypting sensitive Airflow data (local-dev placeholder)
+    fernetKey: ZGV2LWZlcm5ldC1rZXktbm90LWZvci1wcm9kdWN0aW9u
+    # Secret key for Airflow webserver sessions (local-dev placeholder)
+    secretKey: ZGV2LWFpZmxvdy1zZWNyZXQta2V5
 
 # ===========================================================================
 # Service components
@@ -268,6 +290,67 @@ api:
   readinessProbe:
     initialDelaySeconds: 5
     periodSeconds: 10
+
+# ---------------------------------------------------------------------------
+# Airflow — scheduled/batch orchestration (TASK-058, TASK-134)
+# ---------------------------------------------------------------------------
+# LocalExecutor for single-node kind deployment. The custom image includes
+# all project DAG dependencies (polars, pydantic-settings, boto3, etc.)
+# baked in at build time — no runtime pip install required.
+airflow:
+  enabled: true
+  executor: LocalExecutor
+  dagConcurrency: 16
+  parallelism: 32
+  init:
+    backoffLimit: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  scheduler:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    livenessProbe:
+      initialDelaySeconds: 90
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readinessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 10
+  webserver:
+    replicas: 1
+    port: 8080
+    service:
+      type: ClusterIP
+      port: 8080
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    livenessProbe:
+      initialDelaySeconds: 120
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+    readinessProbe:
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 5
 
 # ---------------------------------------------------------------------------
 # Kafka — single-broker KRaft mode (combined broker + controller)

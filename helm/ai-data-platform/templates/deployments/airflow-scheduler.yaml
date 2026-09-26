@@ -1,0 +1,182 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-scheduler
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: airflow-scheduler
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: airflow
+spec:
+  replicas: {{ .Values.airflow.scheduler.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: airflow-scheduler
+      app.kubernetes.io/part-of: ai-data-platform
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: airflow-scheduler
+        app.kubernetes.io/part-of: ai-data-platform
+        app.kubernetes.io/component: airflow
+    spec:
+      securityContext:
+        runAsUser: 50000
+        runAsGroup: 0
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-airflow-db
+          image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - python
+            - -c
+            - |
+              import os, socket, time, sys
+              host = os.environ["AIRFLOW_METADATA_DB_HOST"]
+              port = int(os.environ["AIRFLOW_METADATA_DB_PORT"])
+              for attempt in range(1, 31):
+                  try:
+                      with socket.create_connection((host, port), timeout=2):
+                          print(f"PostgreSQL {host}:{port} ready (attempt {attempt})")
+                          sys.exit(0)
+                  except OSError:
+                      print(f"Waiting for PostgreSQL {host}:{port} (attempt {attempt}/30)")
+                      time.sleep(2)
+              print("Timed out waiting for PostgreSQL", file=sys.stderr)
+              sys.exit(1)
+          env:
+            - name: AIRFLOW_METADATA_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_HOST
+            - name: AIRFLOW_METADATA_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_PORT
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 256Mi
+      containers:
+        - name: scheduler
+          image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args: ["scheduler"]
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://{{ .Values.airflowMetadata.user }}:$(AIRFLOW_METADATA_DB_PASSWORD)@{{ .Values.airflowMetadata.host }}:{{ .Values.airflowMetadata.port }}/{{ .Values.airflowMetadata.name }}"
+            - name: AIRFLOW_METADATA_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-metadata-credentials
+                  key: db-password
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: {{ .Values.airflow.executor | quote }}
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-keys
+                  key: fernet-key
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "false"
+            - name: AIRFLOW__CORE__DAGS_FOLDER
+              value: /opt/airflow/dags
+            - name: AIRFLOW__CORE__DAG_CONCURRENCY
+              value: {{ .Values.airflow.dagConcurrency | quote }}
+            - name: AIRFLOW__CORE__PARALLELISM
+              value: {{ .Values.airflow.parallelism | quote }}
+            - name: AIRFLOW__WEBSERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-keys
+                  key: secret-key
+            - name: WAREHOUSE_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_HOST
+            - name: WAREHOUSE_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_PORT
+            - name: WAREHOUSE_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_NAME
+            - name: WAREHOUSE_DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: database-config
+                  key: WAREHOUSE_DB_USER
+            - name: WAREHOUSE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: db-password
+            - name: AIRFLOW_VAR_MINIO_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_MINIO_ENDPOINT
+            - name: AIRFLOW_VAR_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: APP_KAFKA_BOOTSTRAP_SERVERS
+            - name: APP_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: minio-access-key
+            - name: APP_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: minio-secret-key
+          livenessProbe:
+            exec:
+              command:
+                - airflow
+                - jobs
+                - check
+                - --job-type
+                - SchedulerJob
+                - --hostname
+                - "$(hostname)"
+            initialDelaySeconds: {{ .Values.airflow.scheduler.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.airflow.scheduler.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.airflow.scheduler.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.airflow.scheduler.livenessProbe.failureThreshold }}
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('{{ .Values.database.host }}',{{ .Values.database.port }})); s.close()"
+            initialDelaySeconds: {{ .Values.airflow.scheduler.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.airflow.scheduler.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.airflow.scheduler.readinessProbe.timeoutSeconds }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.airflow.scheduler.resources | nindent 12 }}
+{{- end }}
