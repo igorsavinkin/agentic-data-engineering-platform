@@ -555,14 +555,13 @@ class TestAirflowSecretsNoPlaintext:
     def test_fernet_key_is_valid(self) -> None:
         import base64
 
-        from cryptography.fernet import Fernet
-
         docs = _helm_template()
         secret = [
             d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"] == "airflow-keys"
         ][0]
         fernet_b64 = base64.b64decode(secret["data"]["fernet-key"]).decode("utf-8")
-        Fernet(fernet_b64)
+        raw = base64.urlsafe_b64decode(fernet_b64)
+        assert len(raw) == 32
 
     def test_no_plaintext_passwords_in_airflow_templates(self) -> None:
         airflow_templates = [
