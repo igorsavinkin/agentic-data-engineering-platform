@@ -145,6 +145,17 @@ analytical query layer:
 Credentials are passed as variables at plan/apply time and never committed to Git.
 Secrets Manager integration for runtime credential injection is handled by the IAM module (TASK-122).
 
+## EKS Cluster
+
+The EKS module provisions a managed Kubernetes cluster for all platform services and Kafka:
+
+- **Cluster**: EKS 1.31, private API endpoint by default, control-plane logging (api, audit, authenticator, controllerManager, scheduler)
+- **Node groups**: general-purpose (t3.medium, 1–4 nodes) and dedicated Kafka (t3.large, 3–5 nodes, tainted `dedicated=kafka:NoSchedule`)
+- **IRSA**: OIDC identity provider created from the cluster issuer for IAM Roles for Service Accounts
+- **Kafka**: Strimzi-based deployment targeting the dedicated Kafka node group (see `kubernetes/deployments/strimzi-kafka-eks.yaml`)
+
+Full cluster documentation: [`docs/architecture/aws-eks-cluster.md`](../docs/architecture/aws-eks-cluster.md).
+
 ## Implementation Progress
 
 | Module     | Task     | Status      |
@@ -153,5 +164,5 @@ Secrets Manager integration for runtime credential injection is handled by the I
 | ecr        | TASK-118 | Complete    |
 | s3         | TASK-119 | Complete    |
 | rds        | TASK-120 | Complete    |
-| eks        | TASK-121 | Pending     |
+| eks        | TASK-121 | Complete    |
 | iam        | TASK-122 | Pending     |

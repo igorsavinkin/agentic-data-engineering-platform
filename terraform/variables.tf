@@ -37,6 +37,66 @@ variable "eks_cluster_version" {
   default     = "1.31"
 }
 
+variable "eks_cluster_public_endpoint" {
+  description = "Whether to expose the EKS API server endpoint publicly"
+  type        = bool
+  default     = false
+}
+
+variable "eks_service_cidr" {
+  description = "IPv4 CIDR block for Kubernetes service ClusterIPs"
+  type        = string
+  default     = "172.20.0.0/16"
+}
+
+variable "eks_general_node_instance_types" {
+  description = "Instance types for the general-purpose EKS node group"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
+variable "eks_general_node_desired_size" {
+  description = "Desired number of general-purpose EKS nodes"
+  type        = number
+  default     = 2
+}
+
+variable "eks_general_node_min_size" {
+  description = "Minimum number of general-purpose EKS nodes"
+  type        = number
+  default     = 1
+}
+
+variable "eks_general_node_max_size" {
+  description = "Maximum number of general-purpose EKS nodes"
+  type        = number
+  default     = 4
+}
+
+variable "eks_kafka_node_instance_types" {
+  description = "Instance types for the Kafka (Strimzi) EKS node group"
+  type        = list(string)
+  default     = ["t3.large"]
+}
+
+variable "eks_kafka_node_desired_size" {
+  description = "Desired number of Kafka EKS nodes"
+  type        = number
+  default     = 3
+}
+
+variable "eks_kafka_node_min_size" {
+  description = "Minimum number of Kafka EKS nodes"
+  type        = number
+  default     = 3
+}
+
+variable "eks_kafka_node_max_size" {
+  description = "Maximum number of Kafka EKS nodes"
+  type        = number
+  default     = 5
+}
+
 variable "rds_instance_class" {
   description = "RDS instance class"
   type        = string

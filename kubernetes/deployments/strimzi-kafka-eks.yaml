@@ -1,0 +1,73 @@
+# Strimzi Kafka cluster for EKS deployment.
+# Targets the dedicated Kafka node group (role=kafka, taint: dedicated=kafka:NoSchedule).
+# Apply after installing the Strimzi operator in the strimzi namespace.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: platform-cluster
+  namespace: strimzi
+spec:
+  kafka:
+    version: 3.9.0
+    replicas: 3
+    nodeSelector:
+      role: kafka
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: kafka
+        effect: NoSchedule
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      auto.create.topics.enable: "false"
+      log.retention.hours: 168
+    storage:
+      type: jbod
+      volumes:
+        - id: 0
+          type: persistent-claim
+          size: 50Gi
+          deleteClaim: false
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+  zookeeper:
+    replicas: 3
+    nodeSelector:
+      role: kafka
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: kafka
+        effect: NoSchedule
+    storage:
+      type: persistent-claim
+      size: 20Gi
+      deleteClaim: false
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}

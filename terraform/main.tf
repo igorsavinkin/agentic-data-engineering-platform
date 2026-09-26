@@ -44,12 +44,22 @@ module "rds" {
 module "eks" {
   source = "./modules/eks"
 
-  project_name       = var.project_name
-  environment        = var.environment
-  vpc_id             = module.networking.vpc_id
-  private_subnet_ids = module.networking.private_subnet_ids
-  cluster_version    = var.eks_cluster_version
-  tags               = var.tags
+  project_name            = var.project_name
+  environment             = var.environment
+  private_subnet_ids      = module.networking.private_subnet_ids
+  cluster_security_group_id = module.networking.eks_cluster_security_group_id
+  cluster_version         = var.eks_cluster_version
+  cluster_public_endpoint = var.eks_cluster_public_endpoint
+  service_cidr            = var.eks_service_cidr
+  general_node_instance_types = var.eks_general_node_instance_types
+  general_node_desired_size   = var.eks_general_node_desired_size
+  general_node_min_size       = var.eks_general_node_min_size
+  general_node_max_size       = var.eks_general_node_max_size
+  kafka_node_instance_types   = var.eks_kafka_node_instance_types
+  kafka_node_desired_size     = var.eks_kafka_node_desired_size
+  kafka_node_min_size         = var.eks_kafka_node_min_size
+  kafka_node_max_size         = var.eks_kafka_node_max_size
+  tags                        = var.tags
 }
 
 module "iam" {
