@@ -97,8 +97,8 @@ The ECR module creates one repository per platform service with:
 - **Immutable tags** — prevents accidental overwrites
 - **Scan on push** — automatic vulnerability scanning
 - **AES256 encryption** — at-rest encryption enabled
-- **Lifecycle policies** — keep last 10 `v*` tagged images, expire untagged after 7 days
-- **Repository policy** — allows ECS tasks to pull images
+- **Lifecycle policies** — expire untagged images after 7 days
+- **EKS pull access** — granted via node IAM role (TASK-122)
 
 Services: ingestion, processor, raw-writer, lake-writer, warehouse-loader, api, agent.
 

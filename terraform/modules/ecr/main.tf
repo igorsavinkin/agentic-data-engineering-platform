@@ -35,52 +35,15 @@ resource "aws_ecr_lifecycle_policy" "this" {
     rules = [
       {
         rulePriority = 1
-        description  = "Keep last 10 tagged images"
-        selection = {
-          tagStatus   = "tagged"
-          tagPrefixList = ["v"]
-          countType   = "imageCountMoreThan"
-          countNumber = 10
-        }
-        action = {
-          type = "expire"
-        }
-      },
-      {
-        rulePriority = 2
         description  = "Expire untagged images after 7 days"
         selection = {
-          tagStatus = "untagged"
-          countType = "sinceImagePushed"
-          countUnit = "days"
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
           countNumber = 7
         }
         action = {
           type = "expire"
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_ecr_repository_policy" "eks_pull" {
-  for_each = aws_ecr_repository.this
-
-  repository = each.value.name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "AllowECSPull"
-        Effect = "Allow"
-        Principal = {
-          Service = "ecs-tasks.amazonaws.com"
-        }
-        Action = [
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "ecr:BatchCheckLayerAvailability"
         }
       }
     ]

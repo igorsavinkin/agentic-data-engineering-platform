@@ -32,11 +32,6 @@ def test_ecr_lifecycle_expires_untagged() -> None:
     assert "untagged" in content, "Lifecycle must handle untagged images"
 
 
-def test_ecr_has_repository_policy() -> None:
-    content = _read("main.tf")
-    assert 'resource "aws_ecr_repository_policy"' in content, "Must set repository policy"
-
-
 def test_ecr_scan_on_push_enabled() -> None:
     content = _read("main.tf")
     assert "scan_on_push" in content, "Image scanning on push must be enabled"
