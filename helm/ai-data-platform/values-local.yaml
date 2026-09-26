@@ -112,7 +112,7 @@ kafka:
       memory: 512Mi
 
 minio:
-  enabled: false
+  enabled: true
   resources:
     requests:
       cpu: 50m
@@ -121,10 +121,10 @@ minio:
       cpu: 250m
       memory: 256Mi
   storage:
-    size: 512Mi
+    size: 1Gi
 
 postgresql:
-  enabled: false
+  enabled: true
   resources:
     requests:
       cpu: 50m
@@ -133,7 +133,7 @@ postgresql:
       cpu: 250m
       memory: 256Mi
   storage:
-    size: 512Mi
+    size: 1Gi
 
 # Optional resources remain disabled in local development.
 ingress:
