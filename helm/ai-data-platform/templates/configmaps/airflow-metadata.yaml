@@ -1,0 +1,16 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-metadata
+  namespace: {{ include "ai-data-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/name: airflow-metadata
+    app.kubernetes.io/part-of: ai-data-platform
+    app.kubernetes.io/component: configuration
+data:
+  AIRFLOW_METADATA_DB_HOST: {{ .Values.airflowMetadata.host | quote }}
+  AIRFLOW_METADATA_DB_PORT: {{ .Values.airflowMetadata.port | quote }}
+  AIRFLOW_METADATA_DB_NAME: {{ .Values.airflowMetadata.name | quote }}
+  AIRFLOW_METADATA_DB_USER: {{ .Values.airflowMetadata.user | quote }}
+{{- end }}
