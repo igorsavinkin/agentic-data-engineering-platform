@@ -229,7 +229,6 @@ class TestAirflowHelmRendering:
         docs = _helm_template()
         secrets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Secret"}
         assert "airflow-metadata-credentials" in secrets
-        assert "airflow-keys" in secrets
 
     def test_airflow_webserver_service_renders(self) -> None:
         docs = _helm_template()
@@ -547,20 +546,49 @@ class TestAirflowSecretsNoPlaintext:
         secrets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Secret"}
         assert "airflow-metadata-credentials" in secrets
 
-    def test_airflow_keys_secret_renders(self) -> None:
+    def test_airflow_keys_not_rendered_with_empty_values(self) -> None:
         docs = _helm_template()
+        secrets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Secret"}
+        assert "airflow-keys" not in secrets
+
+    def test_airflow_keys_rendered_when_values_provided(self) -> None:
+        import base64
+
+        fernet = base64.b64encode(base64.urlsafe_b64encode(b"\x00" * 32)).decode()
+        docs = _helm_template(
+            extra_args=[
+                "--set",
+                f"secrets.airflow.fernetKey={fernet}",
+                "--set",
+                "secrets.airflow.secretKey=dGVzdC1zZWNyZXQta2V5",
+            ]
+        )
         secrets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Secret"}
         assert "airflow-keys" in secrets
 
-    def test_fernet_key_is_valid(self) -> None:
+    def test_no_generated_fernet_key_in_values(self) -> None:
+        values = _load_yaml(VALUES_YAML)
+        fernet = values["secrets"]["airflow"]["fernetKey"]
+        assert fernet == ""
+
+    def test_fernet_key_valid_when_provided(self) -> None:
         import base64
 
-        docs = _helm_template()
+        fernet_raw = base64.urlsafe_b64encode(b"\x01" * 32).decode()
+        fernet_b64 = base64.b64encode(fernet_raw.encode()).decode()
+        docs = _helm_template(
+            extra_args=[
+                "--set",
+                f"secrets.airflow.fernetKey={fernet_b64}",
+                "--set",
+                "secrets.airflow.secretKey=dGVzdC1zZWNyZXQta2V5",
+            ]
+        )
         secret = [
             d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"] == "airflow-keys"
         ][0]
-        fernet_b64 = base64.b64decode(secret["data"]["fernet-key"]).decode("utf-8")
-        raw = base64.urlsafe_b64decode(fernet_b64)
+        decoded = base64.b64decode(secret["data"]["fernet-key"]).decode("utf-8")
+        raw = base64.urlsafe_b64decode(decoded)
         assert len(raw) == 32
 
     def test_no_plaintext_passwords_in_airflow_templates(self) -> None:

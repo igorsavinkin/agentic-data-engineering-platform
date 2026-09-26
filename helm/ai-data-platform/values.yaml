@@ -124,10 +124,13 @@ secrets:
   airflow:
     # Airflow metadata database password (base64 of "postgres")
     metadataPassword: cG9zdGdyZXM=
-    # Fernet key for encrypting sensitive Airflow data (local-dev placeholder)
-    fernetKey: X2NvaVV5UkRZOExrc2ViNi16VWxtdHRtRDZkcnVjb0kzT1FfR0ZFdGZVND0=
-    # Secret key for Airflow webserver sessions (local-dev placeholder)
-    secretKey: ZGV2LWFpZmxvdy1zZWNyZXQta2V5
+    # Fernet key and secret key are NOT stored in Git.
+    # Provision the 'airflow-keys' Secret externally:
+    #   bash scripts/create-local-secrets.sh   (local kind development)
+    # or create it manually with a generated Fernet key before deploying.
+    # Leaving these empty skips Helm creation of the airflow-keys Secret.
+    fernetKey: ""
+    secretKey: ""
 
 # ===========================================================================
 # Service components
