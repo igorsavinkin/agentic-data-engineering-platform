@@ -81,13 +81,13 @@ spec:
               protocol: TCP
               name: http
           env:
-            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-              value: "postgresql+psycopg2://{{ .Values.airflowMetadata.user }}:$(AIRFLOW_METADATA_DB_PASSWORD)@{{ .Values.airflowMetadata.host }}:{{ .Values.airflowMetadata.port }}/{{ .Values.airflowMetadata.name }}"
             - name: AIRFLOW_METADATA_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: airflow-metadata-credentials
                   key: db-password
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://{{ .Values.airflowMetadata.user }}:$(AIRFLOW_METADATA_DB_PASSWORD)@{{ .Values.airflowMetadata.host }}:{{ .Values.airflowMetadata.port }}/{{ .Values.airflowMetadata.name }}"
             - name: AIRFLOW__CORE__EXECUTOR
               value: {{ .Values.airflow.executor | quote }}
             - name: AIRFLOW__CORE__FERNET_KEY

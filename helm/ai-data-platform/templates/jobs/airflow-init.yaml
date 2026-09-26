@@ -1,26 +1,27 @@
 {{- if .Values.airflow.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: airflow-scheduler
+  name: airflow-init
   namespace: {{ include "ai-data-platform.namespace" . }}
   labels:
-    app.kubernetes.io/name: airflow-scheduler
+    app.kubernetes.io/name: airflow-init
     app.kubernetes.io/part-of: ai-data-platform
     app.kubernetes.io/component: airflow
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
-  replicas: {{ .Values.airflow.scheduler.replicas }}
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: airflow-scheduler
-      app.kubernetes.io/part-of: ai-data-platform
+  backoffLimit: {{ .Values.airflow.init.backoffLimit }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: airflow-scheduler
+        app.kubernetes.io/name: airflow-init
         app.kubernetes.io/part-of: ai-data-platform
         app.kubernetes.io/component: airflow
     spec:
+      restartPolicy: OnFailure
       securityContext:
         runAsUser: 50000
         runAsGroup: 0
@@ -28,7 +29,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
-        - name: wait-for-airflow-db
+        - name: wait-for-postgresql
           image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command:
@@ -71,11 +72,83 @@ spec:
             limits:
               cpu: 100m
               memory: 256Mi
-      containers:
-        - name: scheduler
+        - name: create-database
           image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          args: ["scheduler"]
+          command:
+            - python
+            - -c
+            - |
+              import os, sys
+              import psycopg2
+              host = os.environ["AIRFLOW_METADATA_DB_HOST"]
+              port = os.environ["AIRFLOW_METADATA_DB_PORT"]
+              dbname = os.environ["AIRFLOW_METADATA_DB_NAME"]
+              user = os.environ["AIRFLOW_METADATA_DB_USER"]
+              password = os.environ["AIRFLOW_METADATA_DB_PASSWORD"]
+              conn = psycopg2.connect(host=host, port=port, dbname="postgres",
+                                      user=user, password=password)
+              conn.autocommit = True
+              cur = conn.cursor()
+              cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,))
+              if not cur.fetchone():
+                  cur.execute(f'CREATE DATABASE "{dbname}"')
+                  print(f"Created database: {dbname}")
+              else:
+                  print(f"Database already exists: {dbname}")
+              cur.close()
+              conn.close()
+          env:
+            - name: AIRFLOW_METADATA_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_HOST
+            - name: AIRFLOW_METADATA_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_PORT
+            - name: AIRFLOW_METADATA_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_NAME
+            - name: AIRFLOW_METADATA_DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: airflow-metadata
+                  key: AIRFLOW_METADATA_DB_USER
+            - name: AIRFLOW_METADATA_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-metadata-credentials
+                  key: db-password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      containers:
+        - name: airflow-migrate
+          image: "{{ .Values.images.airflow.repository }}:{{ .Values.images.airflow.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - bash
+            - -c
+            - |
+              airflow db migrate &&
+              airflow users create \
+                --username admin --password admin \
+                --firstname Admin --lastname Admin \
+                --role Admin --email admin@example.com || true
           env:
             - name: AIRFLOW_METADATA_DB_PASSWORD
               valueFrom:
@@ -95,88 +168,16 @@ spec:
               value: "false"
             - name: AIRFLOW__CORE__DAGS_FOLDER
               value: /opt/airflow/dags
-            - name: AIRFLOW__CORE__DAG_CONCURRENCY
-              value: {{ .Values.airflow.dagConcurrency | quote }}
-            - name: AIRFLOW__CORE__PARALLELISM
-              value: {{ .Values.airflow.parallelism | quote }}
             - name: AIRFLOW__WEBSERVER__SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: airflow-keys
                   key: secret-key
-            - name: WAREHOUSE_DB_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: database-config
-                  key: WAREHOUSE_DB_HOST
-            - name: WAREHOUSE_DB_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: database-config
-                  key: WAREHOUSE_DB_PORT
-            - name: WAREHOUSE_DB_NAME
-              valueFrom:
-                configMapKeyRef:
-                  name: database-config
-                  key: WAREHOUSE_DB_NAME
-            - name: WAREHOUSE_DB_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: database-config
-                  key: WAREHOUSE_DB_USER
-            - name: WAREHOUSE_DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: database-credentials
-                  key: db-password
-            - name: AIRFLOW_VAR_MINIO_ENDPOINT
-              valueFrom:
-                configMapKeyRef:
-                  name: platform-config
-                  key: APP_MINIO_ENDPOINT
-            - name: AIRFLOW_VAR_KAFKA_BOOTSTRAP_SERVERS
-              valueFrom:
-                configMapKeyRef:
-                  name: platform-config
-                  key: APP_KAFKA_BOOTSTRAP_SERVERS
-            - name: APP_MINIO_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: minio-access-key
-            - name: APP_MINIO_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: minio-secret-key
-          livenessProbe:
-            exec:
-              command:
-                - airflow
-                - jobs
-                - check
-                - --job-type
-                - SchedulerJob
-                - --hostname
-                - "$(hostname)"
-            initialDelaySeconds: {{ .Values.airflow.scheduler.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.airflow.scheduler.livenessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.airflow.scheduler.livenessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.airflow.scheduler.livenessProbe.failureThreshold }}
-          readinessProbe:
-            exec:
-              command:
-                - python
-                - -c
-                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('{{ .Values.database.host }}',{{ .Values.database.port }})); s.close()"
-            initialDelaySeconds: {{ .Values.airflow.scheduler.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.airflow.scheduler.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.airflow.scheduler.readinessProbe.timeoutSeconds }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
                 - ALL
           resources:
-            {{- toYaml .Values.airflow.scheduler.resources | nindent 12 }}
+            {{- toYaml .Values.airflow.init.resources | nindent 12 }}
 {{- end }}
