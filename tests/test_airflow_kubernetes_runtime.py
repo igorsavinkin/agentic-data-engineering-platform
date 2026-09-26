@@ -464,6 +464,12 @@ class TestAirflowInitJob:
         command_str = " ".join(container["command"])
         assert "airflow db migrate" in command_str
 
+    def test_migrate_failure_propagates(self) -> None:
+        job = self._init_job()
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        script = container["command"][-1]
+        assert "set -e" in script
+
     def test_password_from_secret(self) -> None:
         job = self._init_job()
         container = job["spec"]["template"]["spec"]["containers"][0]
@@ -546,15 +552,17 @@ class TestAirflowSecretsNoPlaintext:
         secrets = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Secret"}
         assert "airflow-keys" in secrets
 
-    def test_fernet_key_is_base64_placeholder(self) -> None:
+    def test_fernet_key_is_valid(self) -> None:
         import base64
+
+        from cryptography.fernet import Fernet
 
         docs = _helm_template()
         secret = [
             d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"] == "airflow-keys"
         ][0]
-        fernet = base64.b64decode(secret["data"]["fernet-key"]).decode("utf-8")
-        assert "dev" in fernet.lower() or "placeholder" in fernet.lower()
+        fernet_b64 = base64.b64decode(secret["data"]["fernet-key"]).decode("utf-8")
+        Fernet(fernet_b64)
 
     def test_no_plaintext_passwords_in_airflow_templates(self) -> None:
         airflow_templates = [
@@ -674,7 +682,17 @@ class TestAirflowWebService:
             for d in docs
             if d["kind"] == "Service" and d["metadata"]["name"] == "airflow-webserver"
         ][0]
-        assert svc["spec"]["type"] == "ClusterIP"
+        assert svc["spec"]["type"] == "NodePort"
+
+    def test_service_nodeport_is_30088(self) -> None:
+        docs = _helm_template()
+        svc = [
+            d
+            for d in docs
+            if d["kind"] == "Service" and d["metadata"]["name"] == "airflow-webserver"
+        ][0]
+        ports = svc["spec"]["ports"]
+        assert ports[0]["nodePort"] == 30088
 
     def test_service_port_is_8080(self) -> None:
         docs = _helm_template()

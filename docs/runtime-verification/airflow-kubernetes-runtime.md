@@ -354,7 +354,7 @@ automatically.
 - Webserver authentication: the Airflow REST API uses FAB authentication
   (admin:admin). API-based DAG triggering requires Basic auth headers.
 
-- One-off migration job cleanup: the `airflow-db-migrate` job used for
+- One-off migration job cleanup: the `airflow-init` job used for
   initial database setup should be cleaned up from the cluster.
 
 - `daily_data_quality`, `ingestion_health`, and `parquet_compaction` are

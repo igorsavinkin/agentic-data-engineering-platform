@@ -144,7 +144,8 @@ spec:
             - bash
             - -c
             - |
-              airflow db migrate &&
+              set -e
+              airflow db migrate
               airflow users create \
                 --username admin --password admin \
                 --firstname Admin --lastname Admin \

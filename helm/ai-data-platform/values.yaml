@@ -125,7 +125,7 @@ secrets:
     # Airflow metadata database password (base64 of "postgres")
     metadataPassword: cG9zdGdyZXM=
     # Fernet key for encrypting sensitive Airflow data (local-dev placeholder)
-    fernetKey: ZGV2LWZlcm5ldC1rZXktbm90LWZvci1wcm9kdWN0aW9u
+    fernetKey: X2NvaVV5UkRZOExrc2ViNi16VWxtdHRtRDZkcnVjb0kzT1FfR0ZFdGZVND0=
     # Secret key for Airflow webserver sessions (local-dev placeholder)
     secretKey: ZGV2LWFpZmxvdy1zZWNyZXQta2V5
 
@@ -333,8 +333,9 @@ airflow:
     replicas: 1
     port: 8080
     service:
-      type: ClusterIP
+      type: NodePort
       port: 8080
+      nodePort: 30088
     resources:
       requests:
         cpu: 100m

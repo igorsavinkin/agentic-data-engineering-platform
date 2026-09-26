@@ -15,6 +15,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+      {{- if .Values.airflow.webserver.service.nodePort }}
+      nodePort: {{ .Values.airflow.webserver.service.nodePort }}
+      {{- end }}
   selector:
     app.kubernetes.io/name: airflow-webserver
     app.kubernetes.io/part-of: ai-data-platform
