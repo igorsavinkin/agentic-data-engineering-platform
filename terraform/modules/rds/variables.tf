@@ -8,14 +8,14 @@ variable "environment" {
   type        = string
 }
 
-variable "vpc_id" {
-  description = "VPC ID for security group placement"
-  type        = string
-}
-
 variable "private_subnet_ids" {
   description = "Private subnet IDs for RDS placement"
   type        = list(string)
+}
+
+variable "security_group_id" {
+  description = "Security group ID for RDS ingress (from networking module)"
+  type        = string
 }
 
 variable "instance_class" {
@@ -38,6 +38,12 @@ variable "password" {
   description = "PostgreSQL master password"
   type        = string
   sensitive   = true
+}
+
+variable "backup_retention_days" {
+  description = "Number of days to retain automated backups"
+  type        = number
+  default     = 7
 }
 
 variable "enable_deletion_protection" {
