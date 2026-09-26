@@ -18,6 +18,11 @@ variable "private_subnet_ids" {
   type        = list(string)
 }
 
+variable "security_group_id" {
+  description = "Security group ID for RDS ingress (from networking module)"
+  type        = string
+}
+
 variable "instance_class" {
   description = "RDS instance class"
   type        = string
@@ -38,6 +43,12 @@ variable "password" {
   description = "PostgreSQL master password"
   type        = string
   sensitive   = true
+}
+
+variable "backup_retention_days" {
+  description = "Number of days to retain automated backups"
+  type        = number
+  default     = 7
 }
 
 variable "enable_deletion_protection" {

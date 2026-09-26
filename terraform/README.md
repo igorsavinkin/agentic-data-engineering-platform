@@ -128,6 +128,23 @@ Bucket configuration:
 
 IAM access for raw-writer, lake-writer, and Airflow is granted by the IAM module (TASK-122).
 
+## PostgreSQL Warehouse
+
+The RDS module provisions a managed PostgreSQL instance for the serving and
+analytical query layer:
+
+- **Engine**: PostgreSQL 16.4
+- **Instance class**: `db.t3.medium` (dev/staging default; 2 vCPU, 4 GiB RAM)
+- **Storage**: 20 GiB gp3, auto-scaling to 100 GiB, encrypted at rest
+- **Placement**: private subnets via DB subnet group (no public accessibility)
+- **Security**: ingress restricted to the EKS node security group (port 5432)
+- **Backups**: automated, 7-day retention (configurable), backup window 03:00-04:00 UTC
+- **Maintenance**: Monday 04:00-05:00 UTC
+- **Deletion protection**: controlled by `enable_deletion_protection` variable; final snapshot taken when enabled
+
+Credentials are passed as variables at plan/apply time and never committed to Git.
+Secrets Manager integration for runtime credential injection is handled by the IAM module (TASK-122).
+
 ## Implementation Progress
 
 | Module     | Task     | Status      |
@@ -135,6 +152,6 @@ IAM access for raw-writer, lake-writer, and Airflow is granted by the IAM module
 | networking | TASK-117 | Complete    |
 | ecr        | TASK-118 | Complete    |
 | s3         | TASK-119 | Complete    |
-| rds        | TASK-120 | Pending     |
+| rds        | TASK-120 | Complete    |
 | eks        | TASK-121 | Pending     |
 | iam        | TASK-122 | Pending     |
