@@ -10,8 +10,8 @@ locals {
 # ------------------------------------------------------------------------------
 
 resource "aws_db_subnet_group" "this" {
-  name        = "${local.name_prefix}-rds"
-  subnet_ids  = var.private_subnet_ids
+  name       = "${local.name_prefix}-rds"
+  subnet_ids = var.private_subnet_ids
 
   tags = merge(var.tags, {
     Name = "${local.name_prefix}-rds-subnet-group"

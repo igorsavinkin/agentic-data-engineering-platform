@@ -143,8 +143,8 @@ resource "aws_iam_policy" "s3_write" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = ["s3:ListBucket"]
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
         Resource = [var.data_bucket_arn]
         Condition = {
           StringLike = {
@@ -153,8 +153,8 @@ resource "aws_iam_policy" "s3_write" {
         }
       },
       {
-        Effect = "Allow"
-        Action = ["s3:PutObject"]
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
         Resource = ["${var.data_bucket_arn}/${each.value}/*"]
       },
     ]
@@ -184,8 +184,8 @@ resource "aws_iam_policy" "s3_read" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = ["s3:ListBucket"]
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
         Resource = [var.data_bucket_arn]
         Condition = {
           StringLike = {
@@ -194,8 +194,8 @@ resource "aws_iam_policy" "s3_read" {
         }
       },
       {
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
         Resource = ["${var.data_bucket_arn}/${each.value}/*"]
       },
     ]
