@@ -318,3 +318,54 @@ Explicitly requested workflow/tooling maintenance outside the numbered roadmap
 may use a dedicated `codex/<maintenance-name>` branch. Keep it separate from
 TASK branches and do not consume or start a roadmap task as part of maintenance.
 For the two-lane workflow and dependency gates, follow `ai/AGENT_WORKFLOW.md`.
+
+<!-- BEGIN AWS Agent Toolkit rules -->
+
+## 17. AWS Guidance
+
+- Where these AWS rules conflict with the project's own instructions, the
+  project's instructions take precedence.
+- Prefer the AWS MCP Server for AWS interactions - it provides sandboxed
+  execution, observability, and audit logging. If unavailable, use the
+  AWS CLI directly.
+- Before starting a task, check whether a relevant AWS skill is available.
+  Load the skill with `retrieve_skill` and prefer its guidance over
+  general knowledge.
+- When uncertain about specific AWS details (API parameters, permissions,
+  limits, error codes), verify against documentation rather than guessing.
+  State uncertainty explicitly if you cannot confirm.
+- This project uses Terraform as its canonical infrastructure-as-code
+  implementation. Use existing Terraform for all infrastructure changes.
+  Do not introduce new IaC frameworks (CDK, CloudFormation, Pulumi, etc.)
+  unless explicitly required by the task specification.
+- When working with infrastructure, follow AWS Well-Architected Framework
+  principles.
+- Do not use em dashes in AWS resource names or descriptions. Use
+  hyphens instead.
+
+### Secret Safety
+
+- MUST load the `aws-secrets-manager` skill first for any secret,
+  credential, API key, token, or password task. MUST NOT call
+  `secretsmanager get-secret-value` or `batch-get-secret-value`, and MUST
+  NOT hit the Secrets Manager Agent daemon directly. MUST use
+  `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` with
+  `asm-exec` so the secret resolves at runtime without entering context.
+
+### AWS Safety Constraints (Project-Local)
+
+- Read-only AWS operations are allowed in eu-north-1.
+- `terraform fmt`, `terraform validate`, and `terraform plan` are allowed
+  without approval.
+- `terraform apply` and `terraform destroy` require explicit human
+  approval before execution.
+- AWS resource mutations outside the approved Terraform/Helm workflow
+  require explicit human approval.
+- Do NOT create IAM users or long-lived access keys.
+- Never expose or commit credentials, tokens, Terraform state files
+  (`*.tfstate`, `*.tfstate.backup`), or Terraform plan files
+  (`*.tfplan`, `*.out`).
+- AWS CLI profile: `data-platform`.
+- Terraform profile: `data-platform-terraform` via `credential_process`.
+
+<!-- END AWS Agent Toolkit rules -->
