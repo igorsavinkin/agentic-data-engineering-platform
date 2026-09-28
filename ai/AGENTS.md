@@ -325,9 +325,16 @@ For the two-lane workflow and dependency gates, follow `ai/AGENT_WORKFLOW.md`.
 
 - Where these AWS rules conflict with the project's own instructions, the
   project's instructions take precedence.
-- Prefer the AWS MCP Server for AWS interactions - it provides sandboxed
-  execution, observability, and audit logging. If unavailable, use the
-  AWS CLI directly.
+
+- -- Use the most appropriate AWS interface for the task:
+  - - Prefer AWS CLI for simple, well-defined read-only queries and diagnostics.
+  - - Prefer AWS MCP and relevant AWS skills for discovery, unfamiliar AWS
+    operations, multi-service investigation, or when structured AWS guidance
+    improves reliability.
+  - - Use Terraform as the canonical interface for infrastructure changes.
+  - - Use kubectl and Helm for Kubernetes deployment and diagnostics.
+- -- Do not use AWS MCP when a simple AWS CLI read-only command is clearer
+  and more efficient.
 - Before starting a task, check whether a relevant AWS skill is available.
   Load the skill with `retrieve_skill` and prefer its guidance over
   general knowledge.
