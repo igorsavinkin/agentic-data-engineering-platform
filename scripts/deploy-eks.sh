@@ -112,6 +112,8 @@ extract_outputs() {
     ECR_WAREHOUSE_LOADER=$(terraform output -raw ecr_repositories | python3 -c "import sys,json; print(json.load(sys.stdin)['warehouse-loader'])")
     ECR_API=$(terraform output -raw ecr_repositories | python3 -c "import sys,json; print(json.load(sys.stdin)['api'])")
 
+    AWS_REGION=$(terraform output -raw aws_region)
+
     IAM_ROLES=$(terraform output -json iam_service_role_arns)
     IAM_ROLE_INGESTION=$(echo "$IAM_ROLES" | python3 -c "import sys,json; print(json.load(sys.stdin)['ingestion'])")
     IAM_ROLE_PROCESSOR=$(echo "$IAM_ROLES" | python3 -c "import sys,json; print(json.load(sys.stdin)['processor'])")
@@ -132,7 +134,6 @@ extract_outputs() {
 
 ecr_login() {
     log "Logging in to ECR..."
-    AWS_REGION=$(cd "$TERRAFORM_DIR" && terraform output -raw aws_region 2>/dev/null || echo "eu-north-1")
     aws ecr get-login-password --region "$AWS_REGION" | \
         docker login --username AWS --password-stdin "$(echo "$ECR_INGESTION" | cut -d/ -f1)"
 }
@@ -178,7 +179,6 @@ build_and_push_images() {
 
 configure_kubectl() {
     log "Configuring kubectl for EKS cluster: $EKS_CLUSTER_NAME"
-    AWS_REGION=$(cd "$TERRAFORM_DIR" && terraform output -raw aws_region 2>/dev/null || echo "eu-north-1")
     aws eks update-kubeconfig \
         --name "$EKS_CLUSTER_NAME" \
         --region "$AWS_REGION"
@@ -191,7 +191,7 @@ install_strimzi() {
     kubectl create namespace strimzi --dry-run=client -o yaml | kubectl apply -f -
 
     if ! helm status strimzi -n strimzi &>/dev/null; then
-        helm install strimzi oci://quay.io/strimzi-operator/strimzi-kafka-operator \
+        helm install strimzi oci://quay.io/strimzi-helm/strimzi-kafka-operator \
             --version "$STRIMZI_VERSION" \
             --namespace strimzi \
             --wait
@@ -290,6 +290,22 @@ create_eks_secrets() {
         --from-literal=bestbuy-api-key="${BESTBUY_API_KEY:-placeholder}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
+    if kubectl get secret airflow-keys -n "$NAMESPACE" &>/dev/null; then
+        log "  airflow-keys already exists, skipping."
+    else
+        log "  Generating Airflow Fernet key and secret key..."
+        local fernet_key
+        fernet_key=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+        local secret_key
+        secret_key=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
+        kubectl create secret generic airflow-keys \
+            --namespace "$NAMESPACE" \
+            --from-literal=fernet-key="$fernet_key" \
+            --from-literal=secret-key="$secret_key" \
+            --dry-run=client -o yaml | kubectl apply -f -
+    fi
+
     log "Secrets created."
 }
 
@@ -297,12 +313,16 @@ helm_deploy() {
     local resolved_values="$1"
     log "Deploying Helm release..."
 
+    local airflow_meta_pw
+    airflow_meta_pw=$(echo -n "$TF_VAR_rds_password" | base64)
+
     helm upgrade --install "$RELEASE_NAME" "$HELM_DIR" \
         --namespace "$NAMESPACE" \
         --create-namespace \
         -f "$HELM_DIR/values.yaml" \
         -f "$resolved_values" \
         --set images.warehouseMigration.tag="migrations-$IMAGE_TAG" \
+        --set secrets.airflow.metadataPassword="$airflow_meta_pw" \
         --wait \
         --timeout 600s
 

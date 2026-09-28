@@ -87,11 +87,8 @@ spec:
             initialDelaySeconds: {{ .Values.warehouseLoader.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.warehouseLoader.livenessProbe.periodSeconds }}
           readinessProbe:
-            exec:
-              command:
-                - python
-                - "-c"
-                - "import os; os.kill(1, 0)"
+            tcpSocket:
+              port: {{ .Values.prometheus.metricsPort }}
             initialDelaySeconds: {{ .Values.warehouseLoader.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.warehouseLoader.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.warehouseLoader.readinessProbe.timeoutSeconds }}

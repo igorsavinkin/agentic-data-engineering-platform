@@ -160,7 +160,7 @@ def check_kafka_topics(report: VerificationReport) -> None:
         report.add("Kafka: topics", False, str(e))
 
 
-def check_s3(report: VerificationReport) -> None:
+def check_s3(report: VerificationReport, bucket_name: str) -> None:
     try:
         result = subprocess.run(
             [
@@ -179,16 +179,23 @@ def check_s3(report: VerificationReport) -> None:
                 "--",
                 "python",
                 "-c",
-                "import boto3; s3=boto3.client('s3'); buckets=[b['Name'] for b in s3.list_buckets()['Buckets']]; print(len(buckets))",
+                f"import boto3; s3=boto3.client('s3'); "
+                f"s3.head_bucket(Bucket='{bucket_name}'); "
+                f"resp=s3.list_objects_v2(Bucket='{bucket_name}', Prefix='bronze/', MaxKeys=1); "
+                f"print('ok')",
             ],
             capture_output=True,
             text=True,
             timeout=15,
         )
         ok = result.returncode == 0
-        report.add("S3: IRSA access", ok, "boto3 OK" if ok else result.stderr[:100])
+        report.add(
+            "S3: IRSA bucket access",
+            ok,
+            f"bucket={bucket_name}" if ok else result.stderr[:100],
+        )
     except Exception as e:
-        report.add("S3: IRSA access", False, str(e))
+        report.add("S3: IRSA bucket access", False, str(e))
 
 
 def check_postgresql(report: VerificationReport) -> None:
@@ -241,33 +248,160 @@ def check_data_flow(report: VerificationReport) -> None:
             "jsonpath={.items[0].metadata.name}",
             namespace=STRIMZI_NAMESPACE,
         )
+        for topic in ["products.raw.v1", "products.validated.v1"]:
+            result = subprocess.run(
+                [
+                    "kubectl",
+                    "exec",
+                    "-n",
+                    STRIMZI_NAMESPACE,
+                    pod,
+                    "--",
+                    "/opt/kafka/bin/kafka-run-class.sh",
+                    "kafka.tools.GetOffsetShell",
+                    "--broker-list",
+                    "localhost:9092",
+                    "--topic",
+                    topic,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            has_data = bool(result.stdout.strip())
+            label = f"Data flow: {topic} offsets"
+            report.add(
+                label,
+                has_data,
+                result.stdout.strip()[:80] if has_data else "no offsets yet",
+            )
+    except Exception as e:
+        report.add("Data flow: raw events in Kafka", False, str(e))
+
+
+def check_s3_parquet(report: VerificationReport, bucket_name: str) -> None:
+    try:
         result = subprocess.run(
             [
                 "kubectl",
                 "exec",
                 "-n",
-                STRIMZI_NAMESPACE,
-                pod,
+                NAMESPACE,
+                kubectl(
+                    "get",
+                    "pod",
+                    "-l",
+                    "app.kubernetes.io/component=raw-writer",
+                    "-o",
+                    "jsonpath={.items[0].metadata.name}",
+                ),
                 "--",
-                "/opt/kafka/bin/kafka-run-class.sh",
-                "kafka.tools.GetOffsetShell",
-                "--broker-list",
-                "localhost:9092",
-                "--topic",
-                "products.raw.v1",
+                "python",
+                "-c",
+                f"import boto3; s3=boto3.client('s3'); "
+                f"bronze=s3.list_objects_v2(Bucket='{bucket_name}', "
+                f"Prefix='bronze/', MaxKeys=5); "
+                f"silver=s3.list_objects_v2(Bucket='{bucket_name}', "
+                f"Prefix='silver/', MaxKeys=5); "
+                f"b=bronze.get('KeyCount',0); s=silver.get('KeyCount',0); "
+                f"print(f'bronze={{b}} silver={{s}}')",
             ],
             capture_output=True,
             text=True,
             timeout=15,
         )
-        has_data = bool(result.stdout.strip())
+        ok = result.returncode == 0
         report.add(
-            "Data flow: raw events in Kafka",
-            has_data,
-            result.stdout.strip()[:80] if has_data else "no offsets yet",
+            "S3: Parquet objects",
+            ok,
+            result.stdout.strip() if ok else result.stderr[:100],
         )
     except Exception as e:
-        report.add("Data flow: raw events in Kafka", False, str(e))
+        report.add("S3: Parquet objects", False, str(e))
+
+
+def check_warehouse_data(report: VerificationReport) -> None:
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "exec",
+                "-n",
+                NAMESPACE,
+                kubectl(
+                    "get",
+                    "pod",
+                    "-l",
+                    "app.kubernetes.io/component=warehouse-loader",
+                    "-o",
+                    "jsonpath={.items[0].metadata.name}",
+                ),
+                "--",
+                "python",
+                "-c",
+                "import os, psycopg2; conn=psycopg2.connect("
+                "host=os.environ['WAREHOUSE_DB_HOST'],"
+                "port=os.environ['WAREHOUSE_DB_PORT'],"
+                "dbname=os.environ['WAREHOUSE_DB_NAME'],"
+                "user=os.environ['WAREHOUSE_DB_USER'],"
+                "password=os.environ['WAREHOUSE_DB_PASSWORD'],"
+                "); cur=conn.cursor(); "
+                'cur.execute("SELECT table_name FROM information_schema.tables '
+                "WHERE table_schema='public'\"); "
+                "tables=[r[0] for r in cur.fetchall()]; "
+                "print(f'tables={len(tables)}: {tables[:5]}'); conn.close()",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        ok = result.returncode == 0
+        report.add(
+            "Warehouse: tables loaded",
+            ok,
+            result.stdout.strip() if ok else result.stderr[:100],
+        )
+    except Exception as e:
+        report.add("Warehouse: tables loaded", False, str(e))
+
+
+def check_agent_query(report: VerificationReport, api_url: str) -> None:
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "exec",
+                "-n",
+                NAMESPACE,
+                kubectl(
+                    "get",
+                    "pod",
+                    "-l",
+                    "app.kubernetes.io/component=api",
+                    "-o",
+                    "jsonpath={.items[0].metadata.name}",
+                ),
+                "--",
+                "python",
+                "-c",
+                f"import urllib.request, json; "
+                f"data=json.dumps({{'query': 'how many products are loaded?'}}).encode(); "
+                f"req=urllib.request.Request('{api_url}/api/v1/agent/query', "
+                f"data=data, headers={{'Content-Type': 'application/json'}}); "
+                f"r=urllib.request.urlopen(req); print(r.status)",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        ok = result.returncode == 0 and "200" in result.stdout
+        report.add(
+            "Agent: query round-trip",
+            ok,
+            result.stdout.strip() if ok else result.stderr[:100],
+        )
+    except Exception as e:
+        report.add("Agent: query round-trip", False, str(e))
 
 
 def main() -> int:
@@ -276,6 +410,11 @@ def main() -> int:
         "--api-url", default="http://localhost:8000", help="API base URL for health checks"
     )
     parser.add_argument("--timeout", type=int, default=30, help="Timeout per check in seconds")
+    parser.add_argument(
+        "--bucket-name",
+        default="ai-data-platform-data",
+        help="S3 data lake bucket name for access verification",
+    )
     parser.add_argument(
         "--skip-data-flow", action="store_true", help="Skip data flow checks (no ingestion yet)"
     )
@@ -288,11 +427,14 @@ def main() -> int:
     check_pods(report)
     check_api_health(report, args.api_url)
     check_kafka_topics(report)
-    check_s3(report)
+    check_s3(report, args.bucket_name)
     check_postgresql(report)
 
     if not args.skip_data_flow:
         check_data_flow(report)
+        check_s3_parquet(report, args.bucket_name)
+        check_warehouse_data(report)
+        check_agent_query(report, args.api_url)
 
     report.print_summary()
     return 1 if report.failed > 0 else 0

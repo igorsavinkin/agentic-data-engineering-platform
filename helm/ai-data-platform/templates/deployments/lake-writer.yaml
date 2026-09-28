@@ -69,11 +69,8 @@ spec:
             initialDelaySeconds: {{ .Values.lakeWriter.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.lakeWriter.livenessProbe.periodSeconds }}
           readinessProbe:
-            exec:
-              command:
-                - python
-                - "-c"
-                - "import os; os.kill(1, 0)"
+            tcpSocket:
+              port: {{ .Values.prometheus.metricsPort }}
             initialDelaySeconds: {{ .Values.lakeWriter.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.lakeWriter.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.lakeWriter.readinessProbe.timeoutSeconds }}
