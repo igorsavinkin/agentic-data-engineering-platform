@@ -20,6 +20,9 @@ spec:
         app.kubernetes.io/part-of: ai-data-platform
         app.kubernetes.io/component: api
     spec:
+      {{- if .Values.serviceAccounts.enabled }}
+      serviceAccountName: {{ .Values.serviceAccounts.services.api.name }}
+      {{- end }}
       containers:
         - name: api
           image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"

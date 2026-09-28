@@ -20,6 +20,9 @@ spec:
         app.kubernetes.io/part-of: ai-data-platform
         app.kubernetes.io/component: ingestion
     spec:
+      {{- if .Values.serviceAccounts.enabled }}
+      serviceAccountName: {{ .Values.serviceAccounts.services.ingestion.name }}
+      {{- end }}
       containers:
         - name: ingestion
           image: "{{ .Values.images.ingestion.repository }}:{{ .Values.images.ingestion.tag }}"
@@ -63,7 +66,7 @@ spec:
               command:
                 - python
                 - "-c"
-                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: {{ .Values.ingestion.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.ingestion.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.ingestion.readinessProbe.timeoutSeconds }}

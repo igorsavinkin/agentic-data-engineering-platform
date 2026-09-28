@@ -20,6 +20,9 @@ spec:
         app.kubernetes.io/part-of: ai-data-platform
         app.kubernetes.io/component: warehouse-loader
     spec:
+      {{- if .Values.serviceAccounts.enabled }}
+      serviceAccountName: {{ .Values.serviceAccounts.services.warehouseLoader.name }}
+      {{- end }}
       containers:
         - name: warehouse-loader
           image: "{{ .Values.images.warehouseLoader.repository }}:{{ .Values.images.warehouseLoader.tag }}"
@@ -88,7 +91,7 @@ spec:
               command:
                 - python
                 - "-c"
-                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('postgresql',5432)); s.close()"
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: {{ .Values.warehouseLoader.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.warehouseLoader.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.warehouseLoader.readinessProbe.timeoutSeconds }}

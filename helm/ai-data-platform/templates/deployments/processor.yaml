@@ -20,6 +20,9 @@ spec:
         app.kubernetes.io/part-of: ai-data-platform
         app.kubernetes.io/component: processor
     spec:
+      {{- if .Values.serviceAccounts.enabled }}
+      serviceAccountName: {{ .Values.serviceAccounts.services.processor.name }}
+      {{- end }}
       containers:
         - name: processor
           image: "{{ .Values.images.processor.repository }}:{{ .Values.images.processor.tag }}"
@@ -57,7 +60,7 @@ spec:
               command:
                 - python
                 - "-c"
-                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: {{ .Values.processor.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.processor.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.processor.readinessProbe.timeoutSeconds }}

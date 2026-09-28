@@ -132,6 +132,37 @@ secrets:
     fernetKey: ""
     secretKey: ""
 
+# ---------------------------------------------------------------------------
+# Service accounts — IRSA on EKS
+# ---------------------------------------------------------------------------
+# Disabled by default for local kind development. On EKS, set enabled: true
+# and provide the IAM role ARN annotation for each service so that IRSA
+# (IAM Roles for Service Accounts) injects AWS credentials automatically.
+serviceAccounts:
+  enabled: false
+  services:
+    ingestion:
+      name: ingestion
+      annotations: {}
+    processor:
+      name: processor
+      annotations: {}
+    rawWriter:
+      name: raw-writer
+      annotations: {}
+    lakeWriter:
+      name: lake-writer
+      annotations: {}
+    warehouseLoader:
+      name: warehouse-loader
+      annotations: {}
+    api:
+      name: api
+      annotations: {}
+    agent:
+      name: agent
+      annotations: {}
+
 # ===========================================================================
 # Service components
 # ===========================================================================
@@ -360,6 +391,7 @@ airflow:
 # Kafka — single-broker KRaft mode (combined broker + controller)
 # ---------------------------------------------------------------------------
 kafka:
+  enabled: true
   replicas: 1
   # KAFKA_NODE_ID — broker identifier in the KRaft quorum.
   nodeId: 1

@@ -1,0 +1,260 @@
+# values-eks.yaml — AWS EKS deployment overrides
+#
+# This file configures the Helm chart for deployment on AWS EKS.
+# It is used together with the base values.yaml:
+#
+#   helm upgrade --install ai-platform helm/ai-data-platform \
+#     -f helm/ai-data-platform/values.yaml \
+#     -f helm/ai-data-platform/values-eks.yaml \
+#     --set images.ingestion.repository="<ECR_URL>" \
+#     ... (see scripts/deploy-eks.sh for the full command)
+#
+# PLACEHOLDER VALUES: Several values below use angle-bracket placeholders
+# (e.g. <RDS_ENDPOINT>, <IAM_ROLE_ARN>). The deploy script replaces these
+# with actual values from `terraform output`. Do not edit placeholders.
+
+global:
+  imagePullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Container images — ECR repositories (filled by deploy script)
+# ---------------------------------------------------------------------------
+images:
+  ingestion:
+    repository: "<ECR_INGESTION_URL>"
+    tag: "latest"
+  processor:
+    repository: "<ECR_PROCESSOR_URL>"
+    tag: "latest"
+  rawWriter:
+    repository: "<ECR_RAW_WRITER_URL>"
+    tag: "latest"
+  lakeWriter:
+    repository: "<ECR_LAKE_WRITER_URL>"
+    tag: "latest"
+  warehouseLoader:
+    repository: "<ECR_WAREHOUSE_LOADER_URL>"
+    tag: "latest"
+  api:
+    repository: "<ECR_API_URL>"
+    tag: "latest"
+  warehouseMigration:
+    repository: "<ECR_WAREHOUSE_LOADER_URL>"
+    tag: "latest"
+
+# ---------------------------------------------------------------------------
+# Platform configuration — Strimzi Kafka, S3 via IRSA
+# ---------------------------------------------------------------------------
+platform:
+  environment: eks
+  # Strimzi Kafka bootstrap in the strimzi namespace.
+  kafkaBootstrapServers: "platform-cluster-kafka-bootstrap.strimzi:9092"
+  # Empty endpoint — services use boto3 default chain (IRSA) for S3 access.
+  minioEndpoint: ""
+
+# ---------------------------------------------------------------------------
+# Database configuration — RDS PostgreSQL
+# ---------------------------------------------------------------------------
+database:
+  host: "<RDS_ENDPOINT>"
+  port: "5432"
+  name: dataplatform
+  user: platform_admin
+
+# ---------------------------------------------------------------------------
+# Airflow metadata — same RDS instance, separate database
+# ---------------------------------------------------------------------------
+airflowMetadata:
+  host: "<RDS_ENDPOINT>"
+  port: "5432"
+  name: airflow
+  user: platform_admin
+
+# ---------------------------------------------------------------------------
+# Service accounts — IRSA with IAM role annotations (filled by deploy script)
+# ---------------------------------------------------------------------------
+serviceAccounts:
+  enabled: true
+  services:
+    ingestion:
+      name: ingestion
+      annotations:
+        eks.amazonaws.com/role-arn: "<IAM_ROLE_INGESTION>"
+    processor:
+      name: processor
+      annotations:
+        eks.amazonaws.com/role-arn: "<IAM_ROLE_PROCESSOR>"
+    rawWriter:
+      name: raw-writer
+      annotations:
+        eks.amazonaws.com/role-arn: "<IAM_ROLE_RAW_WRITER>"
+    lakeWriter:
+      name: lake-writer
+      annotations:
+        eks.amazonaws.com/role-arn: "<IAM_ROLE_LAKE_WRITER>"
+    warehouseLoader:
+      name: warehouse-loader
+      annotations:
+        eks.amazonaws.com/role-arn: "<IAM_ROLE_WAREHOUSE_LOADER>"
+    api:
+      name: api
+      annotations:
+        eks.amazonaws.com/role-arn: "<IAM_ROLE_API>"
+    agent:
+      name: agent
+      annotations:
+        eks.amazonaws.com/role-arn: "<IAM_ROLE_AGENT>"
+
+# ---------------------------------------------------------------------------
+# Service components — production-sized resources
+# ---------------------------------------------------------------------------
+ingestion:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+processor:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+rawWriter:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+lakeWriter:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+warehouseLoader:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+api:
+  replicas: 1
+  service:
+    type: LoadBalancer
+    port: 8000
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Kafka — disabled (Strimzi provides Kafka in the strimzi namespace)
+# ---------------------------------------------------------------------------
+kafka:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Infrastructure — disabled (RDS and S3 provide these)
+# ---------------------------------------------------------------------------
+minio:
+  enabled: false
+
+postgresql:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Airflow — enabled with CeleryExecutor for multi-worker
+# ---------------------------------------------------------------------------
+airflow:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# NetworkPolicy — enabled for pod-level traffic isolation
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: ai-data-platform
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: ai-data-platform
+    # DNS resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Kafka (Strimzi in strimzi namespace)
+    - ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9093
+    # S3 (HTTPS to AWS)
+    - ports:
+        - protocol: TCP
+          port: 443
+    # RDS (PostgreSQL)
+    - ports:
+        - protocol: TCP
+          port: 5432
+
+# ---------------------------------------------------------------------------
+# HPA — enabled for API autoscaling
+# ---------------------------------------------------------------------------
+hpa:
+  enabled: true
+  targetDeployment: api
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+
+# ---------------------------------------------------------------------------
+# Ingress — disabled (using LoadBalancer Service for API)
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Monitoring — enabled for observability
+# ---------------------------------------------------------------------------
+prometheus:
+  enabled: true
+
+grafana:
+  enabled: true
+
+opentelemetry:
+  enabled: false

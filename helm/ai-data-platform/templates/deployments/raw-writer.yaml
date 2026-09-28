@@ -20,6 +20,9 @@ spec:
         app.kubernetes.io/part-of: ai-data-platform
         app.kubernetes.io/component: raw-writer
     spec:
+      {{- if .Values.serviceAccounts.enabled }}
+      serviceAccountName: {{ .Values.serviceAccounts.services.rawWriter.name }}
+      {{- end }}
       containers:
         - name: raw-writer
           image: "{{ .Values.images.rawWriter.repository }}:{{ .Values.images.rawWriter.tag }}"
@@ -70,7 +73,7 @@ spec:
               command:
                 - python
                 - "-c"
-                - "import socket; s=socket.socket(); s.settimeout(2); s.connect(('kafka',29092)); s.close()"
+                - "import os; os.kill(1, 0)"
             initialDelaySeconds: {{ .Values.rawWriter.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.rawWriter.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.rawWriter.readinessProbe.timeoutSeconds }}
