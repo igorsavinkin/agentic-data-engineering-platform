@@ -1,150 +1,159 @@
-# TASK-123 Qwen Review — AWS Deployment
+# TASK-123 Independent Review — AWS Deployment
 
-**Reviewer:** Qwen Code (independent review, no code modified)
-**Date:** 2026-09-29
-**Task:** TASK-123 — AWS Deployment
-**Reviewed commit:** `d52c5e473f387dbaef8fb99dc07877e34977e882` on `feature/TASK-123`
-**Git range:** `97c52a84f1c076d165ac356099cbcbabc38fcfd3...d52c5e473f387dbaef8fb99dc07877e34977e882` (single commit)
-**Scope:** Helm EKS wiring, `values-eks.yaml`, `scripts/deploy-eks.sh`, `scripts/verify_eks_deployment.py`, `docs/deployment/aws-eks-deployment.md`
-**Verdict:** CHANGES REQUIRED
+| Field | Value |
+|---|---|
+| **Task ID** | TASK-123 — AWS Deployment |
+| **Review date** | 2026-09-29 |
+| **Reviewer** | Qwen Code (independent review, no code modified) |
+| **Reviewed commit** | `8eff888936a163e511aca00edc968399db3e13e8` on `feature/TASK-123` |
+| **Git range** | `97c52a84f1c076d165ac356099cbcbabc38fcfd3..8eff888936a163e511aca00edc968399db3e13e8` (three commits) |
+| **Scope** | AWS EKS deployment wiring (Helm + Terraform), `scripts/deploy-eks.sh`, `scripts/verify_eks_deployment.py`, `docs/deployment/aws-eks-deployment.md` |
+| **Verdict** | **APPROVED WITH NON-BLOCKING FINDINGS** |
+
+> **Note on prior reviews.** Commit `d52c5e4` (feature) and `1ac2744` (first fix) were previously reviewed; the last review (recorded in this file) returned `CHANGES REQUIRED` with H1–H2 and M1–M3 plus minors. Commit `8eff888` ("address Qwen Round 2 findings H1-H2, M1-M3") is the implementation agent's response. This review re-evaluates the **current HEAD** (`8eff888`) in full and verifies whether those findings were actually resolved.
 
 ---
 
 ## 1. Requirements Coverage
 
-| # | Requirement (TASK-123 / ROADMAP M14) | Status | Evidence |
+Source of requirements: `ai/tasks/TASK-123-aws-deployment.md`, `ai/PROJECT.md` §8 (Local-First), §11 (Security), §4 (component ownership), `ai/ROADMAP.md` M14 (AWS target architecture).
+
+| # | Requirement | Status | Implementation evidence |
 |---|---|---|---|
-| 1 | Deploy the platform to AWS using Terraform + Helm | **Partial** | `scripts/deploy-eks.sh` orchestrates terraform apply → ECR push → Strimzi → Helm. Helm renders cleanly for EKS (independently verified). |
-| 2 | Verify end-to-end: ingestion produces events, processing works, Parquet in S3, PostgreSQL loaded, API responds, agent answers | **Partial** | `scripts/verify_eks_deployment.py` checks pods, API health, topic existence, S3/Postgres connectivity, and raw-topic offsets only. Does not verify processing, Parquet content, PostgreSQL data, or the agent (Finding 5). |
-| 3 | Document deployment process and prerequisites | **Met** | `docs/deployment/aws-eks-deployment.md` covers architecture, prerequisites, step-by-step apply, verification, access, tear-down, troubleshooting. |
-| 4 | Tear-down instructions included | **Met** | `destroy` command in `deploy-eks.sh`; documented in the guide. |
-| 5 | Never commit credentials/access keys/secrets | **Met** | No secrets in the diff. Placeholders (`<…>`) in `values-eks.yaml`; RDS password via `TF_VAR_rds_password`; API keys default to `placeholder`. |
-| 6 | Use existing Helm charts and Terraform modules | **Met** | Reuses the existing chart and TASK-116–122 modules; adds only environment wiring. |
-| 7 | Add deterministic tests where applicable | **Not met** | No tests added for `deploy-eks.sh` or `verify_eks_deployment.py` (Finding 8). |
+| 1 | Deploy the platform to AWS using Terraform + Helm | **Met (with documented deferral)** | `scripts/deploy-eks.sh` orchestrates terraform apply → ECR push → Strimzi → Helm. Airflow is disabled on EKS (`airflow.enabled: false`), consistent with the M14 target architecture which does not list Airflow. |
+| 2 | Verify E2E: ingestion → processing → Parquet in S3 → PostgreSQL loaded → API responds → agent answers | **Met** | `scripts/verify_eks_deployment.py` checks pods, API health, Kafka topics, bronze/silver Parquet (from IAM-correct pods), RDS connection, warehouse tables, and the agent endpoint. The agent check now targets the real endpoint (see §4). |
+| 3 | Document deployment process and prerequisites | **Met** | `docs/deployment/aws-eks-deployment.md` covers architecture, prerequisites, apply steps, verification, access, tear-down, troubleshooting. |
+| 4 | Tear-down instructions included | **Met** | `deploy-eks.sh destroy` + documentation. |
+| 5 | Never commit credentials/access keys/secrets | **Met** | Diff scan found no secrets. RDS password flows via `TF_VAR_rds_password`; no hardcoded credentials. |
+| 6 | Use existing Helm charts and Terraform modules | **Met** | Reuses the existing chart and TASK-116–122 modules; only adds environment wiring and the `aws_region` output. |
+| 7 | Add deterministic tests where applicable | **Not met** | No tests added for `deploy-eks.sh` or `verify_eks_deployment.py` (carried over). See m1. |
 
 ---
 
 ## 2. Git Diff Review
 
-**Scope correctness:** The 15 changed files are all plausibly within TASK-123 (EKS deployment wiring + docs + scripts). No unrelated application-code changes.
+The reviewed range contains three commits:
 
-**Changed files:**
-- `docs/deployment/aws-eks-deployment.md` (new, 245 lines)
-- `helm/ai-data-platform/values-eks.yaml` (new, 260 lines)
-- `helm/ai-data-platform/values.yaml` (+32 lines: `serviceAccounts` block, `kafka.enabled`)
-- `helm/ai-data-platform/templates/serviceaccounts.yaml` (new, 20 lines)
-- `helm/ai-data-platform/templates/deployments/{api,ingestion,kafka,lake-writer,processor,raw-writer,warehouse-loader}.yaml`
-- `helm/ai-data-platform/templates/jobs/kafka-topics.yaml`
-- `helm/ai-data-platform/templates/services/kafka.yaml`
-- `scripts/deploy-eks.sh` (new, 427 lines)
-- `scripts/verify_eks_deployment.py` (new, 302 lines)
+- `d52c5e473f387dbaef8fb99dc07877e34977e882` — `feat(TASK-123): AWS EKS deployment wiring, scripts, and documentation`
+- `1ac2744b86a1dd133060446403337b5d5ea42405` — `fix(TASK-123): address Qwen review findings H1, M1-M5`
+- `8eff888936a163e511aca00edc968399db3e13e8` — `fix(TASK-123): address Qwen Round 2 findings H1-H2, M1-M3`
 
-**Architectural changes:** ServiceAccount/IRSA wiring (new template + `serviceAccountName` on deployments) is additive and consistent with TASK-122. Gating the Kafka Deployment/Service/Job on `kafka.enabled` is a reasonable environment toggle; `kafka.enabled: true` was added to base `values.yaml` so kind behavior is preserved (independently verified: kind render still emits the Kafka Deployment).
+**Changed files (full range):**
 
-**Notable change flagged:** Readiness probes for five consumer services were changed from a real TCP dependency check to `os.kill(1, 0)` (see Finding 4). The API service retains its HTTP readiness probe.
+```
+A docs/deployment/aws-eks-deployment.md
+A docs/reviews/TASK-123-review.md
+M helm/ai-data-platform/templates/deployments/{api,ingestion,kafka,lake-writer,processor,raw-writer,warehouse-loader}.yaml
+M helm/ai-data-platform/templates/jobs/kafka-topics.yaml
+A helm/ai-data-platform/templates/serviceaccounts.yaml
+M helm/ai-data-platform/templates/services/kafka.yaml
+A helm/ai-data-platform/values-eks.yaml
+M helm/ai-data-platform/values.yaml
+A scripts/deploy-eks.sh
+A scripts/verify_eks_deployment.py
+M terraform/outputs.tf
+```
 
-**Accidental changes:** None observed. No debug code, dead code, generated artifacts, or secrets committed.
+**Scope correctness.** All changed files are within TASK-123. No unrelated application-code changes; no architecture-boundary changes. The Helm changes are additive (IRSA `serviceAccountName` injection, `kafka.enabled` gating) and consistent with TASK-121/122.
+
+**Architectural changes.** Disabling Airflow on EKS is the only notable decision. This is consistent with the M14 target architecture (no Airflow), is clearly documented in `values-eks.yaml`, and does not break the E2E data path (see Non-Defect Observation N1).
+
+**Accidental changes.** None. No debug code, dead code beyond noted dead config, generated artifacts, or secrets.
+
+**Fix-commit delta (`8eff888` — what actually changed and whether it resolves the prior findings):**
+
+| Prior finding | Fix applied | Resolution |
+|---|---|---|
+| H1 (Airflow image never built/pushed) | `airflow.enabled: false`; removed `airflow-keys` secret + `metadataPassword` base64 from `deploy-eks.sh`; docs updated | **Resolved** (deferred, M14-consistent) |
+| H2 (agent check wrong endpoint/field) | `POST /api/v1/agent/ask` with `{'question': ...}` | **Resolved** (verified against route + schema) |
+| M1 (S3 `head_bucket` false negative) | Removed `head_bucket`; `list_objects_v2(Prefix='bronze/')` only | **Resolved** (satisfies raw-writer prefix condition) |
+| M2 (silver listed from raw-writer) | Silver check now runs from `warehouse-loader` | **Resolved** (warehouse-loader has `s3_read: silver`) |
+| M3 (wrong default bucket name) | `--bucket-name` is now `required=True`; docs show `terraform output -raw s3_data_bucket` | **Resolved** |
+| m2 (warehouse check passes when empty) | `ok and table_count > 0` | **Resolved** |
+| m4 (base64 line-wrap) | base64 block removed entirely | **Resolved** (moot) |
+| m1/m3/m5 (weak probe, dead agent infra, doc drift) | Not addressed | **Partially unresolved** (see M1, m2, m3, m5 below) |
 
 ---
 
 ## 3. Test and Verification Review
 
 ### Tests examined
-- No tests added or changed in this commit.
-- Existing structural tests unaffected by this change set; `tests/test_terraform_eks.py` (23 tests) is the closest adjacent coverage.
+- No tests were added or changed in any of the three commits.
+- Closest adjacent structural coverage: `tests/test_terraform_*.py` (HCL structure parsing, no `terraform` binary required).
 
 ### Independently verified (executed by reviewer)
+
 | Check | Result |
 |---|---|
-| `helm lint helm/ai-data-platform` | **PASS** — 1 chart linted, 0 failed |
-| `helm template` with base `values.yaml` (kind) | **PASS** — 27 resources, no render errors; Kafka Deployment/Service/Job present |
-| `helm template` with `values.yaml` + `values-eks.yaml` | **PASS** — 39 resources, no render errors; 7 ServiceAccounts with `eks.amazonaws.com/role-arn`, Kafka Deployment absent |
-| `python -m pytest tests/test_terraform_eks.py -q` | **PASS** — 23 passed |
+| `helm lint helm/ai-data-platform` | **PASS** — 1 chart, 0 failed |
+| `helm template` (base `values.yaml`) | **PASS** — renders airflow, kafka, minio, postgresql, 6 service deployments, jobs |
+| `helm template` (`values.yaml` + `values-eks.yaml`) | **PASS** — 7 ServiceAccounts; no airflow, no kafka; 6 deployments; NetworkPolicy/HPA/grafana/prometheus present |
+| `python -m pytest tests/test_terraform_*.py -q` | **PASS** — 120 passed (structure, ecr, eks, iam, s3, rds, networking, bootstrap) |
+| `ast.parse(scripts/verify_eks_deployment.py)` | **PASS** — syntax valid |
+| Diff secret scan (AKIA / access keys / PEM / literal passwords) | **PASS** — only `os.environ['WAREHOUSE_DB_PASSWORD']` (env read), no secrets |
 
-### Implementation evidence reviewed (not independently executed)
-- No CI or test-run evidence is present in the commit body.
+The `helm template` run with `values-eks.yaml` confirms the two gating changes work: Airflow resources and the Kafka Deployment/Service/Job are absent, while the six service deployments (api, ingestion, lake-writer, processor, raw-writer, warehouse-loader) render with `serviceAccountName` set.
+
+### Implementation evidence reviewed (not independently re-executed)
+- End-to-end AWS deployment (`apply`) — not executed (no AWS credentials; `terraform` not installed here).
+- Integration tests (`python -m pytest -m integration`) — not run; not provided. The task touches infrastructure boundaries (Kafka/S3/RDS/EKS), but no Python application code changed, so this is informational rather than blocking.
 
 ### Unverified
-- **End-to-end AWS deployment** — cannot be executed (no AWS credentials; `terraform` not installed on this machine). All claims about the live deployment are unverified.
-- **Integration tests** (`python -m pytest -m integration`) — not run and no evidence provided. The task touches infrastructure boundaries (Kafka/S3/RDS/EKS), but no Python application code changed, so this is informational rather than blocking.
+- Live EKS deployment and the runtime behavior of the verification script's `kubectl exec` checks (bronze/silver listing, agent round-trip) against a real cluster.
 
 ---
 
 ## 4. Findings
 
-### HIGH
-
-**H1 — Airflow is enabled on EKS but its required secrets are never provisioned**
-- **Affected:** `scripts/deploy-eks.sh` `create_eks_secrets()`; `helm/ai-data-platform/values-eks.yaml`; `helm/ai-data-platform/templates/secrets/airflow-credentials.yaml`; `helm/ai-data-platform/values.yaml` (`secrets.airflow.*`)
-- **Problem:** `values-eks.yaml` sets `airflow.enabled: true` and the deployment guide lists Airflow as part of the stack, but:
-  1. `airflow-keys` (fernet key + web secret key) is only created by Helm when `secrets.airflow.fernetKey` and `secretKey` are non-empty (both default to `""`), and `create_eks_secrets()` does **not** create it. The `airflow-init` job and the `airflow-webserver`/`airflow-scheduler` deployments all mount `airflow-keys` (verified across 31 references).
-  2. `airflow-metadata-credentials.db-password` comes from `secrets.airflow.metadataPassword`, whose base value decodes to `"postgres"` — not the RDS master password. The `airflow-init` `create-database` init container connects to RDS as `platform_admin` with this password, so it will fail authentication.
-- **Impact:** On EKS, the `airflow-init` hook fails and the Airflow webserver/scheduler pods cannot start. The "complete platform" deployment documented by this task is broken for Airflow.
-- **Recommendation:** Either (a) generate a Fernet key + secret key and create `airflow-keys` in `create_eks_secrets()`, and override `secrets.airflow.metadataPassword` with the RDS password; or (b) explicitly disable Airflow for TASK-123 and document it as out of scope, matching the M14 target architecture (which does not list Airflow).
-
 ### MODERATE
 
-**M1 — Strimzi OCI Helm registry path appears incorrect**
-- **Affected:** `scripts/deploy-eks.sh` `install_strimzi()` (~`helm install strimzi oci://quay.io/strimzi-operator/strimzi-kafka-operator`)
-- **Problem:** The official Strimzi Helm chart is published under the `strimzi-helm` organization on quay.io (`oci://quay.io/strimzi-helm/strimzi-kafka-operator`), not `strimzi-operator`. The historical HTTP repo is `https://strimzi.io/charts/`.
-- **Impact:** If the path is wrong, the deployment fails at the Strimzi install step, blocking the entire apply.
-- **Recommendation:** Verify and correct the registry path before running `apply`. (Independent confirmation was not possible from the repo; flagged for owner verification.)
-
-**M2 — `verify_eks_deployment.py` S3 check uses `ListAllMyBuckets`, which the least-privilege roles do not grant**
-- **Affected:** `scripts/verify_eks_deployment.py` `check_s3()`; `terraform/modules/iam/main.tf` (`s3_write`/`s3_read`)
-- **Problem:** The check runs `boto3.client('s3').list_buckets()` inside the `raw-writer` pod. The IAM `s3_write` policy grants only `s3:ListBucket` on the specific bucket (with prefix condition) and `s3:PutObject` — it does **not** grant `s3:ListAllMyBuckets`.
-- **Impact:** The S3 verification produces a false negative: IRSA can be correctly configured and the writer able to write Bronze Parquet, yet the check reports FAIL due to `AccessDenied` on `ListAllMyBuckets`.
-- **Recommendation:** Verify S3 access against the data bucket/prefix (e.g. `head_bucket` or `list_objects_v2` on the configured bucket/prefix), not `list_buckets()`.
-
-**M3 — Readiness probes for five consumer services weakened to a no-op process check**
-- **Affected:** `templates/deployments/{ingestion,processor,raw-writer,lake-writer,warehouse-loader}.yaml`
-- **Problem:** The readiness probe changed from a TCP connect to the dependency (Kafka `kafka:29092` / PostgreSQL `postgresql:5432`) to `os.kill(1, 0)`, which only confirms PID 1 is alive — i.e. it duplicates the liveness probe and no longer signals "ready to process."
-- **Impact:** These pods report Ready even when Kafka/PostgreSQL is unreachable, degrading readiness semantics, rollout ordering, and failure detection for the streaming consumers. (The API service correctly retains its HTTP readiness probe.)
-- **Recommendation:** Make the probe target configurable (e.g. a `kafkaBootstrapServers`-derived host/port) instead of dropping the check, or document why the check was removed.
-
-**M4 — End-to-end verification does not satisfy the task's own objective**
-- **Affected:** `scripts/verify_eks_deployment.py`
-- **Problem:** The task objective requires verifying that "ingestion produces events, processing works, Parquet is written to S3, PostgreSQL is loaded, API responds, and the agent can answer questions." The script verifies: pod readiness, API `/health`, topic existence, `list_buckets()` (S3), `SELECT 1` (PostgreSQL), and that `products.raw.v1` has any offsets. It does **not** verify: `products.validated.v1` (processing), Parquet objects in S3, warehouse data loaded, or the agent (`/agent/query`). The guide calls this "Full E2E verification," which overstates it.
-- **Impact:** The "Definition of Done" end-to-end claim is not actually demonstrated by the shipped verification.
-- **Recommendation:** Extend the checks (validated-topic offsets, object listing on the bronze/silver prefix, a row-count or known-observation query, and an agent query round-trip) or narrow the documented claim.
-
-**M5 — Deploy script references a non-existent `aws_region` Terraform output and falls back to a hardcoded region**
-- **Affected:** `scripts/deploy-eks.sh` `ecr_login()`, `configure_kubectl()`, `destroy_all()`; `terraform/outputs.tf`
-- **Problem:** The script calls `terraform output -raw aws_region`, but `outputs.tf` defines no such output, so it always falls through to the hardcoded `eu-north-1`. This is correct only for the `dev` environment (`envs/dev.tfvars` = `eu-north-1`); `staging.tfvars` uses `eu-west-1`.
-- **Impact:** For any non-dev environment, ECR login, `aws eks update-kubeconfig`, and destroy would target the wrong region.
-- **Recommendation:** Add an `aws_region` output to `outputs.tf` (or read the region from the `.tfvars`), and drop the silently-wrong fallback.
+**M1 — Documentation understates the ECR repository count; the `agent` infrastructure is still provisioned but unused**
+- **Affected:** `docs/deployment/aws-eks-deployment.md` (architecture diagram, "ECR (6 repositories)", "6 services"); `terraform/envs/dev.tfvars`, `terraform/envs/staging.tfvars`, `terraform/variables.tf` (`ecr_service_names` — 7 entries incl. `agent`); `terraform/modules/iam/variables.tf` (`service_accounts` incl. `agent`; `db_services` incl. `agent`); `helm/ai-data-platform/values-eks.yaml` (`serviceAccounts.services.agent`); `scripts/deploy-eks.sh` (`SERVICES` incl. `agent`, skipped in `build_and_push_images`).
+- **Problem:** The fix commit changed the docs to "6 repositories"/"6 services" and removed `agent` from the EKS diagram. But Terraform still creates **7** ECR repositories (the `agent` repo is never used), 7 IRSA roles, and the `agent` ServiceAccount is still rendered by the chart. There is no `agent` Deployment — the agent runs inside the API pod (`services/api/routes/v1/agent.py`). The M14 target architecture lists `agent` as a separate EKS component, so neither the code nor the docs are fully consistent with it.
+- **Impact:** Doc/configuration mismatch (stated 6 repos vs actual 7); dead `agent` ECR repo + IRSA role + `secrets_read` attachment + ServiceAccount. Not a functional blocker, but it misstates the deployment and leaves unused AWS resources.
+- **Recommendation:** Pick one direction and align everything: (a) remove `agent` from `ecr_service_names`, `service_accounts`, and `db_services`, and keep the "6" documentation; or (b) keep 7 repos and deploy a real `agent` service as the M14 architecture implies. Also update `docs/deployment/aws-eks-deployment.md` to match whichever is chosen.
 
 ### MINOR
 
-**m1 — `values-eks.yaml` Airflow comment claims CeleryExecutor but the value is not set.** The comment reads "enabled with CeleryExecutor for multi-worker," but `airflow.executor` is not overridden (defaults to `LocalExecutor`), and there is no Celery worker template. Either set the executor or correct the comment.
+**m1 — No tests added for the deployment/verification scripts (carried over).** `scripts/deploy-eks.sh` and `scripts/verify_eks_deployment.py` are new operational code with testable logic (the `VerificationReport` accumulator, the `--bucket-name`/`--api-url` argument handling, and the constructed SQL/Python strings could be unit-tested without a cluster). The task's "add deterministic tests where applicable" criterion remains unmet. Practical caveat: the checks are heavily `kubectl exec`-based, so meaningful coverage requires either mocking `subprocess` or a live cluster.
 
-**m2 — The `agent` ServiceAccount and IAM role are provisioned but unused.** There is no `agent` Deployment in the chart (the agent runs inside the API pod, which uses the `api` service account), and `build_and_push_images()` skips `agent` (`agent) continue`). The `agent` IRSA role/SA are dead resources and slightly misleading.
+**m2 — Readiness probes verify only the metrics server, not dependency reachability (carried over).** The five consumer services use `tcpSocket: port: 9100`. The services do bind a metrics HTTP server on `0.0.0.0:9100`, so the probe is valid, but a pod can report Ready before its Kafka/PostgreSQL dependency is reachable. Acceptable, but weaker than the previous TCP dependency check.
 
-**m3 — No tests added for the new scripts.** `deploy-eks.sh` and `verify_eks_deployment.py` are untested. Pure logic in the verify script (e.g. `VerificationReport`, topic-list parsing, argument handling) is unit-testable and would fit the repo's deterministic-test convention.
+**m3 — Dead `airflowMetadata` section remains in `values-eks.yaml`.** With `airflow.enabled: false`, the `airflowMetadata.host/port/name/user` block (pointing at `<RDS_ENDPOINT>`) is now unused and misleading. Harmless, but should be removed or annotated.
 
-**m4 — `serviceaccounts.yaml` uses camelCase map keys for the component label.** `app.kubernetes.io/component: {{ $key }}` yields `rawWriter`, `lakeWriter`, `warehouseLoader`, inconsistent with the kebab-case component labels used everywhere else (`raw-writer`, etc.).
+**m4 — Dangling `minio` and `postgresql` Services render on EKS.** Unlike the `kafka` Service (which this task correctly gated with `{{- if .Values.kafka.enabled }}`), `templates/services/minio.yaml` and `templates/services/postgresql.yaml` are not gated, so `helm template` with `values-eks.yaml` still emits `minio` and `postgresql` Services with no backing pods. Pre-existing, but visible in the EKS render.
 
-**m5 — Strimzi Kafka CR uses deprecated ZooKeeper mode.** `strimzi-kafka-eks.yaml` declares a `zookeeper` section with Kafka 3.9.0. Strimzi 0.45.0 still supports this, but ZooKeeper mode is deprecated (removed in Strimzi 1.0). Consider KRaft to match the local kind Kafka (KRaft) and future-proof the deployment.
+**m5 — ServiceAccount component labels are camelCase.** `templates/serviceaccounts.yaml` emits `app.kubernetes.io/component: {{ $key }}` (`rawWriter`, `lakeWriter`, `warehouseLoader`) while the deployments/pods use kebab-case (`raw-writer`, …). Cosmetic only — `pod_name()` in the verifier selects pods by their kebab-case label and works correctly.
 
 ---
 
 ## 5. Non-Defect Observations
 
-- **Region documentation is internally consistent for dev.** `deploy-eks.sh` hardcodes `eu-north-1` for the backend/kubectl fallback, and `envs/dev.tfvars` sets `aws_region = "eu-north-1"` with matching AZs. The docs' "AWS (eu-north-1)" is accurate for the default environment. (The latent issue is M5 for other environments.)
-- **Airflow database creation is correctly delegated to a Helm hook.** The `airflow` database is created by the `airflow-init` job's `create-database` init container rather than Terraform, which is a sound design — but it depends on the secret wiring flagged in H1.
-- **`minio-credentials` is created empty on EKS**, with `minio.enabled: false` and `minioEndpoint: ""`. This relies on services falling back to boto3/IRSA when the MinIO endpoint is empty; this application-level behavior was not verified in this review.
-- **IRSA wiring is clean.** The `serviceAccounts` template and `eks.amazonaws.com/role-arn` annotations render correctly for all seven services, matching the TASK-122 IAM role ARNs keyed by service name.
-- **`GetOffsetShell` in `check_data_flow` is deprecated** in modern Kafka (present in 3.9 but removed in 4.0); a future Kafka upgrade will require replacing it with `kafka-get-offsets.sh`.
+- **N1 — Disabling Airflow does not break the Silver→PostgreSQL path.** `services/warehouse-loader/runner.py` loads `LakeLayer.SILVER` (not Gold), so the E2E objective "PostgreSQL is loaded" is reachable without Airflow. Note, however, that this is itself a deviation from `PROJECT.md` §4 ("Warehouse Loader owns Gold-to-PostgreSQL loading"), meaning the Gold/Airflow layer is effectively deferred. This is a pre-existing deviation, but it is the reason the Airflow-disable resolution is sound.
+- **N2 — State-backend region is hardcoded.** `deploy-eks.sh` `terraform_init()` and `destroy_all()` hardcode `-backend-config="region=eu-north-1"` while `staging.tfvars` deploys to `eu-west-1`. If the bootstrap state bucket/DynamoDB table are intentionally pinned to `eu-north-1`, this is fine but undocumented; otherwise staging would target the wrong backend region.
+- **N3 — `GetOffsetShell` is deprecated.** The data-flow check uses `kafka.tools.GetOffsetShell`, present in Kafka 3.9 (Strimzi 0.45) but removed in Kafka 4.0; a future upgrade will require `kafka-get-offsets.sh`.
+- **N4 — `S3_BUCKET` is extracted but unused inside `deploy-eks.sh`.** `extract_outputs()` reads `s3_data_bucket`, but the deployment script never passes it to the verifier; verification is a separate manual step (correctly documented with `--bucket-name "$BUCKET"`). Minor.
+- **N5 — `SERVICES` still contains `agent`.** `build_and_push_images()` skips it via `agent) continue ;;`, so exactly six images are built, but the array is seven elements long — a source of the M1 confusion.
 
 ---
 
 ## 6. Verdict
 
-**CHANGES REQUIRED**
+**APPROVED WITH NON-BLOCKING FINDINGS**
 
-The implementation is well-structured and the Helm/IRSA wiring is correct (independently rendered and linted successfully), but it is not ready for acceptance:
+The current HEAD (`8eff888`) resolves all blocking and moderate findings from the previous review round:
 
-- **Blocking (High):** Airflow is enabled on EKS yet its required secrets (`airflow-keys`, and the RDS password for `airflow-metadata-credentials`) are never provisioned, so the documented "complete platform" deployment fails for Airflow.
-- **Should fix (Moderate):** the Strimzi OCI registry path is likely wrong; the S3 verification check is a false negative against least-privilege IAM; the readiness probes were weakened to no-ops; the end-to-end verification does not cover the task's stated objective; and the `aws_region` output fallback is silently region-incorrect for non-dev environments.
+- **H1 (Airflow image):** resolved by disabling Airflow, consistent with the M14 target architecture and documented. Helm rendering confirms no Airflow resources on EKS.
+- **H2 (agent endpoint):** resolved — the check now posts to `POST /api/v1/agent/ask` with the `question` field, matching the actual route (`router prefix=/agent`, `@router.post("/ask")`) and schema (`AgentAskRequest.question`).
+- **M1 (S3 bronze false negative):** resolved — `list_objects_v2(Prefix='bronze/')` satisfies raw-writer's `s3:ListBucket` prefix condition.
+- **M2 (silver listed from raw-writer):** resolved — silver is now listed from `warehouse-loader`, which holds `s3_read: silver`.
+- **M3 (wrong default bucket):** resolved — `--bucket-name` is required and the docs show the correct `terraform output -raw s3_data_bucket` invocation.
+- The warehouse check now fails on zero tables, and the removed base64 handling eliminated the line-wrap risk.
 
-No secrets were introduced, no unrelated code was modified, and the existing structural tests remain green.
+Independent verification (helm lint, helm template for both value sets, 120 terraform structural tests, script syntax check, secret scan) all pass. No secrets were introduced, no unrelated code was modified, and the chart renders cleanly.
+
+The only remaining issues are non-blocking: a documentation/configuration inconsistency around the ECR repository count and the unused `agent` infrastructure (M1), plus the minor items m1–m5. These do not prevent acceptance but should be addressed in a follow-up.
+
+---
+
+*This report was written by Qwen Code acting as an independent reviewer. No code was modified as part of this review; the only file changed is this report (`docs/reviews/TASK-123-review.md`).*
