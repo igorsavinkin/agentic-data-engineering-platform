@@ -1,9 +1,14 @@
 environment = "dev"
-aws_region  = "eu-west-1"
-
+ 
 vpc_cidr = "10.0.0.0/16"
 
-availability_zones = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
+aws_region = "eu-north-1"
+
+availability_zones = [
+  "eu-north-1a",
+  "eu-north-1b",
+  "eu-north-1c"
+]
 
 eks_cluster_version = "1.31"
 rds_instance_class  = "db.t3.medium"
@@ -25,3 +30,4 @@ ecr_service_names = [
 tags = {
   CostCenter = "development"
 }
+

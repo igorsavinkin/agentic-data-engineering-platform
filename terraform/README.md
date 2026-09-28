@@ -1,11 +1,21 @@
 # Terraform Infrastructure — AI Data Platform
 
 AWS infrastructure for the AI Data Platform, provisioned with Terraform.
+## Basic Commands
+```text
+terraform init      # скачать провайдеры и модули
+terraform fmt       # форматировать код
+terraform validate  # проверить синтаксис
+terraform plan      # показать план изменений
+terraform apply     # применить изменения
+terraform destroy   # удалить ресурсы
+```
 
 ## Structure
 
 ```text
 terraform/
+├── bootstrap/        # One-time backend provisioning (S3 + DynamoDB)
 ├── main.tf           # Root module — composes child modules
 ├── variables.tf      # Root input variables
 ├── outputs.tf        # Root outputs
@@ -27,19 +37,35 @@ terraform/
 ## Prerequisites
 
 - Terraform >= 1.5.0
-- AWS CLI configured with appropriate credentials
-- S3 bucket `ai-data-platform-terraform` for state storage
-- DynamoDB table `ai-data-platform-terraform-locks` for state locking
+- AWS CLI configured with the `data-platform` profile
+- Backend resources provisioned via [`bootstrap/`](bootstrap/) (S3 state bucket + DynamoDB lock table)
+
+## Bootstrap (one-time)
+
+Before initializing the main configuration, provision the remote backend:
+
+```bash
+cd terraform/bootstrap
+terraform init
+terraform plan -var="bucket_name=<globally-unique-name>" -var="environment=dev"
+terraform apply -var="bucket_name=<globally-unique-name>" -var="environment=dev"
+```
+
+See [`bootstrap/README.md`](bootstrap/README.md) for full details.
 
 ## Usage
 
-Initialize with an environment — each environment requires its own state key:
+Initialize with environment-specific backend config (all values come from the bootstrap output):
 
 ```bash
 cd terraform
 
-# Initialize with environment-specific state isolation
-terraform init -backend-config="key=envs/dev/terraform.tfstate"
+terraform init \
+  -backend-config="bucket=<bucket-name-from-bootstrap>" \
+  -backend-config="key=envs/dev/terraform.tfstate" \
+  -backend-config="region=eu-north-1" \
+  -backend-config="dynamodb_table=ai-data-platform-terraform-locks" \
+  -backend-config="encrypt=true"
 
 terraform plan -var-file=envs/dev.tfvars -var="rds_password=CHANGE_ME"
 terraform apply -var-file=envs/dev.tfvars -var="rds_password=CHANGE_ME"
@@ -51,12 +77,22 @@ Each environment uses its own `.tfvars` file under `envs/` and a separate
 state key. Always initialize with the environment-specific backend config:
 
 ```bash
-# Dev
-terraform init -backend-config="key=envs/dev/terraform.tfstate"
+# Dev (eu-north-1)
+terraform init \
+  -backend-config="bucket=<bucket-name>" \
+  -backend-config="key=envs/dev/terraform.tfstate" \
+  -backend-config="region=eu-north-1" \
+  -backend-config="dynamodb_table=ai-data-platform-terraform-locks" \
+  -backend-config="encrypt=true"
 terraform plan -var-file=envs/dev.tfvars -var="rds_password=CHANGE_ME"
 
-# Staging
-terraform init -backend-config="key=envs/staging/terraform.tfstate"
+# Staging (eu-west-1)
+terraform init \
+  -backend-config="bucket=<bucket-name>" \
+  -backend-config="key=envs/staging/terraform.tfstate" \
+  -backend-config="region=eu-west-1" \
+  -backend-config="dynamodb_table=ai-data-platform-terraform-locks" \
+  -backend-config="encrypt=true"
 terraform plan -var-file=envs/staging.tfvars -var="rds_password=CHANGE_ME"
 ```
 
