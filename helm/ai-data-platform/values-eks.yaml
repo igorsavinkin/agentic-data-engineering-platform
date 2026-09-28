@@ -187,10 +187,13 @@ postgresql:
   enabled: false
 
 # ---------------------------------------------------------------------------
-# Airflow — enabled for DAG scheduling (LocalExecutor; single-webserver)
+# Airflow — disabled (no ECR repository; deferred to a future task)
 # ---------------------------------------------------------------------------
+# Airflow is not part of the M14 target architecture for the initial EKS
+# deployment. Re-enable once an Airflow ECR repository and image pipeline
+# are provisioned.
 airflow:
-  enabled: true
+  enabled: false
 
 # ---------------------------------------------------------------------------
 # NetworkPolicy — enabled for pod-level traffic isolation

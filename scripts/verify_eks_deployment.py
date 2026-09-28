@@ -5,12 +5,12 @@ Checks every layer of the platform:
   1. Kubernetes pod health
   2. API health and readiness endpoints
   3. Kafka topic existence
-  4. S3 bucket accessibility
+  4. S3 bucket accessibility (bronze via raw-writer, silver via warehouse-loader)
   5. PostgreSQL connectivity and schema
-  6. Ingestion → Kafka → Processor → Parquet → PostgreSQL data flow
+  6. Ingestion → Kafka → Processor → Parquet → PostgreSQL → API/agent data flow
 
 Usage:
-    python scripts/verify_eks_deployment.py [--api-url URL] [--timeout SECONDS]
+    python scripts/verify_eks_deployment.py --bucket-name <BUCKET> [--api-url URL]
 """
 
 from __future__ import annotations
@@ -84,6 +84,28 @@ def kubectl(*args: str, namespace: str = NAMESPACE) -> str:
     return result.stdout.strip()
 
 
+def pod_name(component: str) -> str:
+    return kubectl(
+        "get",
+        "pod",
+        "-l",
+        f"app.kubernetes.io/component={component}",
+        "-o",
+        "jsonpath={.items[0].metadata.name}",
+    )
+
+
+def exec_in_pod(
+    pod: str, python_code: str, *, namespace: str = NAMESPACE, timeout: int = 15
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["kubectl", "exec", "-n", namespace, pod, "--", "python", "-c", python_code],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
 def check_pods(report: VerificationReport) -> None:
     for dep in EXPECTED_DEPLOYMENTS:
         try:
@@ -96,28 +118,10 @@ def check_pods(report: VerificationReport) -> None:
 
 def check_api_health(report: VerificationReport, api_url: str) -> None:
     try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "exec",
-                "-n",
-                NAMESPACE,
-                kubectl(
-                    "get",
-                    "pod",
-                    "-l",
-                    "app.kubernetes.io/component=api",
-                    "-o",
-                    "jsonpath={.items[0].metadata.name}",
-                ),
-                "--",
-                "python",
-                "-c",
-                f"import urllib.request; r=urllib.request.urlopen('{api_url}/api/v1/health'); print(r.status)",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
+        result = exec_in_pod(
+            pod_name("api"),
+            f"import urllib.request; r=urllib.request.urlopen('{api_url}/api/v1/health'); "
+            "print(r.status)",
         )
         ok = result.returncode == 0 and "200" in result.stdout
         report.add("API: /health", ok, result.stdout.strip() if ok else result.stderr[:100])
@@ -160,74 +164,36 @@ def check_kafka_topics(report: VerificationReport) -> None:
         report.add("Kafka: topics", False, str(e))
 
 
-def check_s3(report: VerificationReport, bucket_name: str) -> None:
+def check_s3_bronze(report: VerificationReport, bucket_name: str) -> None:
+    """Verify bronze/ prefix access from raw-writer (has s3_write for bronze/*)."""
     try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "exec",
-                "-n",
-                NAMESPACE,
-                kubectl(
-                    "get",
-                    "pod",
-                    "-l",
-                    "app.kubernetes.io/component=raw-writer",
-                    "-o",
-                    "jsonpath={.items[0].metadata.name}",
-                ),
-                "--",
-                "python",
-                "-c",
-                f"import boto3; s3=boto3.client('s3'); "
-                f"s3.head_bucket(Bucket='{bucket_name}'); "
-                f"resp=s3.list_objects_v2(Bucket='{bucket_name}', Prefix='bronze/', MaxKeys=1); "
-                f"print('ok')",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
+        result = exec_in_pod(
+            pod_name("raw-writer"),
+            f"import boto3; s3=boto3.client('s3'); "
+            f"resp=s3.list_objects_v2(Bucket='{bucket_name}', Prefix='bronze/', MaxKeys=1); "
+            f"print(f'keys={{resp.get(\"KeyCount\", 0)}}')",
         )
         ok = result.returncode == 0
         report.add(
-            "S3: IRSA bucket access",
+            "S3: bronze/ via raw-writer",
             ok,
-            f"bucket={bucket_name}" if ok else result.stderr[:100],
+            result.stdout.strip() if ok else result.stderr[:100],
         )
     except Exception as e:
-        report.add("S3: IRSA bucket access", False, str(e))
+        report.add("S3: bronze/ via raw-writer", False, str(e))
 
 
 def check_postgresql(report: VerificationReport) -> None:
     try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "exec",
-                "-n",
-                NAMESPACE,
-                kubectl(
-                    "get",
-                    "pod",
-                    "-l",
-                    "app.kubernetes.io/component=warehouse-loader",
-                    "-o",
-                    "jsonpath={.items[0].metadata.name}",
-                ),
-                "--",
-                "python",
-                "-c",
-                "import os, psycopg2; conn=psycopg2.connect("
-                "host=os.environ['WAREHOUSE_DB_HOST'],"
-                "port=os.environ['WAREHOUSE_DB_PORT'],"
-                "dbname=os.environ['WAREHOUSE_DB_NAME'],"
-                "user=os.environ['WAREHOUSE_DB_USER'],"
-                "password=os.environ['WAREHOUSE_DB_PASSWORD'],"
-                "); cur=conn.cursor(); cur.execute('SELECT 1'); print(cur.fetchone()); conn.close()",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
+        result = exec_in_pod(
+            pod_name("warehouse-loader"),
+            "import os, psycopg2; conn=psycopg2.connect("
+            "host=os.environ['WAREHOUSE_DB_HOST'],"
+            "port=os.environ['WAREHOUSE_DB_PORT'],"
+            "dbname=os.environ['WAREHOUSE_DB_NAME'],"
+            "user=os.environ['WAREHOUSE_DB_USER'],"
+            "password=os.environ['WAREHOUSE_DB_PASSWORD'],"
+            "); cur=conn.cursor(); cur.execute('SELECT 1'); print(cur.fetchone()); conn.close()",
         )
         ok = result.returncode == 0
         report.add(
@@ -269,97 +235,72 @@ def check_data_flow(report: VerificationReport) -> None:
                 timeout=15,
             )
             has_data = bool(result.stdout.strip())
-            label = f"Data flow: {topic} offsets"
             report.add(
-                label,
+                f"Data flow: {topic} offsets",
                 has_data,
                 result.stdout.strip()[:80] if has_data else "no offsets yet",
             )
     except Exception as e:
-        report.add("Data flow: raw events in Kafka", False, str(e))
+        report.add("Data flow: Kafka offsets", False, str(e))
 
 
 def check_s3_parquet(report: VerificationReport, bucket_name: str) -> None:
+    """Check bronze from raw-writer and silver from warehouse-loader (correct IAM scopes)."""
     try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "exec",
-                "-n",
-                NAMESPACE,
-                kubectl(
-                    "get",
-                    "pod",
-                    "-l",
-                    "app.kubernetes.io/component=raw-writer",
-                    "-o",
-                    "jsonpath={.items[0].metadata.name}",
-                ),
-                "--",
-                "python",
-                "-c",
-                f"import boto3; s3=boto3.client('s3'); "
-                f"bronze=s3.list_objects_v2(Bucket='{bucket_name}', "
-                f"Prefix='bronze/', MaxKeys=5); "
-                f"silver=s3.list_objects_v2(Bucket='{bucket_name}', "
-                f"Prefix='silver/', MaxKeys=5); "
-                f"b=bronze.get('KeyCount',0); s=silver.get('KeyCount',0); "
-                f"print(f'bronze={{b}} silver={{s}}')",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
+        bronze_result = exec_in_pod(
+            pod_name("raw-writer"),
+            f"import boto3; s3=boto3.client('s3'); "
+            f"r=s3.list_objects_v2(Bucket='{bucket_name}', Prefix='bronze/', MaxKeys=5); "
+            f"print(r.get('KeyCount', 0))",
         )
-        ok = result.returncode == 0
+        bronze_count = bronze_result.stdout.strip() if bronze_result.returncode == 0 else "err"
         report.add(
-            "S3: Parquet objects",
-            ok,
-            result.stdout.strip() if ok else result.stderr[:100],
+            "S3: bronze/ Parquet",
+            bronze_result.returncode == 0,
+            f"count={bronze_count}",
         )
     except Exception as e:
-        report.add("S3: Parquet objects", False, str(e))
+        report.add("S3: bronze/ Parquet", False, str(e))
+
+    try:
+        silver_result = exec_in_pod(
+            pod_name("warehouse-loader"),
+            f"import boto3; s3=boto3.client('s3'); "
+            f"r=s3.list_objects_v2(Bucket='{bucket_name}', Prefix='silver/', MaxKeys=5); "
+            f"print(r.get('KeyCount', 0))",
+        )
+        silver_count = silver_result.stdout.strip() if silver_result.returncode == 0 else "err"
+        report.add(
+            "S3: silver/ Parquet",
+            silver_result.returncode == 0,
+            f"count={silver_count}",
+        )
+    except Exception as e:
+        report.add("S3: silver/ Parquet", False, str(e))
 
 
 def check_warehouse_data(report: VerificationReport) -> None:
     try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "exec",
-                "-n",
-                NAMESPACE,
-                kubectl(
-                    "get",
-                    "pod",
-                    "-l",
-                    "app.kubernetes.io/component=warehouse-loader",
-                    "-o",
-                    "jsonpath={.items[0].metadata.name}",
-                ),
-                "--",
-                "python",
-                "-c",
-                "import os, psycopg2; conn=psycopg2.connect("
-                "host=os.environ['WAREHOUSE_DB_HOST'],"
-                "port=os.environ['WAREHOUSE_DB_PORT'],"
-                "dbname=os.environ['WAREHOUSE_DB_NAME'],"
-                "user=os.environ['WAREHOUSE_DB_USER'],"
-                "password=os.environ['WAREHOUSE_DB_PASSWORD'],"
-                "); cur=conn.cursor(); "
-                'cur.execute("SELECT table_name FROM information_schema.tables '
-                "WHERE table_schema='public'\"); "
-                "tables=[r[0] for r in cur.fetchall()]; "
-                "print(f'tables={len(tables)}: {tables[:5]}'); conn.close()",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
+        result = exec_in_pod(
+            pod_name("warehouse-loader"),
+            "import os, psycopg2; conn=psycopg2.connect("
+            "host=os.environ['WAREHOUSE_DB_HOST'],"
+            "port=os.environ['WAREHOUSE_DB_PORT'],"
+            "dbname=os.environ['WAREHOUSE_DB_NAME'],"
+            "user=os.environ['WAREHOUSE_DB_USER'],"
+            "password=os.environ['WAREHOUSE_DB_PASSWORD'],"
+            "); cur=conn.cursor(); "
+            'cur.execute("SELECT table_name FROM information_schema.tables '
+            "WHERE table_schema='public'\"); "
+            "tables=[r[0] for r in cur.fetchall()]; "
+            "print(f'{len(tables)}'); conn.close()",
         )
         ok = result.returncode == 0
+        table_count = int(result.stdout.strip()) if ok else 0
         report.add(
             "Warehouse: tables loaded",
-            ok,
-            result.stdout.strip() if ok else result.stderr[:100],
+            ok and table_count > 0,
+            f"tables={table_count}" if ok else result.stderr[:100],
         )
     except Exception as e:
         report.add("Warehouse: tables loaded", False, str(e))
@@ -367,41 +308,25 @@ def check_warehouse_data(report: VerificationReport) -> None:
 
 def check_agent_query(report: VerificationReport, api_url: str) -> None:
     try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "exec",
-                "-n",
-                NAMESPACE,
-                kubectl(
-                    "get",
-                    "pod",
-                    "-l",
-                    "app.kubernetes.io/component=api",
-                    "-o",
-                    "jsonpath={.items[0].metadata.name}",
-                ),
-                "--",
-                "python",
-                "-c",
-                f"import urllib.request, json; "
-                f"data=json.dumps({{'query': 'how many products are loaded?'}}).encode(); "
-                f"req=urllib.request.Request('{api_url}/api/v1/agent/query', "
-                f"data=data, headers={{'Content-Type': 'application/json'}}); "
-                f"r=urllib.request.urlopen(req); print(r.status)",
-            ],
-            capture_output=True,
-            text=True,
+        result = exec_in_pod(
+            pod_name("api"),
+            f"import urllib.request, json; "
+            f"data=json.dumps({{'question': 'how many products are loaded?'}}).encode(); "
+            f"req=urllib.request.Request('{api_url}/api/v1/agent/ask', "
+            f"data=data, headers={{'Content-Type': 'application/json'}}); "
+            f"r=urllib.request.urlopen(req); "
+            f"body=json.loads(r.read()); "
+            f'print(f\'{{r.status}} answer={{body.get("answer", "")[:60]}}\')',
             timeout=20,
         )
         ok = result.returncode == 0 and "200" in result.stdout
         report.add(
-            "Agent: query round-trip",
+            "Agent: /agent/ask round-trip",
             ok,
             result.stdout.strip() if ok else result.stderr[:100],
         )
     except Exception as e:
-        report.add("Agent: query round-trip", False, str(e))
+        report.add("Agent: /agent/ask round-trip", False, str(e))
 
 
 def main() -> int:
@@ -412,8 +337,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=30, help="Timeout per check in seconds")
     parser.add_argument(
         "--bucket-name",
-        default="ai-data-platform-data",
-        help="S3 data lake bucket name for access verification",
+        required=True,
+        help="S3 data lake bucket name (from terraform output s3_data_bucket)",
     )
     parser.add_argument(
         "--skip-data-flow", action="store_true", help="Skip data flow checks (no ingestion yet)"
@@ -427,7 +352,7 @@ def main() -> int:
     check_pods(report)
     check_api_health(report, args.api_url)
     check_kafka_topics(report)
-    check_s3(report, args.bucket_name)
+    check_s3_bronze(report, args.bucket_name)
     check_postgresql(report)
 
     if not args.skip_data_flow:

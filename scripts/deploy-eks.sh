@@ -290,22 +290,6 @@ create_eks_secrets() {
         --from-literal=bestbuy-api-key="${BESTBUY_API_KEY:-placeholder}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    if kubectl get secret airflow-keys -n "$NAMESPACE" &>/dev/null; then
-        log "  airflow-keys already exists, skipping."
-    else
-        log "  Generating Airflow Fernet key and secret key..."
-        local fernet_key
-        fernet_key=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-        local secret_key
-        secret_key=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-
-        kubectl create secret generic airflow-keys \
-            --namespace "$NAMESPACE" \
-            --from-literal=fernet-key="$fernet_key" \
-            --from-literal=secret-key="$secret_key" \
-            --dry-run=client -o yaml | kubectl apply -f -
-    fi
-
     log "Secrets created."
 }
 
@@ -313,16 +297,12 @@ helm_deploy() {
     local resolved_values="$1"
     log "Deploying Helm release..."
 
-    local airflow_meta_pw
-    airflow_meta_pw=$(echo -n "$TF_VAR_rds_password" | base64)
-
     helm upgrade --install "$RELEASE_NAME" "$HELM_DIR" \
         --namespace "$NAMESPACE" \
         --create-namespace \
         -f "$HELM_DIR/values.yaml" \
         -f "$resolved_values" \
         --set images.warehouseMigration.tag="migrations-$IMAGE_TAG" \
-        --set secrets.airflow.metadataPassword="$airflow_meta_pw" \
         --wait \
         --timeout 600s
 

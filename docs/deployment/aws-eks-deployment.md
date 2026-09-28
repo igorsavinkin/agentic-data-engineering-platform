@@ -13,14 +13,13 @@ AWS (eu-north-1)
 ├── EKS Cluster (1.31)
 │   ├── General node group (t3.medium, 1-4 nodes)
 │   │   ├── ingestion, processor, raw-writer, lake-writer
-│   │   ├── warehouse-loader, api, agent
-│   │   └── Airflow (scheduler + webserver)
+│   │   └── warehouse-loader, api
 │   └── Kafka node group (t3.large, 3-5 nodes, tainted)
 │       └── Strimzi Kafka (3 brokers, JBOD 50Gi)
 │
 ├── RDS PostgreSQL 16.4 (db.t3.medium, 20GiB gp3)
 ├── S3 Data Lake (bronze/silver/gold prefixes)
-└── ECR (7 repositories)
+└── ECR (6 repositories)
 ```
 
 ## Prerequisites
@@ -61,7 +60,7 @@ The `apply` command performs these steps in order:
 
 1. **Terraform apply** — creates VPC, EKS, RDS, S3, ECR, IAM
 2. **Configure kubectl** — updates kubeconfig for the EKS cluster
-3. **Build and push images** — Docker build + push to ECR for all 7 services
+3. **Build and push images** — Docker build + push to ECR for 6 services
 4. **Install Strimzi operator** — Helm install from quay.io
 5. **Deploy Strimzi Kafka** — 3-broker cluster on dedicated nodes
 6. **Create Kafka topics** — 5 platform topics with replication factor 3
@@ -74,7 +73,7 @@ The `apply` command performs these steps in order:
 |----------|--------|-------|
 | VPC + subnets + IGW + NAT | networking | 1 |
 | Security groups (eks-cluster, eks-nodes, rds) | networking | 3 |
-| ECR repositories | ecr | 7 |
+| ECR repositories | ecr | 6 |
 | S3 data lake bucket | s3 | 1 |
 | RDS PostgreSQL instance | rds | 1 |
 | EKS cluster + OIDC provider | eks | 1 |
@@ -91,7 +90,7 @@ The `apply` command performs these steps in order:
 | NAT Gateway | $32 |
 | RDS (db.t3.medium) | $55 |
 | S3 (minimal data) | $1 |
-| ECR (7 repos) | $1 |
+| ECR (6 repos) | $1 |
 | **Total** | **~$400/month** |
 
 Costs vary with usage. The NAT Gateway and Kafka nodes are the largest cost drivers.
@@ -102,17 +101,22 @@ Costs vary with usage. The NAT Gateway and Kafka nodes are the largest cost driv
 # Quick status check
 ./scripts/deploy-eks.sh status
 
-# Full E2E verification
-python scripts/verify_eks_deployment.py
+# Full E2E verification (bucket name from terraform output)
+BUCKET=$(cd terraform && terraform output -raw s3_data_bucket)
+python scripts/verify_eks_deployment.py --bucket-name "$BUCKET"
 ```
 
 The verification script checks:
 - All pods are running and ready
 - API health endpoint responds
 - Kafka topics exist with correct replication
-- S3 bucket is accessible via IRSA
+- S3 bronze/ prefix accessible via raw-writer IRSA
+- S3 silver/ prefix accessible via warehouse-loader IRSA
 - PostgreSQL RDS connection works
-- Data flows through the pipeline
+- Data flows through the pipeline (raw + validated topics)
+- Parquet objects exist in bronze/ and silver/
+- Warehouse tables are loaded
+- Agent `/api/v1/agent/ask` responds
 
 ## Step 4: Access Services
 
@@ -124,10 +128,6 @@ kubectl get svc api -n ai-data-platform
 # Grafana — via port-forward
 kubectl port-forward svc/grafana 3000:3000 -n ai-data-platform
 # Open http://localhost:3000 (admin/admin)
-
-# Airflow — via port-forward
-kubectl port-forward svc/airflow-webserver 8080:8080 -n ai-data-platform
-# Open http://localhost:8080
 
 # Prometheus — via port-forward
 kubectl port-forward svc/prometheus 9090:9090 -n ai-data-platform
@@ -228,9 +228,9 @@ aws ec2 describe-security-groups --group-ids <rds-sg-id>
 kubectl get sa raw-writer -n ai-data-platform -o yaml
 # Check the annotation: eks.amazonaws.com/role-arn
 
-# Test S3 access from the pod
+# Test S3 access from the pod (uses prefix-scoped ListBucket)
 kubectl exec -n ai-data-platform deploy/raw-writer -- \
-    python -c "import boto3; s3=boto3.client('s3'); print(s3.list_buckets())"
+    python -c "import boto3; s3=boto3.client('s3'); r=s3.list_objects_v2(Bucket='<bucket>', Prefix='bronze/', MaxKeys=1); print(r.get('KeyCount', 0))"
 ```
 
 ## Security Notes
