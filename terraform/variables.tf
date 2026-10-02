@@ -43,6 +43,18 @@ variable "eks_cluster_public_endpoint" {
   default     = false
 }
 
+variable "eks_cluster_public_access_cidrs" {
+  description = "CIDR blocks allowed to access the EKS public API endpoint"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "eks_cluster_log_retention_days" {
+  description = "CloudWatch log retention in days for EKS control plane logs"
+  type        = number
+  default     = 30
+}
+
 variable "eks_service_cidr" {
   description = "IPv4 CIDR block for Kubernetes service ClusterIPs"
   type        = string

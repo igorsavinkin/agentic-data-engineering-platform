@@ -1,4 +1,5 @@
 # Strimzi Kafka cluster for EKS deployment.
+# Dev configuration: single broker, replication factor 1.
 # Targets the dedicated Kafka node group (role=kafka, taint: dedicated=kafka:NoSchedule).
 # Apply after installing the Strimzi operator in the strimzi namespace.
 apiVersion: kafka.strimzi.io/v1beta2
@@ -9,7 +10,7 @@ metadata:
 spec:
   kafka:
     version: 3.9.0
-    replicas: 3
+    replicas: 1
     nodeSelector:
       role: kafka
     tolerations:
@@ -27,11 +28,11 @@ spec:
         type: internal
         tls: true
     config:
-      offsets.topic.replication.factor: 3
-      transaction.state.log.replication.factor: 3
-      transaction.state.log.min.isr: 2
-      default.replication.factor: 3
-      min.insync.replicas: 2
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1
+      min.insync.replicas: 1
       auto.create.topics.enable: "false"
       log.retention.hours: 168
     storage:
@@ -43,13 +44,13 @@ spec:
           deleteClaim: false
     resources:
       requests:
-        cpu: 500m
-        memory: 1Gi
+        cpu: 250m
+        memory: 512Mi
       limits:
-        cpu: "2"
-        memory: 2Gi
+        cpu: "1"
+        memory: 1Gi
   zookeeper:
-    replicas: 3
+    replicas: 1
     nodeSelector:
       role: kafka
     tolerations:
@@ -63,11 +64,11 @@ spec:
       deleteClaim: false
     resources:
       requests:
-        cpu: 250m
-        memory: 512Mi
+        cpu: 125m
+        memory: 256Mi
       limits:
-        cpu: "1"
-        memory: 1Gi
+        cpu: 500m
+        memory: 512Mi
   entityOperator:
     topicOperator: {}
     userOperator: {}

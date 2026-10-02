@@ -57,6 +57,7 @@ resource "aws_eks_cluster" "this" {
     security_group_ids      = [var.cluster_security_group_id]
     endpoint_private_access = true
     endpoint_public_access  = var.cluster_public_endpoint
+    public_access_cidrs     = var.cluster_public_access_cidrs
   }
 
   kubernetes_network_config {

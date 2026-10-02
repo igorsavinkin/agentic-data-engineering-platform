@@ -29,6 +29,12 @@ variable "cluster_public_endpoint" {
   default     = false
 }
 
+variable "cluster_public_access_cidrs" {
+  description = "CIDR blocks allowed to access the EKS public API endpoint"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "service_cidr" {
   description = "IPv4 CIDR block for Kubernetes services"
   type        = string

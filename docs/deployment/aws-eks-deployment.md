@@ -10,16 +10,16 @@ AWS (eu-north-1)
 │   ├── Public subnets (NAT Gateway)
 │   └── Private subnets (EKS, RDS)
 │
-├── EKS Cluster (1.31)
-│   ├── General node group (t3.medium, 1-4 nodes)
+├── EKS Cluster (1.35, public API endpoint)
+│   ├── General node group (t3.medium, 1 node)
 │   │   ├── ingestion, processor, raw-writer, lake-writer
 │   │   └── warehouse-loader, api
-│   └── Kafka node group (t3.large, 3-5 nodes, tainted)
-│       └── Strimzi Kafka (3 brokers, JBOD 50Gi)
+│   └── Kafka node group (t3.medium, 1 node, tainted)
+│       └── Strimzi Kafka (1 broker, JBOD 50Gi)
 │
-├── RDS PostgreSQL 16.4 (db.t3.medium, 20GiB gp3)
+├── RDS PostgreSQL 16.4 (db.t3.small, 20GiB gp3)
 ├── S3 Data Lake (bronze/silver/gold prefixes)
-└── ECR (6 repositories)
+└── ECR (7 repositories)
 ```
 
 ## Prerequisites
@@ -73,7 +73,7 @@ The `apply` command performs these steps in order:
 |----------|--------|-------|
 | VPC + subnets + IGW + NAT | networking | 1 |
 | Security groups (eks-cluster, eks-nodes, rds) | networking | 3 |
-| ECR repositories | ecr | 6 |
+| ECR repositories | ecr | 7 |
 | S3 data lake bucket | s3 | 1 |
 | RDS PostgreSQL instance | rds | 1 |
 | EKS cluster + OIDC provider | eks | 1 |
@@ -85,15 +85,15 @@ The `apply` command performs these steps in order:
 | Resource | Approximate Cost |
 |----------|-----------------|
 | EKS cluster | $73 |
-| General nodes (2x t3.medium) | $60 |
-| Kafka nodes (3x t3.large) | $180 |
+| General node (1x t3.medium) | $30 |
+| Kafka node (1x t3.medium) | $30 |
 | NAT Gateway | $32 |
-| RDS (db.t3.medium) | $55 |
+| RDS (db.t3.small) | $29 |
 | S3 (minimal data) | $1 |
-| ECR (6 repos) | $1 |
-| **Total** | **~$400/month** |
+| ECR (7 repos) | $1 |
+| **Total** | **~$196/month** |
 
-Costs vary with usage. The NAT Gateway and Kafka nodes are the largest cost drivers.
+Costs vary with usage. The EKS cluster management fee and NAT Gateway are the largest fixed cost drivers.
 
 ## Step 3: Verify Deployment
 

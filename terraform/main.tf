@@ -50,6 +50,8 @@ module "eks" {
   cluster_security_group_id   = module.networking.eks_cluster_security_group_id
   cluster_version             = var.eks_cluster_version
   cluster_public_endpoint     = var.eks_cluster_public_endpoint
+  cluster_public_access_cidrs = var.eks_cluster_public_access_cidrs
+  cluster_log_retention_days  = var.eks_cluster_log_retention_days
   service_cidr                = var.eks_service_cidr
   general_node_instance_types = var.eks_general_node_instance_types
   general_node_desired_size   = var.eks_general_node_desired_size

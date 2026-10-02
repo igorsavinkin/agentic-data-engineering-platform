@@ -218,8 +218,8 @@ create_kafka_topics() {
     kafka_pod=$(kubectl get pod -n strimzi -l strimzi.io/name=platform-cluster-kafka -o jsonpath='{.items[0].metadata.name}')
 
     local topics=(
-        "products.raw.v1:3"
-        "products.validated.v1:3"
+        "products.raw.v1:1"
+        "products.validated.v1:1"
         "products.invalid.v1:1"
         "pipeline.events.v1:1"
         "data-quality.events.v1:1"
@@ -235,7 +235,7 @@ create_kafka_topics() {
             --create --if-not-exists \
             --topic "$topic" \
             --partitions "$partitions" \
-            --replication-factor 3 \
+            --replication-factor 1 \
             --config retention.ms=604800000
     done
     log "All topics created."
