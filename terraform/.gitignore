@@ -13,3 +13,8 @@ override.tf.json
 !*.tfvars.example
 !envs/*.tfvars
 plan.out
+# Terraform plan files
+*.tfplan
+
+# Human-readable Terraform plan exports
+*-plan.txt
