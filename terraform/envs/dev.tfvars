@@ -12,7 +12,11 @@ availability_zones = [
 
 # EKS — K8s 1.35 is in standard support until Mar 27, 2027.
 # Strimzi 0.45.0 supports K8s 1.25+.
-eks_cluster_version            = "1.35"
+eks_cluster_version = "1.35"
+# Allow EKS public API access only from my current public IP
+eks_cluster_public_access_cidrs = [
+  "84.15.216.178/32"
+]
 eks_cluster_public_endpoint    = true
 eks_cluster_log_retention_days = 7
 
